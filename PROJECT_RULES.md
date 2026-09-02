@@ -170,11 +170,116 @@ reference installation.
 
 - Keep the working tree limited to the current coherent batch. Do not commit
   failed experiments, logs, dumps, build output, or temporary instrumentation.
-- Before a commit, run tests, `git diff --check`, and review the complete diff.
-- Do not push, tag, create a release, or publish an asset without direct user
-  permission.
-- Release notes state only verified user-visible outcomes and any validation
-  that remains incomplete.
+- A commit is created after a large successful and verified batch. Before a
+  commit, run tests, `git diff --check`, and review the complete diff.
+- The commit message describes the result briefly; it does not list files.
+- If an attempt is abandoned, return the branch to the last successful state
+  rather than keeping fictitious intermediate commits.
+
+### 8.1. Versioning and release assets
+
+- The version follows SemVer and is raised in one place, the CMake project
+  version, from which the helper's product version, the package name, the
+  ownership manifest and the update manifest are all generated. A release whose
+  built helper reports a different product version is not publishable; the
+  packaging script refuses it.
+- A release carries `In-the-line-of-duty-fixes-VERSION-Setup_Manual.zip`, the
+  complete runtime payload for drag-and-drop installation, and, when there is a
+  previous release to cut it against, `In-the-line-of-duty-fixes-VERSION-Update_Patch.zip`,
+  which carries only what changed since that release. They are alternatives and
+  the player needs exactly one. The first release of a major line has no patch.
+- Both archives must produce the same installed file set, must contain only
+  project-owned paths, and must never contain an original game or mod file, a
+  save, or the player's `user.ltx`.
+- Package building is a local operation. Push, tag, GitHub Release, and asset
+  upload happen only after the user's direct permission.
+- Address every GitHub command explicitly to `MMadmer/In-the-line-of-duty-fixes`;
+  do not rely on auto-detection.
+- **A published release asset is never edited or replaced in place, and a
+  published release that clients may already have seen is not deleted.** An
+  installed client records the version it holds and asks the release list what
+  is newer; replacing bytes under a name a client can already request makes the
+  digest it verifies wrong, and it cannot repair itself from that. Supersede
+  with a new version instead. A pre-release tag that no client outside the
+  developer's own machine ever saw may be removed while that is still true.
+- Before publishing, verify a clean HEAD, that the built helper's product
+  version matches the tag, the package contents and their hashes, and that a
+  test application of the archive leaves original files and the save tree
+  untouched.
+- After publishing, verify the tag target, the release status, the name and
+  SHA-256 of every asset, and the list the updater actually reads:
+  `repos/MMadmer/In-the-line-of-duty-fixes/releases?per_page=30`. The client
+  takes the highest parseable version on that page, so the GitHub "Latest"
+  badge is cosmetic; a tag it cannot parse, a draft, or a pre-release is
+  invisible to every installed client.
+- Raising the major version is a deliberate act with a user-visible
+  consequence: installed clients of a lower major are offered the release as a
+  separate installation with a link, not as an automatic update. Do not raise
+  it merely to mark a large batch.
+
+### 8.2. Mandatory GitHub Release text
+
+- Keep the release text short and only about the confirmed changes of the
+  version being published. No internal task numbers, hashes, file lists,
+  unconfirmed promises, or long changelogs.
+- Use the same structure for every release: changes first, then a short
+  installation instruction. Both languages, RU and EN, in that order of
+  sections shown below, because the in-game dialog reads whichever matches the
+  player's language and shows nothing when its section is missing.
+- In `Changes` list only the user-visible outcome. The baseline is what the
+  player already has: for the first release of a line that is the original mod,
+  and for every later release it is the previous release. Never mix the two, and
+  never describe a change the player cannot observe.
+- `Theme` is optional: one short line naming what the release is about. The
+  update dialog prints it in bold above the change list and drops the line when
+  the section is absent. Keep it to a headline; a bullet list there is ignored.
+- In `Installation` state that the archive is extracted into the game root, that
+  no original file is replaced, and that saves and the original mod are
+  untouched. When a patch archive is also published, state that the two are
+  alternatives and that the in-game updater picks the patch by itself.
+- Before publishing, run a clean build if one has not been done, and verify the
+  version number, the asset names, and the text against the packages actually
+  built.
+
+Release body template:
+
+```markdown
+## RU
+
+## Тема
+
+[Одна короткая строка о том, чему посвящён релиз, либо раздел не указывать]
+
+## Изменения
+
+* [Краткое описание исправления или улучшения, заметного игроку]
+* [Краткое описание исправления или улучшения, заметного игроку]
+
+## Установка
+
+Распакуйте архив в корень игры. Ни один оригинальный файл игры или мода не
+заменяется, сохранения остаются рабочими. Аддон можно удалить в любой момент по
+списку `.ild-fixes/managed-files.txt`, и мод продолжит работать как прежде.
+
+---
+
+## EN
+
+## Theme
+
+[One short line naming the release, or omit this section entirely]
+
+## Changes
+
+* [Short user-visible fix or improvement]
+* [Short user-visible fix or improvement]
+
+## Installation
+
+Extract the archive into the game root. No original game or mod file is
+replaced and existing saves keep working. The addon can be removed at any time
+using `.ild-fixes/managed-files.txt`, and the mod keeps running as before.
+```
 
 ## 9. Automatic updates
 

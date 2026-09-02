@@ -72,11 +72,14 @@ it is open, forwards keyboard input, and restores the menu on dismissal.
   appearance and foreground/fullscreen interaction remain unverified. The failed
   capture probe was removed from the build.
 - Script patch, editor, and UI compatibility-contract tests pass. The updater's
-  synthetic full/patch/rollback suite previously passed 17 checks; published
-  0.9.1 discovery and download were also exercised by the 0.9.0 client.
+  synthetic full/patch/rollback suite passes 37 checks; published 0.9.1 discovery
+  and download were also exercised by the 0.9.0 client.
 
-The root checkout intentionally remains 0.9.0 for update testing. The separately
-built GitHub payload is 0.9.1. `Deploy.cmd` requests UAC and deploys the complete
-current packaged runtime through `tools/deploy/Deploy-FixPack.ps1`, verifying all
-ten hashes and the save tree and retaining a recoverable backup. Packaging must
-be refreshed whenever runtime sources change.
+The published release is 1.0.0 while the installed game deliberately stays on
+0.9.1, so the update path can be exercised from a real installation. Because the
+major version differs, a 0.9.1 client offers 1.0.0 as a separate installation with
+a link rather than downloading it, which is the documented behaviour for a major
+step. `Deploy.cmd` requests UAC and deploys the complete current packaged runtime
+through `tools/deploy/Deploy-FixPack.ps1`, verifying all eleven hashes and the save
+tree and retaining a recoverable backup. Packaging must be refreshed whenever
+runtime sources change.
