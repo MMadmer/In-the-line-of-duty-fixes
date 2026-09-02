@@ -1,0 +1,171 @@
+local next_poll = 0
+local status = {}
+local runtime_path
+
+local function read_status()
+    local file
+    for _, path in ipairs({".ild-fixes/runtime/", "../.ild-fixes/runtime/"}) do
+        file = io.open(path .. "status.txt", "rb")
+        if file then
+            runtime_path = path
+            break
+        end
+    end
+    if not file then return status end
+    local result = {}
+    for line in file:lines() do
+        local key, value = string.match(line, "^([^=]+)=(.*)$")
+        if key then
+            result[key] = string.gsub(string.gsub(value, "%%0A", "\n"), "%%25", "%%")
+        end
+    end
+    file:close()
+    status = result
+    return status
+end
+
+local function command(action)
+    if not runtime_path or not status.session then return end
+    local file = io.open(runtime_path .. "command.tmp", "wb")
+    if not file then return end
+    file:write("session=" .. status.session .. "\naction=" .. action .. "\n")
+    file:close()
+    os.remove(runtime_path .. "command.txt")
+    os.rename(runtime_path .. "command.tmp", runtime_path .. "command.txt")
+end
+
+function i(menu)
+    menu:InitControls()
+    ui_main_menu.main_menu.Update = u
+end
+
+function u(menu)
+    CUIScriptWnd.Update(menu)
+    local now = time_global()
+    if now < next_poll then return end
+    next_poll = now + 250
+    local current = read_status()
+    if not current.session then return end
+    if current.state ~= "available" and current.state ~= "major_available" then return end
+    if menu.ild_update_dismissed == current.session .. ":" .. current.state then return end
+    if not menu.ild_update_dialog then
+        menu.ild_update_dialog = update_dialog()
+        menu.ild_update_dialog.owner = menu
+    end
+    menu.ild_update_dialog:refresh(current)
+    menu:GetHolder():start_stop_menu(menu.ild_update_dialog, true)
+    menu:GetHolder():start_stop_menu(menu, true)
+    menu:Show(false)
+end
+
+class "update_dialog" (CUIScriptWnd)
+
+function update_dialog:__init() super()
+    self:Init(0, 0, 1024, 768)
+    local xml = CScriptXmlInit()
+    xml:ParseFile("ild_fixes_update.xml")
+    xml:InitStatic("background", self)
+    self.caption = xml:InitStatic("caption", self)
+    self.message = xml:InitStatic("message", self)
+    self.size = xml:InitStatic("size", self)
+    self.theme = xml:InitStatic("theme", self)
+    self.changes = xml:InitScrollView("changes", self)
+    self.changes_text = xml:InitStatic("changes_text", nil)
+    self.changes:AddWindow(self.changes_text, true)
+    self.progress_text = xml:InitStatic("progress_text", self)
+    self.progress_back = xml:InitStatic("progress_back", self)
+    self.progress = xml:InitStatic("progress_fill", self)
+    self.action = xml:Init3tButton("action", self)
+    self.cancel = xml:Init3tButton("cancel", self)
+    self.disable = xml:Init3tButton("disable", self)
+    self:Register(self.action, "ild_action")
+    self:Register(self.cancel, "ild_cancel")
+    self:Register(self.disable, "ild_disable")
+    self:AddCallback("ild_action", ui_events.BUTTON_CLICKED, self.on_action, self)
+    self:AddCallback("ild_cancel", ui_events.BUTTON_CLICKED, self.on_cancel, self)
+    self:AddCallback("ild_disable", ui_events.BUTTON_CLICKED, self.on_disable, self)
+    self.next_poll = 0
+end
+
+function update_dialog:Update()
+    CUIScriptWnd.Update(self)
+    local now = time_global()
+    if now < self.next_poll then return end
+    self.next_poll = now + 250
+    self:refresh(read_status())
+    if status.qa == "1" and not self.qa_captured then
+        self.qa_capture_at = self.qa_capture_at or now + 1000
+        if now >= self.qa_capture_at then
+            self.qa_captured = true
+            get_console():execute("screenshot")
+            local proof = io.open(runtime_path .. "ui-proof.txt", "wb")
+            if proof then
+                proof:write("state=" .. (self.state or "") .. "\nui=CUIScriptWnd\n")
+                proof:close()
+            end
+        end
+    end
+end
+
+function update_dialog:refresh(current)
+    self.state = current.state
+    self.caption:SetText(current.caption or "")
+    self.message:SetText(current.message or "")
+    self.size:SetText(current.size_label or "")
+    self.theme:SetText(current.theme or "")
+    local changes = current.changes or ""
+    if changes ~= self.last_changes then
+        self.last_changes = changes
+        self.changes_text:SetText(changes)
+        self.changes_text:AdjustHeightToText()
+    end
+    self.action:SetText(current.action_label or "")
+    self.cancel:SetText(current.cancel_label or "")
+    self.disable:SetText(current.disable_label or "")
+    local progress = current.state == "downloading" or current.state == "ready"
+    self.changes:Show(not progress)
+    self.theme:Show(not progress)
+    self.progress:Show(progress)
+    self.progress_back:Show(progress)
+    self.progress_text:Show(progress)
+    self.disable:Show(current.state == "major_available")
+    self.action:Enable(current.state ~= "downloading")
+    self.cancel:Enable(current.state ~= "downloading" and current.state ~= "ready")
+    local downloaded = tonumber(current.downloaded) or 0
+    local total = tonumber(current.total) or 0
+    local fraction = total > 0 and math.min(1, downloaded / total) or 0
+    self.progress:Init(286, 414, 452 * fraction, 12)
+    self.progress_text:SetText(string.format("%.2f / %.2f MiB", downloaded / 1048576, total / 1048576))
+    if current.state == "apply_started" then get_console():execute("quit") end
+    if current.state == "dismissed" or current.state == "current" then self:close() end
+end
+
+function update_dialog:on_action()
+    if self.state == "major_available" then command("open_major")
+    elseif self.state == "ready" then command("apply")
+    else command("download") end
+end
+
+function update_dialog:on_cancel()
+    if self.state == "downloading" or self.state == "ready" then return end
+    command(self.state == "major_available" and "dismiss_major" or "dismiss")
+    self:close()
+end
+
+function update_dialog:on_disable()
+    command("disable_major")
+    self:close()
+end
+
+function update_dialog:close()
+    self.owner.ild_update_dismissed = (status.session or "") .. ":" .. (self.state or "")
+    self:GetHolder():start_stop_menu(self, true)
+    self:GetHolder():start_stop_menu(self.owner, true)
+    self.owner:Show(true)
+end
+
+function update_dialog:OnKeyboard(dik, action)
+    CUIScriptWnd.OnKeyboard(self, dik, action)
+    if action == ui_events.WINDOW_KEY_PRESSED and dik == DIK_keys.DIK_ESCAPE then self:on_cancel() end
+    return true
+end

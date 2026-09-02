@@ -1,0 +1,12 @@
+using System;
+
+namespace IldFixes.Updater
+{
+    internal static class ProductInfo
+    {
+        internal const string VersionText = "@PROJECT_VERSION@";
+        internal const string Repository = "MMadmer/In-the-line-of-duty-fixes";
+        internal const string AssetPrefix = "In-the-line-of-duty-fixes-";
+        internal static readonly Version Version = new Version(VersionText);
+    }
+}

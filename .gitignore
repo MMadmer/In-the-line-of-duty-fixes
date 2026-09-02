@@ -1,0 +1,48 @@
+# Build systems
+/build/
+/out/
+/.vs/
+/CMakeUserPresets.json
+
+# Repository-local runtime staging and QA
+/staging/
+/qa/
+/artifacts/
+/logs/
+/tmp/
+
+# Read-only binary analysis copies and IDA databases
+/analysis/reference-bin/
+/analysis/**/*.idb
+/analysis/**/*.i64
+/analysis/**/*.id0
+/analysis/**/*.id1
+/analysis/**/*.id2
+/analysis/**/*.nam
+/analysis/**/*.til
+
+# Native build products and symbols
+*.dll
+*.exe
+*.lib
+*.exp
+*.obj
+*.pdb
+*.ilk
+*.map
+
+# Runtime diagnostics
+*.dmp
+*.mdmp
+*.log
+*.etl
+*.zip
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.user
+*.suo
+*.VC.db
+*.VC.VC.opendb
