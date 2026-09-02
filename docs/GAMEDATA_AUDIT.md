@@ -158,3 +158,62 @@ it, and captures the knife button while the loop runs. The handler also requires
 live server object before converting the knife, so a repeated double-click cannot
 spawn a duplicate. Runtime QA still has no probe that opens the inventory window;
 the mocked suite covers the registration order, and the in-game check is manual.
+
+## Second audit pass: quests, NPC logic and mechanics
+
+A fan-out audit covered dialog item/money transfer, callback resolution, quest stages and info portions,
+`decor.script`, NPC schemes and gulag jobs, level logic and `xr_effects`/`xr_conditions`, items and crafting,
+save state and per-frame cost, world modules, and gameplay formulas. Every candidate defect was then given to an
+independent adversarial verifier that had to fail on two grounds - that the defect is real and player-reachable,
+and that the repair is possible without touching original bytes, save layout, story, balance or content - before
+it was accepted. Findings that survived and are now repaired:
+
+| Defect | Consequence | Repair |
+| --- | --- | --- |
+| `dialogs_yantar.give_ecolog_outfit` grants `stalker_outfit1`, a texture path rather than an item section | Hard CTD ("Can't open section") on a silent auto-phrase the moment the player talks to Sakharov after `bar_rescue_research_done` | Replace the function; grant `ecolog_outfit`, the section the mod actually defines |
+| `decor.spawn_und_tv` builds its position with `vector(99)` | luabind raises on a constructor that takes no arguments, aborting the `ag_prap_nach_dial` action chain: the television and eighteen further barracks decorations never spawn and the closing `<task>` is at risk | Replace the function; use the default constructor with the original coordinates and vertices |
+| `pochinka.b_mne_mod_ekz58` hands out `outfit_exo_mod15` | The mod58 exoskeleton has no producer at all; two Bar modernisation routes consume the base suit, a rare material and the money and return the wrong armour | Replace the function; grant `outfit_exo_mod58` |
+| `dialogs_bar.xml` phrase 505 calls `pochinka.b_mne_mod_skat7` | The material-5 SKAT branch charges 5000 RU and one `modern_material5` for the material-7 result; `outfit_skat_mod5` is unobtainable, which also strands two further upgrade branches | Same-size byte patch of one character, anchored on the unique `b_bronevik_modern_505<` text id so the legitimate material-7 phrase keeps its own reward |
+| `pochinka.give_fort` always destroys a plain `wpn_fort` | The two added Fort upgrade tiers never consume the pistol being upgraded, and destroy an unrelated plain Fort if the player carries one | Defer the handover; each of the six reward actions that follows it in the same phrase consumes the pistol it is actually upgrading |
+| `CTreasure:give_treasure` ignores its own `done` flag | Ten dialog actions grant stashes directly, bypassing `CTreasure:use`; `esc_secret_truck_goods` is wired to two of them, so the box is refilled, a second map spot is added and one spot is never removed | Wrap the method to return early when the stash is already granted; first-time behaviour is unchanged |
+| `mob_remark` reads `target` with `utils.cfg_get_number` under a string default | A section without `target` yields `""` and `alife():story_object("")` raises a type error that kills the monster's scheme; `target = actor` degrades to story id 0 through `atof`, so scripted mobs never turn to face the player | Normalize the value in `set_scheme` to a number or nil, and look at the actor from `reset_scheme` when the section asked for it |
+
+Original story, balance, rewards and prices are unchanged: each repair only makes the game do what its own
+configuration already says. All seven are covered by unit tests with a mocked engine, and the byte patch was
+additionally applied to the installed `dialogs_bar.xml` in an isolated output, changing exactly one byte at
+offset 304807 with the file length preserved.
+
+### Second batch: crashes, NPC logic and mechanics
+
+| Defect | Consequence | Repair |
+| --- | --- | --- |
+| `ogsm_mutants.script:18,21` builds `sound_object` for `anomaly\flies` and `monsters\phantom\phantom_snork_death` at module scope; neither file exists in the loose tree or the archives | A missing sound is an engine fatal inside the constructor, and it runs the first time anything touches the namespace - which `bind_monster.script:68` does near the Agroprom parasite zombie | Same-size byte patch to `nil`; both use sites already test the value before playing it, so the effect stays and only the sound is silent. This one cannot be repaired from Lua: the module dies while loading |
+| `music_emb` asks for three sounds that were never shipped: `new\ost_mgnovenia_17`, `weapons\pm\pm_shoot`, `music\trava_y_doma_obrez` | Four reachable dialog and info-portion actions on Cordon, Garbage, Dark Valley and Agroprom drop the player to the desktop | Replace `xr_sound.get_safe_sound_object` with a wrapper returning a silent stub for absent paths. It also covers the 41 `soundtrack\*` calls in `ogsm_mutants`, whose directory is absent entirely |
+| `gulag_escape.ltx:225` gives the blockpost sniper's night sleeper the absolute path `esc_voen_sniper_spati` | Gulag jobs prefix paths with the smart terrain, so the engine asks for `esc_blokpost_esc_voen_sniper_spati`, which is not in `all.spawn`: a hard error at the first military checkpoint whenever the blockpost is alarmed at night | Wrap `xr_sleeper.set_scheme` and restore the absolute path for that one section, so the sniper still sleeps exactly where the author put him |
+| `death_manager.script:22` whitelists communities by hand and omits `actor_freedom` and `trader` | `pairs(nil)` aborts the death callback for the six ATP spetsnaz and the two traders: engine callbacks are never unbound, the corpse gets no settle impulse and the NPC stays in the PDA ranking | Wrap `drop_manager:create_release_item` so an unlisted community completes the callback. The drop table itself is a file-local, so those communities still get no randomised loot - the abort is what is fixed |
+| `stanok.script` assigns an absolute condition on repair, and the level-2 bench's slot-6 handler assigns `0.01` | The bench damages anything already in better shape than its tier, and the better bench destroys the outfit it is supposed to repair | Wrap the six handlers to apply `max(condition before, tier)`, so the tier is a floor and never a ceiling |
+| `new_life.script` divides by 1100 and `amk.script:22` by 100 when computing `m_endTime` | `m_endTime` is compared against a seconds clock: five skill banners expire before their first frame and never appear, and the overweight icon expires far in the future and never goes away | Replace the six functions with the same body and the correct 1000 divisor, which the neighbouring banners in the same file already use |
+| `decor.script:639` attaches Sidorovich's campfire light to game vertex 0 | That vertex is 619 m away in the digger tunnels, so alife never switches the light online at the bunker | Resolve the level vertex from the light's own position and take the game vertex from the actor |
+| `xr_effects.esc_direction_fire` sends a tip id the mod's `string_table_tips_escape.xml` no longer defines | The PDA prints the raw key `esc_direction_fire` during the Cordon camp raid | Skip the tip when `game.translate_string` returns the id unchanged, which is how the engine reports a missing string |
+
+## Examined and deliberately not changed
+
+These are real observations, but repairing them would change balance, content or NPC design rather than fix a
+defect, which section 1 of the working rules forbids. They are recorded here instead.
+
+- **Carry weight.** The classic Shadow of Chernobyl complaint - a weight bonus that raises capacity but not the
+  run threshold - does not apply to this build. `CCustomOutfit::Load` (xrGame.dll `sub_1024BAC0`) reads both
+  `additional_inventory_weight` and `additional_inventory_weight2` into separate fields, `max_walk_weight` is
+  loaded into `CActorCondition+0x138`, and the engine even exports `get_actor_max_walk_weight` to Lua. Eight of
+  the nine sections that grant a bonus set the two keys so that the walk threshold is at least the carry bonus.
+  The exception is `[outfit_stalker_m2]` in `misc/racya.ltx`, which grants +10 to the walk threshold and +20 to
+  capacity, leaving a 10 kg band in which the player is loaded but cannot run. Its own comment describes it as
+  a rucksack suit, so that may well be intended; changing either number changes carrying balance.
+- **Blockpost yard patrol.** `gulag_escape.ltx:107` sleeps the guard whenever it is *not* evening, so he is
+  asleep for twenty hours a day. The sibling sniper job uses the sensible `is_night`/`is_day` pair, which makes
+  this look like a mistake, but swapping the conditions rewrites an NPC's schedule.
+- **Missing Cordon tasks.** `tasks_escape.xml` was rewritten for the mod and dropped three stock `game_task`
+  blocks that `info_portions.xml` still declares, so three accepted jobs produce no PDA entry. Restoring them
+  means adding XML content, which no in-memory same-size patch can do.
+- **`remont.script`** references six sounds under the absent `remkit\` directory, but nothing in the mod
+  references the module, so no player can reach it.

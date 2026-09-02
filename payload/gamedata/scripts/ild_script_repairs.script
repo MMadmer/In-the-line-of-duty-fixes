@@ -203,6 +203,220 @@ local function install_actor_repairs()
     actor_repairs_installed = true
 end
 
+-- The Cordon mechanic's Fort upgrades all call give_fort, which unconditionally destroys a plain wpn_fort.
+-- The reward that follows in the same phrase is what identifies the pistol actually being handed in.
+local fort_sources = {
+    esc_l_d_mex_nam_fort_m1 = "wpn_fort",
+    esc_l_d_mex_nam_fort_m2 = "wpn_fort",
+    esc_l_d_mex_nam_fort_m3 = "wpn_fort",
+    esc_l_d_mex_dengi_za_fort = "wpn_fort",
+    esc_l_d_mex_nam_fort_m12 = "wpn_fort_mod1",
+    esc_l_d_mex_nam_fort_m22 = "wpn_fort_mod2"
+}
+
+local function install_dialog_repairs()
+    -- The reward was cloned from b_mne_mod_ekz15 and kept its section, so outfit_exo_mod58 never existed.
+    pochinka.b_mne_mod_ekz58 = function(first_speaker, second_speaker)
+        dialogs.relocate_item_section(second_speaker, "outfit_exo_mod58", "in")
+    end
+    -- Sakharov's reward names a texture path instead of an item section; alife():create fatals on it.
+    dialogs_yantar.give_ecolog_outfit = function(first_speaker, second_speaker)
+        if has_alife_info("yan_ecolog_outfit_given") then return end
+        dialogs.relocate_item_section(second_speaker, "ecolog_outfit", "in")
+        db.actor:give_info_portion("yan_ecolog_outfit_given")
+    end
+
+    local pending_fort = false
+    pochinka.give_fort = function() pending_fort = true end
+    for name, section in pairs(fort_sources) do
+        local original_reward = pochinka[name]
+        if original_reward then
+            pochinka[name] = function(first_speaker, second_speaker)
+                if pending_fort then
+                    pending_fort = false
+                    if sak.have_item_namber(section, 1) then sak.out_item_namber(section, 1) end
+                end
+                return original_reward(first_speaker, second_speaker)
+            end
+        end
+    end
+end
+
+local function install_world_repairs()
+    -- Fvector is exported with a default constructor only; vector(99) raises before the item is spawned,
+    -- which aborts the remaining nineteen decoration actions of the Agroprom-underground info portion.
+    decor.spawn_und_tv = function()
+        amk.spawn_item("televizor", vector():set(-46.8, -15.5, -43.6), 741, 4350)
+    end
+
+    -- The campfire light at Sidorovich's bunker was given the level/game vertex pair of the digger tunnels,
+    -- 619 m away, so alife never switched it online where it belongs. Resolve the vertices from the position.
+    decor.spawn_esc_svet_y_sidora = function()
+        local position = vector():set(-242, -20.8, -135)
+        local actor = db.actor
+        if not actor then return end
+        alife():create("svet_kostra", position, level.vertex_id(position), actor:game_vertex_id())
+    end
+
+    -- Direct dialog grants bypass CTreasure:use, whose done flag is the only guard against a second spawn.
+    local original_give = treasure_manager.CTreasure.give_treasure
+    treasure_manager.CTreasure.give_treasure = function(self, key)
+        local entry = self.treasure_info[key]
+        if not entry or entry.done then return end
+        return original_give(self, key)
+    end
+
+    -- "target" is read with utils.cfg_get_number under a string default, so a section without it yields ""
+    -- and alife():story_object("") raises a luabind type error that kills the monster's scheme. A literal
+    -- "actor" degrades to story id 0 through atof, so the scripted mob never turns to face the player.
+    local original_set = mob_remark.set_scheme
+    mob_remark.set_scheme = function(npc, ini, scheme, section, gulag_name)
+        local result = original_set(npc, ini, scheme, section, gulag_name)
+        local storage = db.storage[npc:id()]
+        local state = storage and storage[scheme]
+        if state then
+            local raw = ini:section_exist(section) and ini:line_exist(section, "target") and
+                ini:r_string(section, "target") or nil
+            state.ild_look_actor = raw == "actor"
+            state.look = tonumber(raw)
+        end
+        return result
+    end
+    local original_reset = mob_remark.mob_remark.reset_scheme
+    mob_remark.mob_remark.reset_scheme = function(self)
+        local result = original_reset(self)
+        if self.st.ild_look_actor and db.actor then
+            action(self.object, look(look.point, db.actor:position()), cond(cond.look_end))
+        end
+        return result
+    end
+end
+
+-- Sound files the mod's scripts ask for but that ship in neither the loose tree nor the archives. Constructing a
+-- sound_object for a missing file is an engine fatal, not a recoverable error, so these must never reach it.
+local absent_sounds = {
+    [ [[music\trava_y_doma_obrez]] ] = true,
+    [ [[new\ost_mgnovenia_17]] ] = true,
+    [ [[weapons\pm\pm_shoot]] ] = true
+}
+local absent_sound_prefix = [[soundtrack\]]
+local silent_sound
+
+local function make_silent_sound()
+    local function ignore() end
+    return {
+        play = ignore, play_at_pos = ignore, play_no_feedback = ignore, stop = ignore, stop_deffered = ignore,
+        set_position = ignore, set_frequency = ignore, set_volume = ignore, attach_tail = ignore,
+        playing = function() return false end, length = function() return 0 end
+    }
+end
+
+local function sound_is_absent(path)
+    if type(path) ~= "string" then return false end
+    local name = string.lower(path)
+    return absent_sounds[name] == true or
+        string.sub(name, 1, string.len(absent_sound_prefix)) == absent_sound_prefix
+end
+
+local function install_sound_repairs()
+    silent_sound = silent_sound or make_silent_sound()
+    local original_get = xr_sound.get_safe_sound_object
+    xr_sound.get_safe_sound_object = function(path)
+        -- The mod's own call sites test the result, but the fatal happens inside the constructor, before the
+        -- test. A silent stub keeps every caller working, guarded or not.
+        if sound_is_absent(path) then return silent_sound end
+        return original_get(path)
+    end
+end
+
+local function install_npc_repairs()
+    -- Gulag jobs resolve their paths relative to the smart terrain, so this absolute path became
+    -- esc_blokpost_esc_voen_sniper_spati, which does not exist, and patrol() aborted the game.
+    if xr_sleeper and xr_sleeper.set_scheme then
+        local original_sleeper = xr_sleeper.set_scheme
+        xr_sleeper.set_scheme = function(npc, ini, scheme, section, gulag_name)
+            local result = original_sleeper(npc, ini, scheme, section, gulag_name)
+            local storage = db.storage[npc:id()]
+            local state = storage and storage[scheme]
+            if state and state.path_main == "esc_blokpost_esc_voen_sniper_spati" then
+                state.path_main = "esc_voen_sniper_spati"
+            end
+            return result
+        end
+    end
+
+    -- death_manager keys its drop tables by a hard-coded community whitelist that the mod's own factions are
+    -- missing from, so pairs(nil) aborted the death callback before it could unbind the engine callbacks.
+    local original_release = death_manager.drop_manager.create_release_item
+    death_manager.drop_manager.create_release_item = function(self, ...)
+        local completed, result = pcall(original_release, self, ...)
+        if completed then return result end
+        return nil
+    end
+end
+
+local function install_hud_repairs()
+    -- m_endTime is compared against a seconds clock, so the divisor must be exactly 1000. The neighbouring
+    -- banners in the same file already use 1000, which is what makes these five a typo rather than a design.
+    local banners = {
+        stalkerok_navuk_lvl1 = {"chibi_rechi_navuk_lvl1", 20},
+        chibi_dost_za_vse_kassetu = {"chibi_dost_za_vse_kassetu", 15},
+        stalkerok_mexanik_navuk_lvl1 = {"chibi_mex_navuk_lvl1", 20},
+        stalkerok_mexanik_navuk_lvl2 = {"chibi_mex_navuk_lvl2", 20},
+        stalkerok_navuk_poisk_lvl1 = {"chibi_poisk_navuk_lvl1", 20}
+    }
+    for name, banner in pairs(banners) do
+        if new_life[name] then
+            local static_name, seconds = banner[1], banner[2]
+            new_life[name] = function()
+                local hud = get_hud()
+                local static = hud:GetCustomStatic(static_name) or hud:AddCustomStatic(static_name, true)
+                static.m_endTime = time_global() / 1000 + seconds
+            end
+        end
+    end
+    amk.chibi_pereves = function()
+        local hud = get_hud()
+        local static = hud:GetCustomStatic("chibi_pereves") or hud:AddCustomStatic("chibi_pereves", true)
+        static.m_endTime = time_global() / 1000 + 10
+    end
+end
+
+local workbench_slots = {rep_s1 = 1, rep_s2 = 2, rep_s6 = 6}
+
+local function clamp_workbench(window_class, floor)
+    if not window_class then return end
+    for name, slot in pairs(workbench_slots) do
+        local original_repair = window_class[name]
+        if original_repair then
+            window_class[name] = function(self, ...)
+                local item = db.actor and db.actor:item_in_slot(slot)
+                local before = item and item:condition()
+                local result = original_repair(self, ...)
+                -- A bench guarantees its tier as a floor. It never re-grinds a better item down to that tier,
+                -- and the level-2 bench's slot-6 handler must not leave the outfit at its 0.01 typo.
+                if item and before then item:set_condition(math.max(before, floor)) end
+                return result
+            end
+        end
+    end
+end
+
+local function install_workbench_repairs()
+    clamp_workbench(stanok.baliaaa, 0.75)
+    clamp_workbench(stanok.pochinka2, 0.85)
+end
+
+local function install_text_repairs()
+    -- The mod replaced string_table_tips_escape.xml with its own file and lost this vanilla id; the engine
+    -- returns the id itself when a string is absent, which is what reached the player's PDA.
+    local original_direction_fire = xr_effects.esc_direction_fire
+    xr_effects.esc_direction_fire = function(actor, npc)
+        if game.translate_string("esc_direction_fire") == "esc_direction_fire" then return end
+        return original_direction_fire(actor, npc)
+    end
+end
+
 local function reset_detector_registry()
     for id, entry in pairs(db.artefacts) do
         if entry.spot then level.map_remove_object_spot(id, "artefact_location") end
@@ -254,6 +468,13 @@ function install()
     sound_theme.ph_snd_themes.moa_psi_antena = {[[characters_voice\scenario\yantar\psy_voices_1]]}
     sound_theme.ph_snd_themes.grey_grey_later = {[[characters_voice\scenario\garbage\grey_grey_later]]}
     install_monster_death()
+    install_dialog_repairs()
+    install_world_repairs()
+    install_sound_repairs()
+    install_npc_repairs()
+    install_hud_repairs()
+    install_workbench_repairs()
+    install_text_repairs()
     install_zone_update(se_zones.se_zone_anom, cse_anomalous_zone)
     install_zone_update(se_zones.se_zone_visual, cse_zone_visual)
 

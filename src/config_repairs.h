@@ -8,7 +8,7 @@
 namespace ild
 {
 enum class ConfigRepair { mechanic_dialog, prince_dialog, skill_text, info_root, camp_condition,
-    burer_dialog, psi_sound, car_text };
+    burer_dialog, psi_sound, car_text, skat_upgrade, mutant_sounds };
 struct ConfigRepairSource
 {
     std::wstring_view relative;

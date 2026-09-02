@@ -12,20 +12,27 @@ end
 
 local function fixture()
     local calls = {tutorials = {}, events = {}, spots = {}, food = {}, spawned = {}, removed = {}, detector = {},
-        released = {}, init_btn = {}, on_info = {}, menu_toggles = {}, object_queries = 0}
+        released = {}, init_btn = {}, on_info = {}, menu_toggles = {}, given = {}, taken = {}, news = {},
+        amk_spawns = {}, treasure = {}, looks = {}, infos = {}, sounds = {}, statics = {}, tips = {},
+        created = {}, object_queries = 0}
     local objects = {}
     local clock = 100
     local env = setmetatable({}, {__index = _G})
     env._G = env
-    env.db = {artefacts = {}}
+    env.db = {artefacts = {}, storage = {}}
     env.game = {
         start_tutorial = function(name) calls.tutorials[#calls.tutorials + 1] = name end,
+        -- The engine hands back the id itself when a string table has no such entry.
+        translate_string = function(id) return calls.strings and calls.strings[id] or id end,
         get_game_time = function()
             return {value = clock, diffSec = function(self, old) return self.value - old.value end}
         end
     }
     env.alife = function()
         return {
+            create = function(_, section, position, lvid, gvid)
+                calls.created[#calls.created + 1] = {section, position, lvid, gvid}
+            end,
             object = function(_, id)
                 calls.object_queries = calls.object_queries + 1
                 return objects[id]
@@ -36,13 +43,157 @@ local function fixture()
             end
         }
     end
+    env.clock_ms = 3600000
+    env.time_global = function() return env.clock_ms end
+    env.get_hud = function()
+        return {
+            GetCustomStatic = function(_, name) return calls.statics[name] end,
+            AddCustomStatic = function(_, name)
+                calls.statics[name] = {name = name}
+                return calls.statics[name]
+            end
+        }
+    end
+    env.xr_sound = {
+        get_safe_sound_object = function(path)
+            -- The engine fatals inside the constructor when the file is absent.
+            if calls.absent_files[string.lower(path)] then error('Can\'t open wave file: ' .. path) end
+            calls.sounds[#calls.sounds + 1] = path
+            return {played = false, play_no_feedback = function(self) self.played = true end}
+        end
+    }
+    calls.absent_files = {
+        [ [[music\trava_y_doma_obrez]] ] = true,
+        [ [[new\ost_mgnovenia_17]] ] = true,
+        [ [[weapons\pm\pm_shoot]] ] = true,
+        [ [[soundtrack\controller\7]] ] = true
+    }
+    env.xr_sleeper = {
+        set_scheme = function(npc, ini, scheme, section, gulag_name)
+            local storage = {}
+            env.db.storage[npc:id()] = env.db.storage[npc:id()] or {}
+            env.db.storage[npc:id()][scheme] = storage
+            -- Gulag jobs prefix every path with the smart-terrain name.
+            local raw = ini:r_string(section, 'path_main')
+            storage.path_main = gulag_name ~= '' and (gulag_name .. '_' .. raw) or raw
+            return 'sleeper set'
+        end
+    }
+    env.death_manager = {drop_manager = {
+        create_release_item = function(self)
+            local known = {stalker = {}, dolg = {}}
+            local drops = known[self.npc:character_community()]
+            for _ in pairs(drops) do end
+            calls.dropped = (calls.dropped or 0) + 1
+            return 'dropped'
+        end
+    }}
+    local function banner(name) return function() calls.statics[name] = {stale = true} end end
+    env.new_life = {
+        stalkerok_navuk_lvl1 = banner('chibi_rechi_navuk_lvl1'),
+        chibi_dost_za_vse_kassetu = banner('chibi_dost_za_vse_kassetu'),
+        stalkerok_mexanik_navuk_lvl1 = banner('chibi_mex_navuk_lvl1'),
+        stalkerok_mexanik_navuk_lvl2 = banner('chibi_mex_navuk_lvl2'),
+        stalkerok_navuk_poisk_lvl1 = banner('chibi_poisk_navuk_lvl1')
+    }
+    local function bench(floor)
+        local class_table = {}
+        for name, slot in pairs({rep_s1 = 1, rep_s2 = 2, rep_s6 = 6}) do
+            class_table[name] = function()
+                local item = env.db.actor:item_in_slot(slot)
+                -- The level-2 bench's slot-6 handler carries the mod's 0.01 typo.
+                if item then item:set_condition(name == 'rep_s6' and floor == 0.85 and 0.01 or floor) end
+            end
+        end
+        return class_table
+    end
+    env.stanok = {baliaaa = bench(0.75), pochinka2 = bench(0.85)}
+    env.xr_effects = {esc_direction_fire = function(actor)
+        calls.tips[#calls.tips + 1] = 'esc_direction_fire'
+    end}
     env.level = {
+        vertex_id = function(position) return 'lvid:' .. position.x end,
         map_remove_object_spot = function(id, kind) calls.spots[#calls.spots + 1] = {id, kind} end,
         main_input_receiver = function() return calls.receiver end,
         start_stop_menu = function(window, flag) calls.menu_toggles[#calls.menu_toggles + 1] = {window, flag} end
     }
     env.ui_events = {WINDOW_LBUTTON_DB_CLICK = 9}
-    env.new_life = {}
+    env.dialogs = {
+        relocate_item_section = function(_, section, direction)
+            calls.given[#calls.given + 1] = {section = section, direction = direction}
+        end
+    }
+    env.sak = {
+        inventory = {},
+        have_item_namber = function(section, count) return (env.sak.inventory[section] or 0) >= count end,
+        out_item_namber = function(section, count)
+            calls.taken[#calls.taken + 1] = section
+            env.sak.inventory[section] = (env.sak.inventory[section] or 0) - count
+        end
+    }
+    -- Every Fort branch pairs give_fort with exactly one reward action, in that order.
+    local function fort_reward(name)
+        return function() calls.given[#calls.given + 1] = {section = name, direction = 'in'} end
+    end
+    env.pochinka = {
+        b_mne_mod_ekz58 = function() error('unpatched exoskeleton reward') end,
+        give_fort = function() error('unpatched fort handover') end,
+        esc_l_d_mex_nam_fort_m1 = fort_reward('wpn_fort_mod1'),
+        esc_l_d_mex_nam_fort_m2 = fort_reward('wpn_fort_mod2'),
+        esc_l_d_mex_nam_fort_m3 = fort_reward('wpn_fort_mod3'),
+        esc_l_d_mex_dengi_za_fort = fort_reward('money'),
+        esc_l_d_mex_nam_fort_m12 = fort_reward('wpn_fort_mod12'),
+        esc_l_d_mex_nam_fort_m22 = fort_reward('wpn_fort_mod22')
+    }
+    env.dialogs_yantar = {give_ecolog_outfit = function() error('unpatched ecologist reward') end}
+    env.has_alife_info = function(name) return calls.infos[name] == true end
+    env.decor = {
+        spawn_und_tv = function() error('unpatched underground decoration') end,
+        spawn_esc_svet_y_sidora = function() error('unpatched campfire light') end
+    }
+    env.amk = {
+        chibi_pereves = function() calls.statics.chibi_pereves = {stale = true} end,
+        remove_items = function() error('unpatched item removal') end,
+        spawn_item = function(section, position, gv, lv)
+            calls.amk_spawns[#calls.amk_spawns + 1] = {section, position, gv, lv}
+        end
+    }
+    -- Fvector is exported with a default constructor only; any argument must raise, as in the engine.
+    env.vector = function(...)
+        if select('#', ...) > 0 then error('No matching overload found, candidates: vector()') end
+        return {set = function(self, x, y, z) self.x, self.y, self.z = x, y, z return self end}
+    end
+    env.treasure_manager = {CTreasure = {
+        give_treasure = function(self, key)
+            calls.treasure[#calls.treasure + 1] = key
+            self.treasure_info[key].done = true
+            return 'granted'
+        end
+    }}
+    env.action = function(object, look_action) calls.looks[#calls.looks + 1] = {object, look_action} end
+    env.look = setmetatable({point = 'point'}, {__call = function(_, kind, position)
+        return {kind = kind, position = position}
+    end})
+    env.cond = setmetatable({look_end = 'look_end'}, {__call = function(_, kind) return kind end})
+    env.mob_remark = {
+        set_scheme = function(npc, ini, scheme, section)
+            -- Mirrors utils.cfg_get_number with the mod's string default.
+            local storage = {}
+            env.db.storage[npc:id()] = env.db.storage[npc:id()] or {}
+            env.db.storage[npc:id()][scheme] = storage
+            storage.look = ini:line_exist(section, 'target') and
+                (tonumber(ini:r_string(section, 'target')) or 0) or ''
+            return 'scheme set'
+        end,
+        mob_remark = {reset_scheme = function(self)
+            if self.st.look then
+                -- The engine binding rejects a string here; this is the abort the players hit.
+                if type(self.st.look) ~= 'number' then error('story_object: no matching overload') end
+                calls.looks[#calls.looks + 1] = {self.object, {story = self.st.look}}
+            end
+            return 'reset'
+        end}
+    }
     env.ild_recipe_repairs = {install = function() end}
     env.moa_agro = {new_gg_2 = function(value) return value end}
     env.delete = {esc_ydalaem_bbbbbbbbbbbbbtttttttttttrrrrrrrrrrrrr = function(value) return value end}
@@ -77,7 +228,6 @@ local function fixture()
     env.cse_anomalous_zone = {update = function() calls.native_anom = (calls.native_anom or 0) + 1 end}
     env.cse_zone_visual = {update = function() calls.native_visual = (calls.native_visual or 0) + 1 end}
     env.main_sleep = {eat_food = function() error("unpatched food function") end}
-    env.amk = {remove_items = function() error("unpatched item removal") end}
     env.hidden_slots = {
         BkgrWnd = {
             InitControls = function(self)
@@ -498,6 +648,227 @@ do
     equal(env.bind_stalker.actor_binder.net_destroy({}), "destroyed", "net_destroy result is retained")
     env.hidden_slots.on_info("ui_inventory")
     equal(#calls.on_info, 4, "a level change drops the stale overlay")
+end
+
+do
+    local env, calls, _, module = fixture()
+    module.install()
+
+    -- The modernisation reward was cloned from the mod15 branch, so the mod58 exo had no producer.
+    env.pochinka.b_mne_mod_ekz58(nil, {})
+    equal(calls.given[1].section, "outfit_exo_mod58", "the exoskeleton branch grants its own variant")
+    equal(calls.given[1].direction, "in", "the exoskeleton is granted, not taken")
+
+    -- Sakharov's reward named a texture path; alife():create fatals on a section that does not exist.
+    env.db.actor = {give_info_portion = function(_, name) calls.infos[name] = true end}
+    env.dialogs_yantar.give_ecolog_outfit(nil, {})
+    equal(calls.given[2].section, "ecolog_outfit", "the ecologist suit is a real item section")
+    equal(calls.infos.yan_ecolog_outfit_given, true, "the reward info portion is still granted")
+    local granted = #calls.given
+    env.dialogs_yantar.give_ecolog_outfit(nil, {})
+    equal(#calls.given, granted, "the ecologist suit is granted only once")
+end
+
+do
+    local env, calls, _, module = fixture()
+    module.install()
+    env.sak.inventory = {wpn_fort = 1, wpn_fort_mod1 = 1, wpn_fort_mod2 = 1}
+
+    -- Base Fort branches keep their original behaviour: the plain pistol is the one handed in.
+    env.pochinka.give_fort()
+    env.pochinka.esc_l_d_mex_nam_fort_m1()
+    equal(calls.taken[1], "wpn_fort", "the base upgrade still consumes the plain Fort")
+    equal(calls.given[#calls.given].section, "wpn_fort_mod1", "the base upgrade still grants mod1")
+
+    -- The two added tiers upgrade an already modified pistol, which is what must be consumed.
+    env.pochinka.give_fort()
+    env.pochinka.esc_l_d_mex_nam_fort_m12()
+    equal(calls.taken[2], "wpn_fort_mod1", "the mod12 upgrade consumes the mod1 pistol")
+    equal(env.sak.inventory.wpn_fort, 0, "the plain Fort is no longer destroyed by an upgrade")
+    env.pochinka.give_fort()
+    env.pochinka.esc_l_d_mex_nam_fort_m22()
+    equal(calls.taken[3], "wpn_fort_mod2", "the mod22 upgrade consumes the mod2 pistol")
+
+    -- A reward reached without give_fort must not consume anything.
+    local taken = #calls.taken
+    env.pochinka.esc_l_d_mex_nam_fort_m12()
+    equal(#calls.taken, taken, "a reward without a handover consumes nothing")
+end
+
+do
+    local env, calls, _, module = fixture()
+    module.install()
+
+    -- vector(99) raised before amk.spawn_item was entered, killing the rest of the info portion's actions.
+    env.decor.spawn_und_tv()
+    equal(#calls.amk_spawns, 1, "the underground television is spawned")
+    equal(calls.amk_spawns[1][1], "televizor", "the spawned section is unchanged")
+    equal(calls.amk_spawns[1][2].x, -46.8, "the original position is preserved")
+    equal(calls.amk_spawns[1][3], 741, "the original game vertex is preserved")
+    equal(calls.amk_spawns[1][4], 4350, "the original level vertex is preserved")
+
+    -- Direct dialog grants bypassed CTreasure:use, whose done flag is the only guard against a second spawn.
+    local manager = {treasure_info = {esc_secret_truck_goods = {done = false}}}
+    equal(env.treasure_manager.CTreasure.give_treasure(manager, "esc_secret_truck_goods"), "granted",
+        "the first grant behaves exactly as before")
+    equal(env.treasure_manager.CTreasure.give_treasure(manager, "esc_secret_truck_goods"), nil,
+        "a second grant of the same stash does nothing")
+    equal(#calls.treasure, 1, "the stash contents and map spot are created once")
+    equal(env.treasure_manager.CTreasure.give_treasure(manager, "absent"), nil, "an unknown stash is ignored")
+end
+
+do
+    local env, calls, _, module = fixture()
+    module.install()
+    local npc = {id = function() return 7 end}
+    local function ini(target)
+        return {
+            section_exist = function() return true end,
+            line_exist = function(_, _, key) return key == "target" and target ~= nil end,
+            r_string = function() return target end
+        }
+    end
+
+    -- A section without "target" produced the string "", and story_object("") aborted the scheme.
+    equal(env.mob_remark.set_scheme(npc, ini(nil), "mob_remark", "mob_remark2"), "scheme set",
+        "the original set_scheme result is retained")
+    local state = env.db.storage[7].mob_remark
+    equal(state.look, nil, "an absent target leaves no story id behind")
+    local instance = {object = "dog", st = state}
+    equal(env.mob_remark.mob_remark.reset_scheme(instance), "reset", "a target-less section no longer aborts")
+    equal(#calls.looks, 0, "nothing is looked at when no target is configured")
+
+    -- "actor" degraded to story id 0 through atof, so the mob never turned to face the player.
+    env.mob_remark.set_scheme(npc, ini("actor"), "mob_remark", "mob_remark")
+    state = env.db.storage[7].mob_remark
+    equal(state.look, nil, "the actor target is not mistaken for story id 0")
+    equal(state.ild_look_actor, true, "the actor target is recognised")
+    env.db.actor = {position = function() return "actor_position" end}
+    env.mob_remark.mob_remark.reset_scheme({object = "dog", st = state})
+    equal(#calls.looks, 1, "the mob turns towards the actor")
+    equal(calls.looks[1][2].position, "actor_position", "it looks at the actor's position")
+
+    -- A real story id keeps going through the mod's own look, untouched.
+    env.mob_remark.set_scheme(npc, ini("310"), "mob_remark", "mob_remark")
+    state = env.db.storage[7].mob_remark
+    equal(state.look, 310, "a numeric target is preserved")
+    equal(state.ild_look_actor, false, "a numeric target is not treated as the actor")
+    env.mob_remark.mob_remark.reset_scheme({object = "burer", st = state})
+    equal(calls.looks[2][2].story, 310, "the original story-object look still runs")
+end
+
+do
+    local env, calls, _, module = fixture()
+    module.install()
+
+    -- A missing sound file is a fatal inside the constructor, so the mod's own "if snd_obj then" is too late.
+    local silent = env.xr_sound.get_safe_sound_object([[new\ost_mgnovenia_17]])
+    check(silent ~= nil, "an absent sound yields a usable stub instead of a fatal")
+    equal(#calls.sounds, 0, "the engine constructor is never reached for an absent file")
+    silent:play_no_feedback(nil, nil, 0, nil, 1.0)
+    silent:play_at_pos(nil, nil, 0)
+    equal(silent:playing(), false, "the stub reports that it is not playing")
+    check(env.xr_sound.get_safe_sound_object([[soundtrack\controller\7]]) ~= nil,
+        "the whole absent soundtrack directory is covered")
+    -- Present files must still go to the engine untouched.
+    local real = env.xr_sound.get_safe_sound_object([[ambient\da_beep]])
+    equal(calls.sounds[1], [[ambient\da_beep]], "present sounds still reach the engine")
+    real:play_no_feedback()
+    equal(real.played, true, "a real sound object is returned unchanged")
+end
+
+do
+    local env, calls, _, module = fixture()
+    module.install()
+    local npc = {id = function() return 11 end}
+    local ini = {r_string = function(_, _, key) return key == "path_main" and "esc_voen_sniper_spati" or nil end}
+
+    -- Inside a gulag the absolute path became esc_blokpost_esc_voen_sniper_spati, which does not exist.
+    equal(env.xr_sleeper.set_scheme(npc, ini, "sleeper", "sleeper@esc_blockpost_camper_day", "esc_blokpost"),
+        "sleeper set", "the original sleeper result is retained")
+    equal(env.db.storage[11].sleeper.path_main, "esc_voen_sniper_spati",
+        "the sniper sleeps on the path that actually exists")
+    -- Any other gulag path keeps its prefix.
+    local other = {r_string = function() return "sleep3" end}
+    env.xr_sleeper.set_scheme(npc, other, "sleeper", "sleeper@esc_blockpost_sleeptt", "esc_blokpost")
+    equal(env.db.storage[11].sleeper.path_main, "esc_blokpost_sleep3", "ordinary gulag paths are untouched")
+
+    -- An unlisted community has no drop table; pairs(nil) aborted the whole death callback.
+    local manager = {npc = {character_community = function() return "actor_freedom" end}}
+    equal(env.death_manager.drop_manager.create_release_item(manager), nil,
+        "an unlisted community no longer aborts the death callback")
+    local known = {npc = {character_community = function() return "stalker" end}}
+    equal(env.death_manager.drop_manager.create_release_item(known), "dropped",
+        "a listed community still generates its drop")
+end
+
+do
+    local env, calls, _, module = fixture()
+    module.install()
+    env.clock_ms = 3600000
+
+    -- m_endTime is compared against a seconds clock, so the divisor has to be exactly 1000.
+    env.new_life.stalkerok_navuk_lvl1()
+    equal(calls.statics.chibi_rechi_navuk_lvl1.m_endTime, 3600 + 20, "the skill banner expires 20 s from now")
+    env.new_life.chibi_dost_za_vse_kassetu()
+    equal(calls.statics.chibi_dost_za_vse_kassetu.m_endTime, 3600 + 15, "the cassette banner expires 15 s from now")
+    env.new_life.stalkerok_mexanik_navuk_lvl2()
+    equal(calls.statics.chibi_mex_navuk_lvl2.m_endTime, 3600 + 20, "the mechanic banner expires 20 s from now")
+    env.amk.chibi_pereves()
+    equal(calls.statics.chibi_pereves.m_endTime, 3600 + 10, "the overweight icon expires 10 s from now")
+    -- The whole point: the timestamp must move with the clock, not drift away from it.
+    env.clock_ms = 7200000
+    env.amk.chibi_pereves()
+    equal(calls.statics.chibi_pereves.m_endTime, 7200 + 10, "the icon still expires 10 s after a later trigger")
+end
+
+do
+    local env, calls, _, module = fixture()
+    module.install()
+    local conditions = {}
+    local function slot_item(value)
+        return {
+            condition = function() return value end,
+            set_condition = function(self, next) value = next conditions[#conditions + 1] = next end
+        }
+    end
+    env.db.actor = {slots = {}, item_in_slot = function(self, slot) return self.slots[slot] end}
+
+    -- A bench guarantees its tier as a floor; it must not grind a better weapon down to it.
+    env.db.actor.slots[1] = slot_item(0.95)
+    env.stanok.baliaaa.rep_s1()
+    equal(conditions[#conditions], 0.95, "the level-1 bench leaves a better weapon alone")
+    env.db.actor.slots[2] = slot_item(0.30)
+    env.stanok.baliaaa.rep_s2()
+    equal(conditions[#conditions], 0.75, "the level-1 bench still repairs a worn weapon to its tier")
+    env.db.actor.slots[1] = slot_item(0.95)
+    env.stanok.pochinka2.rep_s1()
+    equal(conditions[#conditions], 0.95, "the level-2 bench leaves a better weapon alone")
+    -- The level-2 slot-6 handler carries a 0.01 typo that destroyed the outfit outright.
+    env.db.actor.slots[6] = slot_item(0.60)
+    env.stanok.pochinka2.rep_s6()
+    equal(conditions[#conditions], 0.85, "the level-2 bench no longer ruins the outfit it should repair")
+end
+
+do
+    local env, calls, _, module = fixture()
+    module.install()
+
+    -- The mod dropped this vanilla string id, and the engine returns the id itself when it is absent.
+    env.xr_effects.esc_direction_fire({}, {})
+    equal(#calls.tips, 0, "no raw string id is pushed to the PDA")
+    calls.strings = {esc_direction_fire = "Fire!"}
+    env.xr_effects.esc_direction_fire({}, {})
+    equal(#calls.tips, 1, "a translated string is still sent")
+
+    -- The campfire light was attached to a graph vertex 619 m away, so it never switched online.
+    env.db.actor = {game_vertex_id = function() return 55 end}
+    env.decor.spawn_esc_svet_y_sidora()
+    local light = calls.created[#calls.created]
+    equal(light[1], "svet_kostra", "the campfire light section is unchanged")
+    equal(light[2].x, -242, "the original position is preserved")
+    equal(light[3], "lvid:-242", "the level vertex is resolved from that position")
+    equal(light[4], 55, "the game vertex is the level the actor is actually on")
 end
 
 print("script_repairs_tests: " .. tests .. " checks passed")

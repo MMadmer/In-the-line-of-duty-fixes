@@ -25,8 +25,22 @@ constexpr std::array sources{
     ConfigRepairSource{L"gamedata/config/scripts/kordon/z_zvyk_psi.ltx", 96,
         "B2D5E006DB9DF032E16DE14EF02B57CA7A1BE013257D3020D0FF9D12CC658678", ConfigRepair::psi_sound},
     ConfigRepairSource{L"gamedata/config/ui/avtodroch.xml", 7434,
-        "B6FE2604675A392A2A7F4FDA1FC4B053D01557E1BEA504250199F1B9FE5D36FD", ConfigRepair::car_text}
+        "B6FE2604675A392A2A7F4FDA1FC4B053D01557E1BEA504250199F1B9FE5D36FD", ConfigRepair::car_text},
+    ConfigRepairSource{L"gamedata/config/gameplay/dialogs_bar.xml", 344431,
+        "A1A1BCDAA2060B1B1223B8DE6BB780F56C9D985F88B16C61696339E645E2BDD6", ConfigRepair::skat_upgrade},
+    ConfigRepairSource{L"gamedata/scripts/ogsm_mutants.script", 40094,
+        "F00377127ACB3AA6EE474CA51F6FC59139BB71AD74B50968600FC51A6F24A2A3", ConfigRepair::mutant_sounds}
 };
+
+// Replace a unique expression with an equal-length one, padding the remainder with spaces.
+bool blank_to(std::string& text, std::string_view old, std::string_view next)
+{
+    const auto at = text.find(old);
+    if (at == text.npos || text.find(old, at + old.size()) != text.npos || next.size() > old.size()) return false;
+    text.replace(at, next.size(), next);
+    std::fill_n(text.begin() + at + next.size(), old.size() - next.size(), ' ');
+    return true;
+}
 
 struct Range { std::size_t begin, end; };
 std::optional<Range> block(std::string_view text, std::string_view tag, std::string_view id, std::size_t from = 0)
@@ -94,6 +108,26 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
     else if (repair == ConfigRepair::psi_sound)
     {
         if (!replace_one(patched, "on_use = no_use", ";n_use = no_use")) return false;
+    }
+    else if (repair == ConfigRepair::mutant_sounds)
+    {
+        // These two sound files ship in neither the loose tree nor the archives, and the constructors run at
+        // module scope, so the module cannot even be loaded, let alone patched from Lua. Both use sites already
+        // test the value before playing it, so a nil leaves the effect intact and merely silent.
+        if (!blank_to(patched, "sound_object([[anomaly\\flies]])", "nil") ||
+            !blank_to(patched, "sound_object([[monsters\\phantom\\phantom_snork_death]])", "nil")) return false;
+    }
+    else if (repair == ConfigRepair::skat_upgrade)
+    {
+        // The material-5 SKAT branch was cloned from the material-7 phrase and kept its reward, so the
+        // material-5 outfit has no producer at all. Only this phrase is retargeted, never the material-7 one.
+        constexpr std::string_view anchor = "b_bronevik_modern_505<";
+        constexpr std::string_view reward = "pochinka.b_mne_mod_skat7";
+        const auto phrase = patched.find(anchor);
+        if (phrase == patched.npos || patched.find(anchor, phrase + anchor.size()) != patched.npos) return false;
+        const auto action = patched.find(reward, phrase);
+        if (action == patched.npos || action - phrase > 200) return false;
+        patched[action + reward.size() - 1] = '5';
     }
     else if (repair == ConfigRepair::car_text)
     {
