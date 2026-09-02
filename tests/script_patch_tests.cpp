@@ -71,6 +71,15 @@ int main()
         string_of(actor).find("ild_gameplay.install()") == std::string::npos) return 8;
     auto ambiguous_actor = bytes_of("printf(\"actor net spawn\") printf(\"actor net spawn\")");
     if (ild::script_patch::bind_gameplay(ambiguous_actor)) return 9;
+    // The repaired save branch must write the unmodified mod's ordinary bytes: a zero flag and no timestamp.
+    auto save = bytes_of("\t\tpacker:w_bool(true)\r\n\t\tutils.w_CTime(packet, self.st.disable_input_time)\r\n"
+        "printf(\"actor net spawn\")\r\n\tif stored_input_time == true then\r\n");
+    const auto save_size = save.size();
+    if (!ild::script_patch::bind_gameplay(save) || save.size() != save_size) return 10;
+    const auto repaired = string_of(save);
+    if (repaired.find("packer") != std::string::npos || repaired.find("w_CTime") != std::string::npos ||
+        repaired.find("\t\tpacket:w_u8(0)     \r\n\t\t" + std::string(49, ' ') + "\r\n") == std::string::npos ||
+        repaired.find("stored_input_time == 1    then") == std::string::npos) return 11;
 
     return 0;
 }

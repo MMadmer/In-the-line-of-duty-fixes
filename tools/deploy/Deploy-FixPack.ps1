@@ -10,11 +10,19 @@ $GameRoot = [IO.Path]::GetFullPath($GameRoot).TrimEnd('\')
 $version = [regex]::Match((Get-Content "$repo\CMakeLists.txt" -Raw),
     'project\(InTheLineOfDutyFixes VERSION ([0-9]+\.[0-9]+\.[0-9]+)').Groups[1].Value
 $payload = Join-Path $repo "artifacts\candidate\payload-$version"
-$expected = @('bin/dinput8.dll', 'InTheLineOfDutyFixesUpdater.exe',
-    'gamedata/scripts/ild_fix_ui.script', 'gamedata/scripts/ild_gameplay.script', 'gamedata/config/ui/ild_fixes_update.xml',
-    'README-InTheLineOfDutyFixes.txt', '.ild-fixes/version.txt', '.ild-fixes/managed-files.txt') | Sort-Object
-$expected = @($expected + 'gamedata/scripts/ild_script_repairs.script' | Sort-Object)
-$expected = @($expected + 'gamedata/scripts/ild_recipe_repairs.script' | Sort-Object)
+$manifestPath = '.ild-fixes/update-manifest.txt'
+# Every candidate file must be byte-identical to the current build output or source; stale candidates never ship.
+$sourceMap = @{
+    'bin/dinput8.dll' = 'build\Release\dinput8.dll'
+    'InTheLineOfDutyFixesUpdater.exe' = 'build\updater\InTheLineOfDutyFixesUpdater.exe'
+    'gamedata/scripts/ild_fix_ui.script' = 'payload\gamedata\scripts\ild_fix_ui.script'
+    'gamedata/scripts/ild_gameplay.script' = 'payload\gamedata\scripts\ild_gameplay.script'
+    'gamedata/scripts/ild_script_repairs.script' = 'payload\gamedata\scripts\ild_script_repairs.script'
+    'gamedata/scripts/ild_recipe_repairs.script' = 'payload\gamedata\scripts\ild_recipe_repairs.script'
+    'gamedata/config/ui/ild_fixes_update.xml' = 'payload\gamedata\config\ui\ild_fixes_update.xml'
+    'README-InTheLineOfDutyFixes.txt' = 'packaging\README-InTheLineOfDutyFixes.txt'
+}
+$expected = @(@($sourceMap.Keys) + @('.ild-fixes/version.txt', '.ild-fixes/managed-files.txt', $manifestPath) | Sort-Object)
 
 function Save-Snapshot {
     Get-ChildItem 'C:\Users\Public\Documents\STALKER-SHOC\savedgames' -Recurse -File |
@@ -22,8 +30,9 @@ function Save-Snapshot {
 }
 
 function Assert-NoReparse([string]$Path) {
+    # The game root itself may be a junction (a relocated library); only components below it are checked.
     $current = $Path
-    while ($current -and $current.Length -ge $GameRoot.Length) {
+    while ($current -and $current.Length -gt $GameRoot.Length) {
         if (Test-Path -LiteralPath $current) {
             if ((Get-Item -LiteralPath $current -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
                 throw "Reparse point is not a deployment target: $current"
@@ -33,31 +42,48 @@ function Assert-NoReparse([string]$Path) {
     }
 }
 
+function Copy-Atomic([string]$Source, [string]$Target) {
+    $temporary = "$Target.ild-deploy-tmp"
+    Copy-Item -LiteralPath $Source -Destination $temporary -Force
+    Move-Item -LiteralPath $temporary -Destination $Target -Force
+}
+
 try {
-    if (Get-Process -Name XR_3DA, InTheLineOfDutyFixesUpdater -ErrorAction SilentlyContinue) {
+    if (Get-Process -Name XR_3DA, InTheLineOfDutyFixesUpdater, IldFixesUpdater.cached -ErrorAction SilentlyContinue) {
         throw 'Close the game and updater before deploying.'
     }
     if (-not (Test-Path "$GameRoot\bin\XR_3DA.exe" -PathType Leaf)) { throw 'Game root is invalid.' }
+    if (-not (Test-Path -LiteralPath $payload)) {
+        throw "Candidate payload is missing: $payload. Run tools\package\Build-Package.ps1 first."
+    }
+    foreach ($relative in $sourceMap.Keys) {
+        $built = Join-Path $repo $sourceMap[$relative]
+        if (-not (Test-Path -LiteralPath $built -PathType Leaf)) { throw "Build output is missing: $built" }
+        if ((Get-FileHash -LiteralPath $built).Hash -ne (Get-FileHash -LiteralPath (Join-Path $payload $relative)).Hash) {
+            throw "Stale candidate: $relative differs from the current build. Re-run Build-Package.ps1."
+        }
+    }
     $managed = @(Get-Content "$payload\.ild-fixes\managed-files.txt" | Sort-Object)
     if (Compare-Object $expected $managed) { throw 'Unexpected payload ownership manifest.' }
     $ownedPath = "$GameRoot\.ild-fixes\managed-files.txt"
     $owned = if (Test-Path $ownedPath) { @(Get-Content $ownedPath) } else { @() }
     $entries = @{}
-    foreach ($line in (Get-Content "$payload\update-manifest.txt" | Select-Object -Skip 2)) {
+    foreach ($line in (Get-Content "$payload\$manifestPath" | Select-Object -Skip 2)) {
         $parts = $line.Split("`t")
-        if ($parts.Count -ne 3 -or $parts[2] -notin $expected -or $entries.ContainsKey($parts[2])) {
+        if ($parts.Count -ne 3 -or $parts[2] -notin $expected -or $parts[2] -eq $manifestPath -or
+            $entries.ContainsKey($parts[2])) {
             throw 'Invalid payload manifest entry.'
         }
         $entries[$parts[2]] = $parts
     }
-    if ($entries.Count -ne $expected.Count) { throw 'Incomplete payload manifest.' }
+    if ($entries.Count -ne $expected.Count - 1) { throw 'Incomplete payload manifest.' }
     foreach ($relative in $expected) {
         $source = Join-Path $payload $relative
         $target = Join-Path $GameRoot $relative
         Assert-NoReparse $target
         if ((Test-Path $target) -and $relative -notin $owned) { throw "Foreign file collision: $target" }
-        if ((Get-FileHash $source).Hash -ne $entries[$relative][0] -or
-            (Get-Item $source).Length -ne [long]$entries[$relative][1]) { throw "Invalid payload: $relative" }
+        if ($relative -ne $manifestPath -and ((Get-FileHash $source).Hash -ne $entries[$relative][0] -or
+            (Get-Item $source).Length -ne [long]$entries[$relative][1])) { throw "Invalid payload: $relative" }
     }
     if ((Get-Content "$payload\.ild-fixes\version.txt" -Raw).Trim() -ne $version) { throw 'Wrong payload version.' }
     $savesBefore = @(Save-Snapshot)
@@ -74,21 +100,26 @@ try {
     $changed = [Collections.Generic.List[string]]::new()
     try {
         foreach ($relative in $expected) {
+            $source = Join-Path $payload $relative
             $target = Join-Path $GameRoot $relative
             New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
             $changed.Add($relative)
-            Copy-Item -LiteralPath (Join-Path $payload $relative) -Destination $target -Force
-            if ((Get-FileHash $target).Hash -ne $entries[$relative][0]) { throw "Deployment mismatch: $relative" }
+            Copy-Atomic $source $target
+            if ((Get-FileHash $target).Hash -ne (Get-FileHash $source).Hash) { throw "Deployment mismatch: $relative" }
         }
     }
     catch {
+        $failure = $_
         foreach ($relative in $changed) {
-            $target = Join-Path $GameRoot $relative
-            $copy = Join-Path $backup $relative
-            if (Test-Path $copy) { Copy-Item -LiteralPath $copy -Destination $target -Force }
-            elseif (Test-Path $target) { Remove-Item -LiteralPath $target }
+            try {
+                $target = Join-Path $GameRoot $relative
+                $copy = Join-Path $backup $relative
+                if (Test-Path $copy) { Copy-Atomic $copy $target }
+                elseif (Test-Path $target) { Remove-Item -LiteralPath $target -Force }
+            }
+            catch { Write-Warning "Rollback failed for ${relative}: $_" }
         }
-        throw
+        throw $failure
     }
     if (Compare-Object $savesBefore @(Save-Snapshot)) { throw 'Save tree changed during deployment.' }
     Write-Output "Deployed $version to $GameRoot; all $($expected.Count) runtime hashes verified; saves unchanged."

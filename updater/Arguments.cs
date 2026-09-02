@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 
 namespace IldFixes.Updater
 {
@@ -55,7 +56,7 @@ namespace IldFixes.Updater
         internal int RequiredInt(string name)
         {
             int value;
-            if (!int.TryParse(Required(name), out value) || value < 0)
+            if (!int.TryParse(Required(name), NumberStyles.None, CultureInfo.InvariantCulture, out value))
                 throw new ArgumentException("Invalid integer: " + name);
             return value;
         }
@@ -63,7 +64,18 @@ namespace IldFixes.Updater
         internal long RequiredLong(string name)
         {
             long value;
-            if (!long.TryParse(Required(name), out value) || value < 0)
+            if (!long.TryParse(Required(name), NumberStyles.None, CultureInfo.InvariantCulture, out value))
+                throw new ArgumentException("Invalid integer: " + name);
+            return value;
+        }
+
+        internal long OptionalLong(string name)
+        {
+            string text = Optional(name);
+            long value;
+            if (text == null)
+                return 0;
+            if (!long.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out value))
                 throw new ArgumentException("Invalid integer: " + name);
             return value;
         }

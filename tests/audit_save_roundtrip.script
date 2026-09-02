@@ -20,13 +20,11 @@ function install()
         end
         if mode == "read" and not inspected then
             inspected = true
-            if not restored_timestamp or self.st.disable_input_idle ~= 30 then
+            -- The repaired save path stores no timestamp, so a save made with disabled input loads without one
+            -- and stays readable by the unmodified mod.
+            if restored_timestamp then
                 failed = true
-                console:execute("ild_update qa_fail timed-input-not-restored before=" ..
-                    tostring(restored_timestamp) .. " idle=" .. tostring(self.st.disable_input_idle))
-            else
-                -- Exercise expiry immediately after verifying the original saved duration.
-                self.st.disable_input_idle = 0
+                console:execute("ild_update qa_fail timed-input-persisted")
             end
         end
         if mode == "write" and not written and now - started >= 500 then
@@ -37,10 +35,6 @@ function install()
             console:execute("save ild_audit_timed_input")
         end
         if now - started >= 5000 then
-            if mode == "read" and self.st.disable_input_time then
-                failed = true
-                console:execute("ild_update qa_fail timed-input-not-expired")
-            end
             if not failed then console:execute("ild_update qa_save_" .. mode) end
             console:execute("quit")
         end

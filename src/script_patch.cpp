@@ -75,7 +75,18 @@ bool bind_gameplay(std::span<std::byte> source)
         if (at != source.end() && old_bytes.size() == new_bytes.size())
             std::copy(new_bytes.begin(), new_bytes.end(), at);
     };
-    replace_equal("packer:w_bool(true)", "packet:w_bool(true)");
+    const auto blank = [&](std::string_view before)
+    {
+        const auto old_bytes = as_bytes(before);
+        const auto at = std::search(source.begin(), source.end(), old_bytes.begin(), old_bytes.end());
+        if (at != source.end()) std::fill(at, at + old_bytes.size(), std::byte{' '});
+    };
+    // The mod's save path misspells "packet" and would abort while input is disabled. The repaired path writes
+    // exactly what the unmodified mod writes in its ordinary branch (a zero flag and no timestamp), so every save
+    // stays loadable after the fix pack is removed. Loading still consumes a timestamp written by the earlier
+    // 0.9.1 build, whose flag byte is numeric 1.
+    replace_equal("packer:w_bool(true)", "packet:w_u8(0)     ");
+    blank("utils.w_CTime(packet, self.st.disable_input_time)");
     replace_equal("stored_input_time == true then", "stored_input_time == 1    then");
     return true;
 }

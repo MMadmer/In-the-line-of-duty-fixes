@@ -2,6 +2,8 @@ local installed = false
 local actor_repairs_installed = false
 local detector_started = false
 local artefacts_dirty = false
+local detector_spots = true
+local overlay
 
 local giant_sections = {
     ["mob_walker@1"] = true,
@@ -94,23 +96,48 @@ end
 
 local function install_hidden_slots()
     local window = hidden_slots.BkgrWnd
-    local original_add = window.AddCallback
-    window.AddCallback = function(self, name, event, handler, context)
-        if name == "check_button_1" and event == ui_events.WINDOW_LBUTTON_DB_CLICK then
-            -- InitControls registers each button immediately after assigning self.btn.
-            local button = self.btn
-            handler = function()
-                local actor = db.actor
-                local item = actor and actor:item_in_slot(0)
-                local section = item and knife_sections[item:section()]
-                if not section then return end
-                hidden_slots.spawn_item_in_inv(section)
-                hidden_slots.remove_item(item:id())
-                button:Show(false)
-            end
-            self.ClickBtn[1] = handler
+    local original_init = window.InitControls
+    local original_init_btn = hidden_slots.init_btn
+    local current
+    -- InitControls assigns self.btn right before init_btn(k); the knife button is not stored anywhere else.
+    hidden_slots.init_btn = function(number, section)
+        if number == 1 and current then current.ild_knife_button = current.btn end
+        return original_init_btn(number, section)
+    end
+    -- Only Lua-defined methods may be taken from a luabind class object. Inherited C++ methods such as
+    -- AddCallback have no default implementation there and raise "pure virtual function called".
+    window.InitControls = function(self)
+        -- __init fills ClickBtn before InitControls; the loop registers whatever ClickBtn[1] holds now.
+        self.ClickBtn[1] = function()
+            local actor, simulator = db.actor, alife()
+            local item = actor and actor:item_in_slot(0)
+            local section = item and knife_sections[item:section()]
+            if not section or not simulator or not simulator:object(item:id()) then return end
+            hidden_slots.spawn_item_in_inv(section)
+            hidden_slots.remove_item(item:id())
+            if self.ild_knife_button then self.ild_knife_button:Show(false) end
         end
-        return original_add(self, name, event, handler, context)
+        current = self
+        local result = original_init(self)
+        current = nil
+        overlay = self
+        return result
+    end
+    local original_on_info = hidden_slots.on_info
+    hidden_slots.on_info = function(info_id)
+        local owner = info_id == "ui_inventory" and overlay and level.main_input_receiver()
+        if not owner then return original_on_info(info_id) end
+        -- The mod rebuilds the overlay (two statics, three buttons, callbacks) on every open and never
+        -- detaches the old copies; the first window serves the inventory for the rest of the level.
+        overlay.owner = owner
+        owner:AttachChild(overlay.stat)
+        for index = 1, 3 do hidden_slots.init_btn(index) end
+        overlay.stat:Show(true)
+    end
+    hidden_slots.inventory_close = function()
+        -- The original keeps the receiver captured at overlay creation; the live one survives level changes.
+        local window = level.main_input_receiver()
+        if window and window:IsShown() then level.start_stop_menu(window, true) end
     end
 end
 
@@ -159,9 +186,17 @@ local function install_actor_repairs()
         local item = actor:item_in_slot(1)
         local section = item and item:section()
         if section == "det_artefact_indy" then detector.det_indy()
-        elseif section == "det_artefact_pro" then detector.det_normal()
-        elseif section == "det_artefact_super" then detector.det_super()
-        else detector.iteration_del_spot() end
+        elseif section == "det_artefact_pro" then
+            detector_spots = true
+            detector.det_normal()
+        elseif section == "det_artefact_super" then
+            detector_spots = true
+            detector.det_super()
+        elseif detector_spots then
+            -- Spots exist only after a detector ran; one sweep when it is put away replaces a per-frame scan.
+            detector.iteration_del_spot()
+            detector_spots = false
+        end
         -- A true fastcall result removes the callback from the physics commander.
         return false
     end
@@ -174,6 +209,7 @@ local function reset_detector_registry()
     end
     db.artefacts = {}
     detector_started = false
+    detector_spots = true
 end
 
 local function restore_input_timeout(binder)
@@ -231,11 +267,18 @@ function install()
     local original_spawn = binder.net_spawn
     binder.net_spawn = function(self, ...)
         local result = original_spawn(self, ...)
+        overlay = nil
         if result and db.actor then
             install_actor_repairs()
             reset_detector_registry()
         end
         return result
+    end
+    local original_destroy = binder.net_destroy
+    binder.net_destroy = function(self, ...)
+        -- The inventory window is recreated with the level; a stale overlay owner must never be touched.
+        overlay = nil
+        return original_destroy(self, ...)
     end
     local original_update = binder.update
     binder.update = function(self, ...)

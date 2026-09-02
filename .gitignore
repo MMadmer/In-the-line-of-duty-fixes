@@ -39,6 +39,9 @@
 *.etl
 *.zip
 
+# Generated documentation search index
+/docs/index.bleve/
+
 # Editor and OS noise
 .DS_Store
 Thumbs.db

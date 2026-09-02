@@ -15,8 +15,8 @@ function install()
     if installed then return end
     installed = true
     ild_script_repairs.install()
-    get_console():execute("ild_update read qa_game")
-    if get_console():get_string("ild_update") == "1" then ild_qa.install() end
+    -- QA probes ship only as a separate ild_qa.script; the engine resolves an absent module to nil.
+    if ild_qa then ild_qa.install() end
     local original_add = ph_door.add_to_binder
     ph_door.add_to_binder = function(object, ini, scheme, section, storage)
         local spawn = object:spawn_ini()

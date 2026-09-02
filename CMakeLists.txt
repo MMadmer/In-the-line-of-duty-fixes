@@ -77,12 +77,17 @@ add_test(NAME texture_aliases COMMAND ild_texture_alias_tests)
 add_executable(ild_config_repair_tests tests/config_repair_tests.cpp src/config_repairs.cpp src/sha256.cpp)
 target_link_libraries(ild_config_repair_tests PRIVATE ild_script_patch advapi32)
 add_test(NAME config_repairs COMMAND ild_config_repair_tests)
+add_executable(ild_command_line_tests tests/command_line_tests.cpp)
+target_include_directories(ild_command_line_tests PRIVATE src)
+add_test(NAME command_line COMMAND ild_command_line_tests)
 find_program(ILD_LUA51 NAMES lua PATHS "C:/Program Files (x86)/Lua/5.1")
 if(ILD_LUA51)
     add_test(NAME recipe_repairs COMMAND ${ILD_LUA51} ${CMAKE_CURRENT_SOURCE_DIR}/tests/recipe_repairs_tests.lua
         ${CMAKE_CURRENT_SOURCE_DIR}/payload/gamedata/scripts/ild_recipe_repairs.script)
     add_test(NAME script_repairs COMMAND ${ILD_LUA51} ${CMAKE_CURRENT_SOURCE_DIR}/tests/script_repairs_tests.lua
         ${CMAKE_CURRENT_SOURCE_DIR}/payload/gamedata/scripts/ild_script_repairs.script)
+    add_test(NAME gameplay_repairs COMMAND ${ILD_LUA51} ${CMAKE_CURRENT_SOURCE_DIR}/tests/gameplay_tests.lua
+        ${CMAKE_CURRENT_SOURCE_DIR}/payload/gamedata/scripts/ild_gameplay.script)
 endif()
 
 add_executable(ild_script_patch_tests
@@ -150,6 +155,7 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/updater
     COMMAND ${ILD_CSC}
         /nologo
+        /codepage:65001
         /target:winexe
         /platform:x86
         /optimize+
@@ -175,7 +181,7 @@ add_executable(ild_hidden_desktop_launcher
 
 if(MSVC)
     target_compile_options(ild_hidden_desktop_launcher PRIVATE /W4 /WX /permissive- /utf-8)
-    foreach(TEST_TARGET ild_audio_metadata_tests ild_texture_alias_tests ild_config_repair_tests)
+    foreach(TEST_TARGET ild_audio_metadata_tests ild_texture_alias_tests ild_config_repair_tests ild_command_line_tests)
         target_compile_options(${TEST_TARGET} PRIVATE /W4 /WX /permissive- /utf-8)
     endforeach()
 endif()

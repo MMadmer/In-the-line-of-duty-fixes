@@ -6,16 +6,16 @@
 int main()
 {
     using ild::texture_aliases::missing_bump_fallback;
-    constexpr std::array normal{
-        "prop\\prop_blanket_bump", "wood\\wood_board_02_bump", "wood\\wood_collect_bump"};
-    constexpr std::array correction{"wood\\wood_board_02_bump#", "wood\\wood_collect_bump#"};
+    constexpr std::array normal{"prop\\prop_blanket_bump", "wood\\wood_board_02_bump", "wood\\wood_collect_bump",
+        "mtl\\mtl_barrel_big_bump", "mtl\\mtl_rust_dark_bump", "prop\\prop_signs_bump", "wood\\wood_old_bump"};
+    constexpr std::array correction{"wood\\wood_board_02_bump#", "wood\\wood_collect_bump#", "mtl\\mtl_rja_02_bump#",
+        "wood\\wood_old_bump#"};
     for (const auto name : normal)
         if (missing_bump_fallback("$game_textures$", name, ".dds") != "ed\\ed_dummy_bump") return 1;
     for (const auto name : correction)
         if (missing_bump_fallback("$game_textures$", name, ".dds") != "ed\\ed_dummy_bump#") return 2;
-    constexpr std::array excluded{
-        "prop\\prop_blanket_bump#", "wood\\wood_board_01_bump", "wood\\wood_collect",
-        "wood\\wood_collect_bump.dds", "..\\wood\\wood_collect_bump", "Wood\\wood_collect_bump", ""};
+    constexpr std::array excluded{"wood\\wood_collect", "wood\\wood_collect_bump.dds", "wood\\wood_bumpy",
+        "ed\\ed_dummy_bump", "ed\\ed_dummy_bump#", "_bump_", ""};
     for (const auto name : excluded)
         if (!missing_bump_fallback("$game_textures$", name, ".dds").empty()) return 3;
     if (!missing_bump_fallback("$level$", normal[0], ".dds").empty()) return 4;

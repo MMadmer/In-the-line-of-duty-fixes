@@ -12,14 +12,14 @@ namespace ild
 
 namespace texture_aliases
 {
+// R2 substitutes ed_dummy_bump / ed_dummy_bump# for any missing bump texture after logging a warning; the alias
+// hands the renderer the same resource up front, so the picture is unchanged and the console stays readable.
 [[nodiscard]] constexpr std::string_view missing_bump_fallback(
     std::string_view path, std::string_view name, std::string_view extension) noexcept
 {
-    if (path != "$game_textures$" || extension != ".dds") return {};
-    if (name == "prop\\prop_blanket_bump" || name == "wood\\wood_board_02_bump" ||
-        name == "wood\\wood_collect_bump") return "ed\\ed_dummy_bump";
-    if (name == "wood\\wood_board_02_bump#" || name == "wood\\wood_collect_bump#")
-        return "ed\\ed_dummy_bump#";
+    if (path != "$game_textures$" || extension != ".dds" || name.starts_with("ed\\ed_dummy_bump")) return {};
+    if (name.ends_with("_bump#")) return "ed\\ed_dummy_bump#";
+    if (name.ends_with("_bump")) return "ed\\ed_dummy_bump";
     return {};
 }
 }

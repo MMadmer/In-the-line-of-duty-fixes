@@ -1,4 +1,9 @@
 using System;
+using System.Reflection;
+
+// The packaging scripts compare this Win32 product version with the CMake project version.
+[assembly: AssemblyTitle("In the Line of Duty Fixes updater")]
+[assembly: AssemblyInformationalVersion("@PROJECT_VERSION@")]
 
 namespace IldFixes.Updater
 {

@@ -1,6 +1,7 @@
 #define DIRECTINPUT_VERSION 0x0800
 
 #include "iat_hook.h"
+#include "command_line.h"
 #include "console_hooks.h"
 #include "update_bridge.h"
 #include "inventory_hooks.h"
@@ -12,7 +13,6 @@
 
 #include <Windows.h>
 #include <dinput.h>
-#include <shellapi.h>
 
 #include <algorithm>
 #include <array>
@@ -118,23 +118,12 @@ void start_update_service(const std::filesystem::path& engine)
 {
     const auto root = engine.parent_path().parent_path();
     const auto updater = root / L"InTheLineOfDutyFixesUpdater.exe";
-    std::wstring restart_arguments;
-    bool qa{};
-    int count{};
-    const auto arguments = CommandLineToArgvW(GetCommandLineW(), &count);
-    if (arguments)
-    {
-        for (int index = 1; index < count; ++index)
-        {
-            if (std::wstring_view(arguments[index]) == L"-qa_update") qa = true;
-            if (!restart_arguments.empty()) restart_arguments.push_back(L' ');
-            restart_arguments += quote_argument(arguments[index]);
-        }
-        LocalFree(arguments);
-    }
+    // The restart must reproduce the original command line, including X-Ray's space-terminated switches.
+    const auto tail = ild::command_line_tail(GetCommandLineW());
+    const auto qa = ild::has_switch(tail, L"-qa_update");
     std::wstring command = quote_argument(updater.wstring()) + L" --service --game-dir " +
         quote_argument(root.wstring()) + L" --game-pid " + std::to_wstring(GetCurrentProcessId()) +
-        L" --restart-exe " + quote_argument(engine.wstring()) + L" --restart-args " + quote_argument(restart_arguments);
+        L" --restart-exe " + quote_argument(engine.wstring()) + L" --restart-args " + quote_argument(std::wstring(tail));
     if (qa)
     {
         std::array<wchar_t, 2048> api{};
@@ -321,7 +310,7 @@ BOOL CALLBACK install_fixes(PINIT_ONCE, PVOID, PVOID*)
     if (!ild::install_console_hooks(GetModuleHandleW(nullptr)))
         report_unsupported(L"The validated console entry points could not be hooked. Console editing was not changed.");
 #ifdef ILD_CONSOLE_QA
-    if (std::wcsstr(GetCommandLineW(), L"-ild_console_qa"))
+    if (ild::has_switch(ild::command_line_tail(GetCommandLineW()), L"-ild_console_qa"))
         ild::run_console_selftest(GetModuleHandleW(nullptr), root / L"console-qa.txt");
 #endif
     real_create_file_mapping = reinterpret_cast<CreateFileMappingAFn>(ild::replace_iat_import(

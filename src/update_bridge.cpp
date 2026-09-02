@@ -1,4 +1,5 @@
 #include "update_bridge.h"
+#include "command_line.h"
 #include "inventory_hooks.h"
 #include "texture_aliases.h"
 
@@ -6,7 +7,6 @@
 #include <array>
 #include <charconv>
 #include <cstring>
-#include <fstream>
 #include <map>
 #include <sstream>
 #include <string>
@@ -62,7 +62,11 @@ public:
     void configure(const std::filesystem::path& root)
     {
         runtime_ = root / L".ild-fixes" / L"runtime";
-        if (std::wcsstr(GetCommandLineW(), L"-qa_update")) qa_ = true;
+        // Each game process talks to its own helper through session-named files.
+        const auto session = std::to_wstring(GetCurrentProcessId());
+        status_name_ = L"status-" + session + L".txt";
+        command_name_ = L"command-" + session + L".txt";
+        qa_ = has_switch(command_line_tail(GetCommandLineW()), L"-qa_update");
         std::array<wchar_t, 8> value{};
         const auto length = GetEnvironmentVariableW(L"ILD_QA_UI_DOWNLOAD", value.data(), 8);
         qa_download_ = qa_ && length == 1 && value[0] == L'1';
@@ -84,17 +88,15 @@ public:
         constexpr std::array allowed{"download", "apply", "dismiss", "dismiss_major", "disable_major", "open_major"};
         if (std::find(allowed.begin(), allowed.end(), action) != allowed.end())
         {
-            write_atomic(L"command.txt", "session=" + std::to_string(GetCurrentProcessId()) +
+            write_atomic(command_name_.c_str(), "session=" + std::to_string(GetCurrentProcessId()) +
                 "\naction=" + std::string(action) + "\n");
         }
+#ifdef ILD_CONSOLE_QA
         else if (qa_ && action == "qa_ui_ready")
         {
-#ifdef ILD_CONSOLE_QA
             qa::request_capture(field("state"));
-#endif
             write_atomic(L"ui-proof.txt", "ui=CUIScriptWnd\nstate=" + field("state") + "\n");
         }
-#ifdef ILD_CONSOLE_QA
         else if (qa_ && action == "qa_game_ready") write_atomic(L"game-proof.txt", "actor=ready\n");
         else if (qa_ && action == "qa_smoke_done")
             write_atomic(L"game-proof.txt", "actor=ready\nsoak=5\ncompleted=1\n");
@@ -106,7 +108,7 @@ public:
         else if (qa_ && action == "qa_save_write")
             write_atomic(L"save-proof.txt", "timed-input=written\ncompleted=1\n");
         else if (qa_ && action == "qa_save_read")
-            write_atomic(L"save-proof.txt", "timed-input=restored-and-expired\ncompleted=1\n");
+            write_atomic(L"save-proof.txt", "timed-input=not-persisted\ncompleted=1\n");
         else if (qa_ && action == "qa_ui_last_page") qa::request_capture("last-page");
         else if (qa_ && action == "qa_game_done")
             write_atomic(L"game-proof.txt", "actor=ready\nsoak=5\nknife-checks=6\ndescriptions=5\ncompleted=1\n");
@@ -129,11 +131,6 @@ public:
         if (selected_ == "clock") value = std::to_string(GetTickCount64());
         else if (selected_ == "qa_download") value = qa_download_ ? "1" : "0";
 #ifdef ILD_CONSOLE_QA
-        else if (selected_ == "qa_game")
-        {
-            wchar_t flag[8]{};
-            value = qa_ && GetEnvironmentVariableW(L"ILD_QA_GAME", flag, 8) == 1 && flag[0] == L'1' ? "1" : "0";
-        }
         else if (selected_ == "knife_result") value = knife_result_;
         else if (selected_ == "qa_save_mode")
         {
@@ -170,19 +167,29 @@ private:
         return found == fields_.end() ? std::string{} : found->second;
     }
 
+    bool read_status(std::string& data) const
+    {
+        // Shared delete access lets the helper replace the file while the menu is reading it.
+        const auto file = CreateFileW((runtime_ / status_name_).c_str(), GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return false;
+        LARGE_INTEGER size{};
+        DWORD read{};
+        const auto complete = GetFileSizeEx(file, &size) && size.QuadPart >= 0 && size.QuadPart <= 65536 &&
+            (data.assign(static_cast<std::size_t>(size.QuadPart), '\0'), true) &&
+            ReadFile(file, data.data(), static_cast<DWORD>(data.size()), &read, nullptr) && read == data.size();
+        CloseHandle(file);
+        return complete;
+    }
+
     void refresh()
     {
         const auto now = GetTickCount64();
         if (checked_ && now - last_read_ < 200) return;
         checked_ = true;
         last_read_ = now;
-        std::ifstream stream(runtime_ / L"status.txt", std::ios::binary | std::ios::ate);
-        if (!stream) { fields_.clear(); return; }
-        const auto size = stream.tellg();
-        if (size < 0 || size > 65536) { fields_.clear(); return; }
-        std::string data(static_cast<std::size_t>(size), '\0');
-        stream.seekg(0);
-        if (!stream.read(data.data(), size)) { fields_.clear(); return; }
+        std::string data;
+        if (!read_status(data)) { fields_.clear(); return; }
         std::map<std::string, std::string> parsed;
         std::istringstream lines(data);
         std::string line;
@@ -224,6 +231,7 @@ private:
     }
 
     std::filesystem::path runtime_;
+    std::wstring status_name_, command_name_;
     std::map<std::string, std::string> fields_;
     std::string selected_;
     ULONGLONG last_read_{};

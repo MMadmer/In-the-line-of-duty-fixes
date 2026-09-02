@@ -78,5 +78,5 @@ it is open, forwards keyboard input, and restores the menu on dismissal.
 The root checkout intentionally remains 0.9.0 for update testing. The separately
 built GitHub payload is 0.9.1. `Deploy.cmd` requests UAC and deploys the complete
 current packaged runtime through `tools/deploy/Deploy-FixPack.ps1`, verifying all
-seven hashes and the save tree and retaining a recoverable backup. Packaging must
+ten hashes and the save tree and retaining a recoverable backup. Packaging must
 be refreshed whenever runtime sources change.

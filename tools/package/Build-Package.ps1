@@ -24,7 +24,14 @@ $sourceMap = [ordered]@{
     'gamedata/config/ui/ild_fixes_update.xml' = 'payload/gamedata/config/ui/ild_fixes_update.xml'
     'README-InTheLineOfDutyFixes.txt' = 'packaging/README-InTheLineOfDutyFixes.txt'
 }
-$paths = @($sourceMap.Keys) + @('.ild-fixes/version.txt', '.ild-fixes/managed-files.txt')
+# The manifest lives inside the owned .ild-fixes directory, so a manual install leaves nothing unmanaged.
+$manifestPath = '.ild-fixes/update-manifest.txt'
+$paths = @($sourceMap.Keys) + @('.ild-fixes/version.txt', '.ild-fixes/managed-files.txt', $manifestPath)
+
+# A stale helper binary would offer its own version forever; its embedded product version must match CMake.
+$updaterVersion = (Get-Item -LiteralPath (Join-Path $repository $sourceMap['InTheLineOfDutyFixesUpdater.exe'])).VersionInfo.ProductVersion
+if ($updaterVersion -ne $version) { throw "Updater product version '$updaterVersion' does not match project version $version." }
+
 $owned = @()
 $installedManaged = Join-Path $GameRoot '.ild-fixes\managed-files.txt'
 if (Test-Path -LiteralPath $installedManaged) { $owned = @(Get-Content -LiteralPath $installedManaged) }
@@ -54,11 +61,12 @@ $manifest = [Collections.Generic.List[string]]::new()
 $manifest.Add('schema=ild-fixes.update/1')
 $manifest.Add("version=$version")
 foreach ($relative in ($paths | Sort-Object)) {
+    if ($relative -eq $manifestPath) { continue }
     $file = Get-Item -LiteralPath (Join-Path $packageRoot $relative.Replace('/', '\'))
     $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
     $manifest.Add("$hash`t$($file.Length)`t$relative")
 }
-[IO.File]::WriteAllText((Join-Path $packageRoot 'update-manifest.txt'), ($manifest -join "`n") + "`n", $utf8)
+[IO.File]::WriteAllText((Join-Path $control 'update-manifest.txt'), ($manifest -join "`n") + "`n", $utf8)
 $archive = Join-Path $artifacts "In-the-line-of-duty-fixes-$version-Setup_Manual.zip"
 if (Test-Path -LiteralPath $archive) { throw "Candidate archive already exists: $archive" }
 Add-Type -AssemblyName System.IO.Compression.FileSystem

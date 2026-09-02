@@ -58,4 +58,45 @@ cached download now reports its actual completed size instead of zero bytes.
 
 Reference-only extracted game files are ignored under `analysis/soc-reference`.
 Ordinary tests use five seconds after the required state, excluding loading.
-The full deploy now contains eight managed files, including `ild_gameplay.script`.
+The full deploy now contains eleven managed files, including `ild_gameplay.script`,
+`ild_script_repairs.script`, `ild_recipe_repairs.script` and the update manifest
+under `.ild-fixes/`.
+
+## Updater, menu and tooling hardening (later on 2026-09-02)
+
+- Restart arguments are the raw command-line tail after the executable, so X-Ray's
+  space-terminated switches (`-start `, `-fsltx `, `-load `) survive an update.
+  `-qa_update` is matched as a whole token, never as a substring of a path.
+- `update-manifest.txt` moved into the owned `.ild-fixes/` directory, is installed
+  with the payload and listed in `managed-files.txt`. Removal instructions now end
+  with deleting `.ild-fixes/`, which also holds the runtime status, cache and the
+  failed-update note. The README lists the supported binary identities.
+- The applier verifies every previously installed fix-pack file against the
+  installed manifest before touching it (code 27 refuses a foreign modification),
+  compares a patch's `base=` with the installed version before any mutation,
+  ignores the game root itself in the reparse-point check (junction libraries),
+  identifies the game by PID plus start time, removes orphaned `*.ild-update-*.tmp`
+  files, and drops the whole download cache after a verified install.
+- Failures are no longer silent: the applier writes `.ild-fixes/runtime/apply-result.txt`,
+  shows one message (RU/EN, suppressed by `--quiet` in tests) and restarts the
+  rolled-back game; the next session starts the offer in the retry state.
+- The helper opens the game process once instead of polling by PID, exits
+  immediately when nothing is offered, writes a `heartbeat` every second, uses
+  per-session `status-<pid>.txt` / `command-<pid>.txt` files, caps notes to the
+  amount the menu can display, and reads the game language from
+  `gamedata/config/localization.ltx` when it exists.
+- The menu dialog is a single Lua-owned window (`SetAutoDelete(false)`) re-attached
+  to each new main menu, polls every tenth frame, stops after a terminal state, and
+  re-enables Cancel/Escape with a notice when the helper stops responding for 5 s.
+  The native bridge reads the status file with shared delete access.
+- `ild_gameplay` no longer round-trips the console to find the QA probe; an absent
+  `ild_qa` module resolves to nil in X-Ray. The hidden-slot overlay is built once
+  per level instead of once per inventory opening, and the detector callback sweeps
+  map spots once when a detector is put away instead of every frame.
+- `Build-Package.ps1` rejects a helper whose embedded product version differs from
+  CMake; `Deploy-FixPack.ps1` rejects candidates that differ from the current build
+  outputs, copies through temporary files, guards its rollback, checks the cached
+  runner process and skips the root in the reparse check; `Deploy.cmd` propagates
+  the exit code. `Test-UpdateApplier.ps1` covers restart arguments, installed-file
+  verification, wrong patch bases, version mismatches, traversal, aliases,
+  duplicates, foreign archive paths, junction roots and failure notes.

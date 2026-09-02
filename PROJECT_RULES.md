@@ -79,6 +79,10 @@ reference installation.
   indentation where applicable, and lines no longer than 120 characters.
 - Check plain pointers through implicit boolean conversion: `if (pointer)` and
   `if (!pointer)`, not comparisons with `nullptr`.
+- In Lua, take and override only Lua-defined methods through a luabind class
+  object. Call inherited C++ methods on instances, and call base virtuals through
+  the class object only where the engine exports a default implementation;
+  otherwise luabind raises "pure virtual function called".
 - Add short English comments only where the reason, lifetime, synchronization,
   binary contract, or compatibility constraint would otherwise be unclear.
 - Do not ship temporary telemetry, probes, debug commands, verbose per-frame

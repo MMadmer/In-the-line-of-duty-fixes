@@ -153,6 +153,7 @@ namespace IldFixes.Updater
             HttpWebRequest request = (HttpWebRequest)WebRequest.Create(uri);
             request.UserAgent = "InTheLineOfDutyFixes/" + ProductInfo.VersionText;
             request.Accept = "application/vnd.github+json";
+            request.Headers["X-GitHub-Api-Version"] = "2022-11-28";
             request.Timeout = 15000;
             request.ReadWriteTimeout = 15000;
             request.AllowAutoRedirect = true;

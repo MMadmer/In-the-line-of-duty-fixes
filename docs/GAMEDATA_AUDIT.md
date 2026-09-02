@@ -34,13 +34,17 @@ for. Standard-parser complaints alone were not treated as game bugs.
 | Keyboard names | Convert DirectInput Unicode labels to CP1251 instead of the CRT C locale | Scan codes and bindings unchanged |
 | Sound metadata | Supply a valid X-Ray comment when the file only has ordinary encoder tags or no metadata | Copy the sound object's existing volume, attenuation, AI distance and type; audio bytes unchanged |
 | Stock presets | Normalize seven unsupported lines in six exact-hash stock presets, only through the CFG reader | Supported settings and interactive command diagnostics unchanged |
-| Five R2 bump lookups | Resolve to the exact `ed_dummy_bump` / `ed_dummy_bump#` resources the renderer already used | Same resource records, no invented surface detail |
+| Missing R2 bump lookups | Any absent `*_bump` / `*_bump#` texture resolves to the exact `ed_dummy_bump` / `ed_dummy_bump#` resource the renderer substitutes itself after logging | Same resource records, no invented surface detail |
 | Tank OGF reader | Exclude one trailing zero byte from the logical chunk stream | Exact hash, path, reader type and size checked; mapped file bytes unchanged |
 
 The audio adapter leaves genuine binary metadata and malformed binary comments
 alone. It is not a log filter. The preset adapter does not intercept `Log`,
 `Msg`, or arbitrary console commands. An independent negative test emitted both
 `ild_audit_unknown_command` and interactive `rs_detail` errors as expected.
+
+A full play session shows ten more missing bump names (barrel, rust, rja, old wood,
+signs) than the five-second smoke did, so the alias now covers every missing bump
+instead of a list; the renderer would have loaded the same dummy after its warning.
 
 The tank's original chunk stream ends at byte 2,096,475; its file has one extra
 byte. The supported reader's chunk scanner otherwise attempts another 8-byte
@@ -49,10 +53,12 @@ bytes. Destructor behavior was checked against the installed xrCore binary.
 
 ## Script and configuration repairs
 
-- Actor save: `packer` typo corrected to `packet`; the stored byte flag is
-  compared with numeric `1`, so the following CTime is consumed correctly.
-  Restored timed input receives the existing actor-punch timeout of 30 game
-  seconds only when no duration is present. Existing custom/zero durations remain.
+- Actor save: the mod aborts with `packer` (a typo) whenever it saves while input
+  is disabled. The repaired branch writes exactly the bytes of the mod's ordinary
+  branch, a zero flag and no timestamp, so every save made with the fix pack loads
+  in the unmodified mod (rule 4). The remaining disable-input time is simply not
+  persisted. Loading still consumes a timestamp written by the first 0.9.1 build
+  (numeric flag `1`) and gives it the actor-punch timeout of 30 game seconds.
 - Monster environmental deaths no longer dereference a missing killer. Original
   event arguments, smart-terrain notification and corpse impulse are retained.
 - Sleeping consumes the first available food, rather than calling a void native
@@ -106,9 +112,11 @@ of 3000 roubles, without attaching that dialog to any new NPC.
   handlers under a mock engine and verification of their actual removal lists.
 - Eight real config files passed exact original-hash matching and same-size
   transformation into isolated QA outputs.
-- A real disposable save with timed input was written and loaded again. Its
-  timestamp was restored, the following save data remained readable, and input
-  expiry completed. The source player's save tree was not modified.
+- The first 0.9.1 build wrote and re-read a disposable save with timed input
+  (timestamp restored, following data readable, expiry completed). The current
+  build no longer persists the timestamp; the byte transformation is unit-tested
+  and `tests/audit_save_roundtrip.script` now expects a load without it. The source
+  player's save tree was not modified.
 - Menu startup without an actor, latest-save startup, and resource-boundary
   probes passed. The clean run and intentional negative diagnostic run have
   separate logs under ignored `qa/audit`.
@@ -117,7 +125,7 @@ of 3000 roubles, without attaching that dialog to any new NPC.
 
 All original game/mod files remain untouched. Runtime corrections use checked
 module identities, exact source hashes or narrow existing API contracts. The
-package contains ten project-owned files; audit data, extracted originals,
+package contains eleven project-owned files; audit data, extracted originals,
 disposable saves and the separate QA DLL are excluded.
 
 No placeholder assets were invented for 25 unresolved texture names, two OMF
@@ -132,3 +140,21 @@ Those static candidates are not proof of an error in a current playthrough.
 Conversely, a five-second run cannot certify every future story branch or old
 save. Newly encountered genuine diagnostics must still be investigated rather
 than suppressed.
+
+## Correction: hidden-slot knife callback
+
+The first shipped version of the hidden-slot repair replaced
+`hidden_slots.BkgrWnd.AddCallback` through the luabind class object and called the
+saved C++ method from the override. luabind treats an inherited C++ method fetched
+from a class object as a forced default call; `AddCallback` has no default
+implementation, so the first `BkgrWnd:InitControls` raised
+`LUA error: pure virtual function called` and the game aborted as soon as the
+inventory opened. The audit smoke run never opened the inventory, so the defect was
+not observed there.
+
+The repair now overrides the Lua-defined `BkgrWnd:InitControls` and
+`hidden_slots.init_btn`, pre-seeds `ClickBtn[1]` before the original loop registers
+it, and captures the knife button while the loop runs. The handler also requires a
+live server object before converting the knife, so a repeated double-click cannot
+spawn a duplicate. Runtime QA still has no probe that opens the inventory window;
+the mocked suite covers the registration order, and the in-game check is manual.

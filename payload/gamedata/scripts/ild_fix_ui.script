@@ -1,10 +1,20 @@
 local next_poll = 0
+local frame = 0
 local status = {}
+local dialog
 local original_keyboard
 local fields = {
     "session", "state", "installed", "russian", "qa", "downloaded", "total", "version", "patch", "theme",
-    "error", "caption", "message", "size_label", "action_label", "cancel_label", "disable_label", "qa_download"
+    "error", "caption", "message", "size_label", "action_label", "cancel_label", "disable_label", "qa_download",
+    "heartbeat"
 }
+local offers = {available = true, major_available = true, apply_failed = true}
+local finished = {current = true, check_failed = true, dismissed = true}
+-- The helper stamps every status write; a busy state older than this means it died or hangs.
+local stale_after = 5000
+-- CP1251 escapes: the game renders text in that code page while the payload files stay ASCII.
+local stalled_ru = "\209\235\243\230\225\224 \238\225\237\238\226\235\229\237\232\255 \237\229 \238\242\226\229\247\224\229\242. \204\238\230\237\238 \231\224\234\240\251\242\252 \238\234\237\238 \232 \239\238\226\242\238\240\232\242\252 \239\238\231\230\229."
+local stalled_en = "The update helper is not responding. Close this window and retry later."
 
 local function read_field(key)
     local console = get_console()
@@ -30,6 +40,11 @@ local function command(action)
     get_console():execute("ild_update " .. action)
 end
 
+local function service_stalled(current, now)
+    local beat = tonumber(current.heartbeat)
+    return beat == nil or now - beat > stale_after
+end
+
 function i(menu)
     ild_gameplay.install()
     menu:InitControls()
@@ -41,32 +56,45 @@ function i(menu)
 end
 
 function menu_keyboard(menu, dik, action)
-    if menu.ild_update_visible then return menu.ild_update_dialog:OnKeyboard(dik, action) end
+    if menu.ild_update_visible and dialog then return dialog:OnKeyboard(dik, action) end
     return original_keyboard(menu, dik, action)
 end
 
 function u(menu)
     CUIScriptWnd.Update(menu)
-    if menu.ild_update_visible then return end
+    if menu.ild_update_visible or menu.ild_update_finished then return end
+    -- Poll every tenth frame; the helper refreshes its file at most every 200 ms anyway.
+    frame = frame + 1
+    if frame % 10 ~= 0 then return end
     local now = tonumber(read_field("clock")) or 0
     if now < next_poll then return end
     next_poll = now + 250
     local current = read_status()
-    if not current.session then return end
-    if current.state ~= "available" and current.state ~= "major_available" then return end
-    if menu.ild_update_dismissed == current.session .. ":" .. current.state then return end
-    if not menu.ild_update_dialog then
-        -- The holder is already iterating its dialogs here; attach a child instead.
-        menu.ild_update_dialog = update_dialog()
-        menu.ild_update_dialog.owner = menu
-        menu.ild_update_dialog:SetAutoDelete(true)
-        menu:AttachChild(menu.ild_update_dialog)
+    if current.session == "" then return end
+    if finished[current.state] then
+        menu.ild_update_finished = true
+        return
     end
-    menu.ild_update_dialog:refresh(current)
+    if not offers[current.state] then return end
+    if menu.ild_update_dismissed == current.session .. ":" .. current.state then return end
+    if not dialog then
+        -- The holder is iterating its dialogs here, so the window is attached as a child instead of being
+        -- shown through start_stop_menu. It stays owned by Lua: an autodelete child would be freed by the
+        -- menu's destructor and once more by the garbage collector.
+        dialog = update_dialog()
+        dialog:SetAutoDelete(false)
+    end
+    if not menu.ild_update_attached then
+        -- A destroyed menu detaches its children, so the same window is re-attached to every new menu.
+        dialog.owner = menu
+        menu:AttachChild(dialog)
+        menu.ild_update_attached = true
+    end
+    dialog:refresh(current, now)
     menu.ild_update_visible = true
     menu.shniaga:Enable(false)
     menu.shniaga:Show(false)
-    menu.ild_update_dialog:Show(true)
+    dialog:Show(true)
 end
 
 class "update_dialog" (CUIScriptWnd)
@@ -109,7 +137,7 @@ function update_dialog:Update()
     local now = tonumber(read_field("clock")) or 0
     if now < self.next_poll then return end
     self.next_poll = now + 250
-    self:refresh(read_status())
+    self:refresh(read_status(), now)
     if self.qa_page_at and now >= self.qa_page_at then
         self.qa_page_at = nil
         while self.page < #self.pages do self:on_next_page() end
@@ -141,11 +169,15 @@ function update_dialog:Update()
     end
 end
 
-function update_dialog:refresh(current)
+function update_dialog:refresh(current, now)
     if not current.state or current.state == "" then return end
     self.state = current.state
+    local russian = current.russian == "1"
+    local busy = current.state == "downloading" or current.state == "ready"
+    -- A dead helper must not leave the menu locked: report it and give Cancel and Escape back.
+    self.stalled = busy and now ~= nil and service_stalled(current, now)
     self.caption:SetText(current.caption or "")
-    self.message:SetText(current.message or "")
+    self.message:SetText(self.stalled and (russian and stalled_ru or stalled_en) or current.message or "")
     self.size:SetText(current.size_label or "")
     self.theme:SetText(current.theme or "")
     local changes = current.changes or ""
@@ -156,21 +188,20 @@ function update_dialog:refresh(current)
     self.action:SetText(current.action_label or "")
     self.cancel:SetText(current.cancel_label or "")
     self.disable:SetText(current.disable_label or "")
-    local progress = current.state == "downloading" or current.state == "ready"
-    self.changes_text:Show(not progress)
-    local multiple_pages = not progress and #self.pages > 1
+    self.changes_text:Show(not busy)
+    local multiple_pages = not busy and #self.pages > 1
     self.previous_page:Show(multiple_pages)
     self.next_page:Show(multiple_pages)
     self.page_label:Show(multiple_pages)
     self.previous_page:SetText("<")
     self.next_page:SetText(">")
-    self.theme:Show(not progress)
-    self.progress:Show(progress)
-    self.progress_back:Show(progress)
-    self.progress_text:Show(progress)
+    self.theme:Show(not busy)
+    self.progress:Show(busy)
+    self.progress_back:Show(busy)
+    self.progress_text:Show(busy)
     self.disable:Show(current.state == "major_available")
-    self.action:Enable(current.state ~= "downloading")
-    self.cancel:Enable(current.state ~= "downloading" and current.state ~= "ready")
+    self.action:Enable(current.state ~= "downloading" and not self.stalled)
+    self.cancel:Enable(self.stalled or not busy)
     local downloaded = tonumber(current.downloaded) or 0
     local total = tonumber(current.total) or 0
     local fraction = total > 0 and math.min(1, downloaded / total) or 0
@@ -223,7 +254,7 @@ function update_dialog:on_action()
 end
 
 function update_dialog:on_cancel()
-    if self.state == "downloading" or self.state == "ready" then return end
+    if (self.state == "downloading" or self.state == "ready") and not self.stalled then return end
     command(self.state == "major_available" and "dismiss_major" or "dismiss")
     self:close()
 end

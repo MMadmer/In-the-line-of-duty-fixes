@@ -12,7 +12,7 @@ end
 
 local function fixture()
     local calls = {tutorials = {}, events = {}, spots = {}, food = {}, spawned = {}, removed = {}, detector = {},
-        released = {}, object_queries = 0}
+        released = {}, init_btn = {}, on_info = {}, menu_toggles = {}, object_queries = 0}
     local objects = {}
     local clock = 100
     local env = setmetatable({}, {__index = _G})
@@ -37,7 +37,9 @@ local function fixture()
         }
     end
     env.level = {
-        map_remove_object_spot = function(id, kind) calls.spots[#calls.spots + 1] = {id, kind} end
+        map_remove_object_spot = function(id, kind) calls.spots[#calls.spots + 1] = {id, kind} end,
+        main_input_receiver = function() return calls.receiver end,
+        start_stop_menu = function(window, flag) calls.menu_toggles[#calls.menu_toggles + 1] = {window, flag} end
     }
     env.ui_events = {WINDOW_LBUTTON_DB_CLICK = 9}
     env.new_life = {}
@@ -78,14 +80,22 @@ local function fixture()
     env.amk = {remove_items = function() error("unpatched item removal") end}
     env.hidden_slots = {
         BkgrWnd = {
-            AddCallback = function(self, name, event, handler, context)
-                self.registered = self.registered or {}
-                self.registered[name] = {event = event, handler = handler, context = context}
-                return "registered"
+            InitControls = function(self)
+                -- Mirrors the mod: assign self.btn, call init_btn(k), then register ClickBtn[k].
+                self.registered = {}
+                for index = 1, 3 do
+                    self.btn = self.buttons[index]
+                    env.hidden_slots.init_btn(index)
+                    self.registered["check_button_" .. index] = self.ClickBtn[index]
+                end
+                return "initialised"
             end
         },
+        init_btn = function(number, section) calls.init_btn[#calls.init_btn + 1] = {number, section} end,
         spawn_item_in_inv = function(section) calls.spawned[#calls.spawned + 1] = section end,
-        remove_item = function(id) calls.removed[#calls.removed + 1] = id end
+        remove_item = function(id) calls.removed[#calls.removed + 1] = id end,
+        on_info = function(info_id) calls.on_info[#calls.on_info + 1] = info_id end,
+        inventory_close = function() error("unpatched inventory_close") end
     }
     env.bind_det_arts = {
         start_update = function()
@@ -114,7 +124,8 @@ local function fixture()
                 self.first_update = false
                 env.bind_det_arts.start_update()
             end
-        end
+        end,
+        net_destroy = function() calls.destroyed = (calls.destroyed or 0) + 1 return "destroyed" end
     }}
     local module = setmetatable({}, {__index = env})
     local chunk = assert(loadfile(source_path))
@@ -241,12 +252,21 @@ do
     equal(calls.detector_starts, 1, "detector callback is not registered every frame")
     equal(player.fastcall(), false, "empty detector slot keeps callback alive")
     equal(calls.detector[#calls.detector], "clear", "empty slot clears detector markers")
-    for section, expected in pairs({det_artefact_indy = "indy", det_artefact_pro = "normal",
-        det_artefact_super = "super", wpn_pm = "clear"}) do
-        player.slots[1] = make_item(section, 1)
+    local function dispatch(section)
+        player.slots[1] = section and make_item(section, 1) or nil
         equal(player.fastcall(), false, "active detector callback returns false")
-        equal(calls.detector[#calls.detector], expected, "detector mode dispatch")
+        return calls.detector[#calls.detector], #calls.detector
     end
+    local last, count = dispatch("det_artefact_pro")
+    equal(last, "normal", "pro detector dispatch")
+    equal(dispatch("wpn_pm"), "clear", "spots are swept once the detector is put away")
+    local _, again = dispatch("wpn_pm")
+    equal(again, count + 1, "no sweep runs while nothing can have added spots")
+    equal(dispatch("det_artefact_indy"), "indy", "indy detector dispatch")
+    _, again = dispatch("wpn_pm")
+    equal(again, count + 2, "the indy detector adds no spots, so nothing is swept")
+    equal(dispatch("det_artefact_super"), "super", "super detector dispatch")
+    equal(dispatch(nil), "clear", "an emptied slot sweeps the super detector spots")
     env.db.actor = nil
     equal(player.fastcall(), true, "absent actor retires detector callback")
     local replacement = {object = actor()}
@@ -273,35 +293,44 @@ do
 end
 
 do
-    local env, calls, _, module, actor = fixture()
+    local env, calls, objects, module, actor = fixture()
     module.install()
     local player = actor()
     env.bind_stalker.actor_binder.net_spawn({object = player})
+    local function button() return {Show = function(self, value) self.shown = value end} end
+    local untouched = function() return "other slot" end
+    check(env.hidden_slots.BkgrWnd.AddCallback == nil, "inherited C++ methods are never taken from the class")
     for section, expected in pairs({wpn_knife = "fake_wpn_knife", wpn_knife_6x4 = "fake_wpn_knife_6x4",
         wpn_knife_6x2 = "fake_wpn_knife_6x2", lom = "fake_lom", wpn_knife_nkvd = "fake_wpn_knife_nkvd"}) do
-        local button = {Show = function(self, value) self.shown = value end}
-        local window = {btn = button, ClickBtn = {}}
+        local window = {buttons = {button(), button(), button()}, ClickBtn = {[2] = untouched, [3] = untouched}}
         player.slots[0] = make_item(section, 712)
-        equal(env.hidden_slots.BkgrWnd.AddCallback(window, "check_button_1", 9, function() error("overwritten") end,
-            window), "registered", "native AddCallback result is retained")
-        window.registered.check_button_1.handler()
+        objects[712] = player.slots[0]
+        equal(env.hidden_slots.BkgrWnd.InitControls(window), "initialised", "original InitControls result is retained")
+        equal(window.ild_knife_button, window.buttons[1], "the knife button is captured while InitControls runs")
+        equal(window.registered.check_button_2, untouched, "other hidden-slot callbacks are preserved")
+        window.registered.check_button_1()
         equal(calls.spawned[#calls.spawned], expected, "currently slotted knife is converted")
         equal(calls.removed[#calls.removed], 712, "the same knife is removed")
-        equal(button.shown, false, "the matching knife button is hidden")
+        equal(window.buttons[1].shown, false, "the matching knife button is hidden")
+        check(window.buttons[2].shown == nil and window.buttons[3].shown == nil, "other buttons keep their state")
     end
-    local untouched = function() return "other slot" end
-    local window = {ClickBtn = {}}
-    env.hidden_slots.BkgrWnd.AddCallback(window, "check_button_2", 9, untouched, window)
-    equal(window.registered.check_button_2.handler, untouched, "other hidden-slot callbacks are preserved")
-    local button = {Show = function() error("unexpected hide") end}
-    window = {ClickBtn = {}, btn = button}
-    env.hidden_slots.BkgrWnd.AddCallback(window, "check_button_1", 9, untouched, window)
+    equal(#calls.init_btn, 15, "init_btn still runs for every button")
+    local window = {buttons = {button(), button(), button()}, ClickBtn = {}}
+    env.hidden_slots.BkgrWnd.InitControls(window)
+    local spawned, removed = #calls.spawned, #calls.removed
     player.slots[0] = make_item("unknown_addon_knife", 713)
-    window.registered.check_button_1.handler()
-    equal(#calls.spawned, 5, "unknown knife sections are not transformed")
+    objects[713] = player.slots[0]
+    window.registered.check_button_1()
+    equal(#calls.spawned, spawned, "unknown knife sections are not transformed")
+    player.slots[0] = make_item("wpn_knife", 714)
+    window.registered.check_button_1()
+    equal(#calls.spawned, spawned, "a knife without a server object is not converted again")
     player.slots[0] = nil
-    window.registered.check_button_1.handler()
-    equal(#calls.removed, 5, "empty slot is not removed")
+    window.registered.check_button_1()
+    equal(#calls.removed, removed, "empty slot is not removed")
+    check(window.buttons[1].shown == nil, "the button stays visible when nothing was converted")
+    env.hidden_slots.init_btn(1, "wpn_knife")
+    equal(calls.init_btn[#calls.init_btn][2], "wpn_knife", "init_btn outside InitControls passes through")
 end
 
 do
@@ -431,6 +460,44 @@ do
     local value = "{=actor_in_zone(x18_dlia_sevducha_gg_tyt5)}%=bar_arena_hit%mob_walker@6"
     equal(env.xr_logic.parse_condlist(npc, "mob_walker@1", "on_info", value).source,
         "{=actor_in_zone(x18_dlia_sevducha_gg_tyt5)}%=bar_arena_hit%mob_walker@5", "ini whitespace normalization is safe")
+end
+
+do
+    local env, calls, _, module, actor = fixture()
+    module.install()
+    local player = actor()
+    env.bind_stalker.actor_binder.net_spawn({object = player})
+    local function button() return {Show = function(self, value) self.shown = value end} end
+    local stat = {Show = function(self, value) self.shown = value end}
+    local window = {buttons = {button(), button(), button()}, ClickBtn = {}, stat = stat}
+    env.hidden_slots.on_info("ui_inventory")
+    equal(#calls.on_info, 1, "the first open goes through the mod's on_info")
+    env.hidden_slots.BkgrWnd.InitControls(window)
+    local receiver = {attached = {}, shown = true,
+        AttachChild = function(self, child) self.attached[#self.attached + 1] = child end,
+        IsShown = function(self) return self.shown end}
+    calls.receiver = receiver
+    local before = #calls.init_btn
+    env.hidden_slots.on_info("ui_inventory")
+    equal(#calls.on_info, 1, "the second open reuses the overlay instead of rebuilding it")
+    equal(window.owner, receiver, "the overlay follows the live inventory window")
+    equal(receiver.attached[1], stat, "the detached container is attached again")
+    equal(#calls.init_btn - before, 3, "button icons are refreshed for the current slots")
+    equal(stat.shown, true, "the container is shown")
+    env.hidden_slots.on_info("ui_inventory_hide")
+    equal(calls.on_info[#calls.on_info], "ui_inventory_hide", "hide still goes through the mod's on_info")
+    calls.receiver = nil
+    env.hidden_slots.on_info("ui_inventory")
+    equal(#calls.on_info, 3, "without a live receiver the mod's on_info runs")
+    calls.receiver = receiver
+    env.hidden_slots.inventory_close()
+    equal(calls.menu_toggles[1][1], receiver, "inventory_close uses the live receiver")
+    receiver.shown = false
+    env.hidden_slots.inventory_close()
+    equal(#calls.menu_toggles, 1, "a hidden receiver is not toggled")
+    equal(env.bind_stalker.actor_binder.net_destroy({}), "destroyed", "net_destroy result is retained")
+    env.hidden_slots.on_info("ui_inventory")
+    equal(#calls.on_info, 4, "a level change drops the stale overlay")
 end
 
 print("script_repairs_tests: " .. tests .. " checks passed")
