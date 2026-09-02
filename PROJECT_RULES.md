@@ -106,9 +106,9 @@ reference installation.
 - Use a hidden desktop and the newest existing save unless the task requires
   another state. Copy the complete save group into the isolated test app-data
   root; never load the source files in a way that can update them.
-- Keep ordinary gameplay QA short: 20 seconds after the required loaded-save
-  state is reached. Loading time is separate; do not add long soak tests unless
-  the user specifically asks for them or a concrete defect requires one.
+- Keep ordinary smoke, UI, and gameplay QA short: 5 seconds after the required
+  state is reached. Loading time is separate. Use up to 20 seconds only when a
+  specific defect needs observation; do not apply that duration to every test.
 - Before installing or testing a candidate, hash the complete save tree. Hash
   it again afterwards and require an exact match unless the test explicitly
   creates a disposable save in an isolated app-data root.

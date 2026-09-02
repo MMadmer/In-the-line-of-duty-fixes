@@ -1,47 +1,53 @@
 local next_poll = 0
 local status = {}
-local runtime_path
+local original_keyboard
+local fields = {
+    "session", "state", "installed", "russian", "qa", "downloaded", "total", "version", "patch", "theme",
+    "error", "caption", "message", "size_label", "action_label", "cancel_label", "disable_label", "qa_download"
+}
+
+local function read_field(key)
+    local console = get_console()
+    console:execute("ild_update read " .. key)
+    return console:get_string("ild_update") or ""
+end
 
 local function read_status()
-    local file
-    for _, path in ipairs({".ild-fixes/runtime/", "../.ild-fixes/runtime/"}) do
-        file = io.open(path .. "status.txt", "rb")
-        if file then
-            runtime_path = path
-            break
-        end
-    end
-    if not file then return status end
     local result = {}
-    for line in file:lines() do
-        local key, value = string.match(line, "^([^=]+)=(.*)$")
-        if key then
-            result[key] = string.gsub(string.gsub(value, "%%0A", "\n"), "%%25", "%%")
-        end
+    for _, key in ipairs(fields) do result[key] = read_field(key) end
+    local chunks = {}
+    for index = 0, 127 do
+        local chunk = read_field("changes:" .. index)
+        chunks[#chunks + 1] = chunk
+        if #chunk < 240 then break end
     end
-    file:close()
+    result.changes = table.concat(chunks)
     status = result
     return status
 end
 
 local function command(action)
-    if not runtime_path or not status.session then return end
-    local file = io.open(runtime_path .. "command.tmp", "wb")
-    if not file then return end
-    file:write("session=" .. status.session .. "\naction=" .. action .. "\n")
-    file:close()
-    os.remove(runtime_path .. "command.txt")
-    os.rename(runtime_path .. "command.tmp", runtime_path .. "command.txt")
+    get_console():execute("ild_update " .. action)
 end
 
 function i(menu)
     menu:InitControls()
     ui_main_menu.main_menu.Update = u
+    if not original_keyboard then
+        original_keyboard = ui_main_menu.main_menu.OnKeyboard
+        ui_main_menu.main_menu.OnKeyboard = menu_keyboard
+    end
+end
+
+function menu_keyboard(menu, dik, action)
+    if menu.ild_update_visible then return menu.ild_update_dialog:OnKeyboard(dik, action) end
+    return original_keyboard(menu, dik, action)
 end
 
 function u(menu)
     CUIScriptWnd.Update(menu)
-    local now = time_global()
+    if menu.ild_update_visible then return end
+    local now = tonumber(read_field("clock")) or 0
     if now < next_poll then return end
     next_poll = now + 250
     local current = read_status()
@@ -49,13 +55,17 @@ function u(menu)
     if current.state ~= "available" and current.state ~= "major_available" then return end
     if menu.ild_update_dismissed == current.session .. ":" .. current.state then return end
     if not menu.ild_update_dialog then
+        -- The holder is already iterating its dialogs here; attach a child instead.
         menu.ild_update_dialog = update_dialog()
         menu.ild_update_dialog.owner = menu
+        menu.ild_update_dialog:SetAutoDelete(true)
+        menu:AttachChild(menu.ild_update_dialog)
     end
     menu.ild_update_dialog:refresh(current)
-    menu:GetHolder():start_stop_menu(menu.ild_update_dialog, true)
-    menu:GetHolder():start_stop_menu(menu, true)
-    menu:Show(false)
+    menu.ild_update_visible = true
+    menu.shniaga:Enable(false)
+    menu.shniaga:Show(false)
+    menu.ild_update_dialog:Show(true)
 end
 
 class "update_dialog" (CUIScriptWnd)
@@ -89,20 +99,25 @@ end
 
 function update_dialog:Update()
     CUIScriptWnd.Update(self)
-    local now = time_global()
+    local now = tonumber(read_field("clock")) or 0
     if now < self.next_poll then return end
     self.next_poll = now + 250
     self:refresh(read_status())
-    if status.qa == "1" and not self.qa_captured then
-        self.qa_capture_at = self.qa_capture_at or now + 1000
+    if self.qa_exit_at and now >= self.qa_exit_at then
+        self.qa_exit_at = nil
+        get_console():execute("quit")
+    end
+    if status.qa == "1" and self.qa_captured_state ~= self.state and
+        (self.state == "available" or self.state == "ready") then
+        if self.qa_capture_state ~= self.state then
+            self.qa_capture_state = self.state
+            self.qa_capture_at = now + 1000
+        end
         if now >= self.qa_capture_at then
-            self.qa_captured = true
-            get_console():execute("screenshot")
-            local proof = io.open(runtime_path .. "ui-proof.txt", "wb")
-            if proof then
-                proof:write("state=" .. (self.state or "") .. "\nui=CUIScriptWnd\n")
-                proof:close()
-            end
+            self.qa_captured_state = self.state
+            command("qa_ui_ready")
+            if self.state == "available" and status.qa_download == "1" then self:on_action() end
+            if self.state == "ready" and status.qa_download == "1" then self.qa_exit_at = now + 4000 end
         end
     end
 end
@@ -159,9 +174,10 @@ end
 
 function update_dialog:close()
     self.owner.ild_update_dismissed = (status.session or "") .. ":" .. (self.state or "")
-    self:GetHolder():start_stop_menu(self, true)
-    self:GetHolder():start_stop_menu(self.owner, true)
-    self.owner:Show(true)
+    self:Show(false)
+    self.owner.ild_update_visible = false
+    self.owner.shniaga:Show(true)
+    self.owner.shniaga:Enable(true)
 end
 
 function update_dialog:OnKeyboard(dik, action)

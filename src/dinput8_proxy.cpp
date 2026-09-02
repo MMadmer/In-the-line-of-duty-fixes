@@ -2,6 +2,7 @@
 
 #include "iat_hook.h"
 #include "console_hooks.h"
+#include "update_bridge.h"
 #include "script_patch.h"
 #include "sha256.h"
 
@@ -304,7 +305,7 @@ BOOL CALLBACK install_fixes(PINIT_ONCE, PVOID, PVOID*)
     if (std::filesystem::exists(root / L"InTheLineOfDutyFixesUpdater.exe") &&
         std::filesystem::exists(root / L"gamedata" / L"scripts" / L"ild_fix_ui.script") &&
         std::filesystem::exists(root / L"gamedata" / L"config" / L"ui" / L"ild_fixes_update.xml") &&
-        equals_hash(menu, expected_menu_hash))
+        equals_hash(menu, expected_menu_hash) && ild::install_update_bridge(GetModuleHandleW(nullptr), root))
     {
         const auto crt = GetModuleHandleW(L"MSVCR80.dll");
         real_read = crt ? reinterpret_cast<ReadFn>(GetProcAddress(crt, "_read")) : nullptr;

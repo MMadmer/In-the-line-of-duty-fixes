@@ -1,0 +1,184 @@
+#include "update_bridge.h"
+
+#include <algorithm>
+#include <array>
+#include <charconv>
+#include <cstring>
+#include <fstream>
+#include <map>
+#include <sstream>
+#include <string>
+#include <string_view>
+
+namespace ild
+{
+namespace
+{
+// This minimal command ABI is pinned to the validated SoC executable.
+class ConsoleCommand
+{
+public:
+    virtual ~ConsoleCommand() = default;
+    virtual void Execute(const char*) = 0;
+    virtual void Status(char (&)[256]) = 0;
+    virtual void Info(char (&text)[256]) { strcpy_s(text, "update bridge"); }
+    virtual void Save(void*) {}
+
+private:
+    const char* name_{"ild_update"};
+    bool enabled_{true};
+    bool lowercase_{};
+    bool empty_arguments_{true};
+};
+static_assert(sizeof(ConsoleCommand) == 12);
+
+std::string unescape(std::string_view value)
+{
+    std::string result;
+    result.reserve(value.size());
+    for (std::size_t index = 0; index < value.size(); ++index)
+    {
+        const auto token = value.substr(index, 3);
+        if (token == "%25") { result.push_back('%'); index += 2; }
+        else if (token == "%0A") { result.push_back('\n'); index += 2; }
+        else result.push_back(value[index]);
+    }
+    return result;
+}
+
+class UpdateCommand final : public ConsoleCommand
+{
+public:
+    void configure(const std::filesystem::path& root)
+    {
+        runtime_ = root / L".ild-fixes" / L"runtime";
+        if (std::wcsstr(GetCommandLineW(), L"-qa_update")) qa_ = true;
+        std::array<wchar_t, 8> value{};
+        const auto length = GetEnvironmentVariableW(L"ILD_QA_UI_DOWNLOAD", value.data(), 8);
+        qa_download_ = qa_ && length == 1 && value[0] == L'1';
+    }
+
+    void Execute(const char* arguments) override
+    {
+        if (!arguments) return;
+        const std::string_view action(arguments);
+        if (action.starts_with("read "))
+        {
+            refresh();
+            selected_ = action.substr(5, 64);
+            return;
+        }
+        constexpr std::array allowed{"download", "apply", "dismiss", "dismiss_major", "disable_major", "open_major"};
+        if (std::find(allowed.begin(), allowed.end(), action) != allowed.end())
+        {
+            write_atomic(L"command.txt", "session=" + std::to_string(GetCurrentProcessId()) +
+                "\naction=" + std::string(action) + "\n");
+        }
+        else if (qa_ && action == "qa_ui_ready")
+        {
+            write_atomic(L"ui-proof.txt", "ui=CUIScriptWnd\nstate=" + field("state") + "\n");
+        }
+    }
+
+    void Status(char (&text)[256]) override
+    {
+        std::string value;
+        if (selected_ == "clock") value = std::to_string(GetTickCount64());
+        else if (selected_ == "qa_download") value = qa_download_ ? "1" : "0";
+        else if (selected_.starts_with("changes:"))
+        {
+            const auto index_text = std::string_view(selected_).substr(8);
+            unsigned index{};
+            const auto parsed = std::from_chars(index_text.data(), index_text.data() + index_text.size(), index);
+            if (parsed.ec == std::errc{} && parsed.ptr == index_text.data() + index_text.size() && index < 128)
+            {
+                const auto changes = field("changes");
+                const auto offset = static_cast<std::size_t>(index) * 240;
+                if (offset < changes.size()) value = changes.substr(offset, 240);
+            }
+        }
+        else value = field(selected_);
+        const auto length = (std::min)(value.size(), std::size_t{255});
+        std::memcpy(text, value.data(), length);
+        text[length] = 0;
+    }
+
+private:
+    std::string field(const std::string& key) const
+    {
+        const auto found = fields_.find(key);
+        return found == fields_.end() ? std::string{} : found->second;
+    }
+
+    void refresh()
+    {
+        const auto now = GetTickCount64();
+        if (checked_ && now - last_read_ < 200) return;
+        checked_ = true;
+        last_read_ = now;
+        std::ifstream stream(runtime_ / L"status.txt", std::ios::binary | std::ios::ate);
+        if (!stream) { fields_.clear(); return; }
+        const auto size = stream.tellg();
+        if (size < 0 || size > 65536) { fields_.clear(); return; }
+        std::string data(static_cast<std::size_t>(size), '\0');
+        stream.seekg(0);
+        if (!stream.read(data.data(), size)) { fields_.clear(); return; }
+        std::map<std::string, std::string> parsed;
+        std::istringstream lines(data);
+        std::string line;
+        while (std::getline(lines, line) && parsed.size() < 64)
+        {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            const auto delimiter = line.find('=');
+            if (delimiter != std::string::npos && delimiter < 64)
+                parsed.emplace(line.substr(0, delimiter), unescape(std::string_view(line).substr(delimiter + 1)));
+        }
+        const auto session = parsed.find("session");
+        if (session == parsed.end() || session->second != std::to_string(GetCurrentProcessId()))
+        {
+            fields_.clear();
+            return;
+        }
+        fields_ = std::move(parsed);
+    }
+
+    void write_atomic(const wchar_t* name, const std::string& data)
+    {
+        std::error_code error;
+        std::filesystem::create_directories(runtime_, error);
+        if (error) return;
+        const auto attributes = GetFileAttributesW(runtime_.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) return;
+        const auto target = runtime_ / name;
+        const auto temporary = runtime_ / (std::wstring(name) + L".native-tmp");
+        const auto file = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return;
+        DWORD written{};
+        const auto complete = WriteFile(file, data.data(), static_cast<DWORD>(data.size()), &written, nullptr) &&
+            written == data.size() && FlushFileBuffers(file);
+        CloseHandle(file);
+        if (complete) MoveFileExW(temporary.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+        else DeleteFileW(temporary.c_str());
+    }
+
+    std::filesystem::path runtime_;
+    std::map<std::string, std::string> fields_;
+    std::string selected_;
+    ULONGLONG last_read_{};
+    bool checked_{}, qa_{}, qa_download_{};
+};
+}
+
+bool install_update_bridge(HMODULE engine, const std::filesystem::path& root)
+{
+    using AddCommand = void(__thiscall*)(void*, ConsoleCommand*);
+    const auto console = reinterpret_cast<void**>(GetProcAddress(engine, "?Console@@3PAVCConsole@@A"));
+    const auto add = reinterpret_cast<AddCommand>(GetProcAddress(engine, "?AddCommand@CConsole@@QAEXPAVIConsole_Command@@@Z"));
+    if (!console || !*console || !add) return false;
+    static UpdateCommand command;
+    command.configure(root);
+    add(*console, &command);
+    return true;
+}
+}

@@ -25,6 +25,7 @@ add_library(ild_script_patch STATIC
 target_include_directories(ild_script_patch PUBLIC src)
 
 add_library(dinput8 SHARED
+    src/update_bridge.cpp
     src/console_hooks.cpp
     src/x86_detour.cpp
     src/dinput8_proxy.cpp
@@ -39,6 +40,7 @@ target_link_libraries(dinput8 PRIVATE ild_script_patch advapi32 shell32)
 set_target_properties(dinput8 PROPERTIES PREFIX "" OUTPUT_NAME "dinput8")
 
 add_library(dinput8_console_qa SHARED EXCLUDE_FROM_ALL
+    src/update_bridge.cpp
     src/dinput8_proxy.cpp src/console_hooks.cpp src/x86_detour.cpp src/iat_hook.cpp src/sha256.cpp
     src/dinput8_proxy.def
 )
@@ -68,6 +70,8 @@ if(MSVC)
 endif()
 
 add_test(NAME script_patch COMMAND ild_script_patch_tests)
+add_test(NAME update_ui_contract COMMAND ${CMAKE_COMMAND}
+    -DSOURCE_ROOT=${CMAKE_CURRENT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/update_ui_contract.cmake)
 add_executable(ild_console_editor_tests tests/console_editor_tests.cpp)
 target_link_libraries(ild_console_editor_tests PRIVATE ild_script_patch)
 if(MSVC)

@@ -5,6 +5,7 @@
 * Убран поток ложных ошибок от отладочной печати скриптов.
 * Строка ввода консоли сохраняется при выполнении команд из скриптов.
 * Добавлены выделение текста, Ctrl+C и Ctrl+V в консоли.
+* Исправлен вылет при создании окна обновления после заставок.
 
 ## Установка
 
@@ -19,6 +20,7 @@
 * Removed recurring false errors caused by script debug output.
 * Console input is preserved when scripts execute commands.
 * Added text selection and Ctrl+C/Ctrl+V console shortcuts.
+* Fixed the crash when creating the update dialog after the intro.
 
 ## Installation
 
