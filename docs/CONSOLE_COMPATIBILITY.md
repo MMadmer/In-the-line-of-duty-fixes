@@ -45,11 +45,35 @@ translation, history, completion, and log scrolling still use the engine paths.
   save test used a hidden window on the normal graphics Desktop instead. This
   is not proof of fullscreen rendering or hidden-Desktop compatibility.
 
-The in-game update UI and end-to-end updater remain unverified because the tool
-refuses the updater QA process launch. This blocks declaring a verified release,
-not the mandatory deployment of the complete development candidate under
-`PROJECT_RULES.md` section 7.1. The missing QA must be disclosed with that deployment.
+## Update UI startup correction (2026-09-02)
 
-The deployment operation itself was subsequently rejected with `blocked by policy`
-before its process started. No runtime files were copied into the main game root.
-The local 0.9.0 source/build is therefore not an installed game version yet.
+The supported Lua environment does not expose `io` or `os`. The original addon
+failed at `ild_fix_ui.script:8` during menu creation. A hash-gated native console
+command now exchanges bounded status fields and whitelisted actions with the
+helper; it never enables unrestricted Lua filesystem access. Status must match
+the current game PID. Polling uses monotonic native time because game time stops
+while the menu is paused.
+
+Opening another holder dialog from the main menu's Update invalidated the active
+dialog vector. The minidump and `xrGame.dll` function at `0x103B95B0` confirmed the
+iteration path. The addon now attaches an owned child, hides the normal menu while
+it is open, forwards keyboard input, and restores the menu on dismissal.
+
+- The ordinary UI/download check reached `state=ready` through the real Lua action
+  handler, then exited normally: 5-second soak, exit 0, no forced termination.
+- The renderer's shutdown resource counters returned to zero.
+- The latest-save check reached game configuration completion, then hit the
+  existing `ph_door.script:31` error. It is not a clean gameplay pass.
+- Hidden-Desktop D3D9 initialization remains unavailable. Tests used an offscreen,
+  non-activating window at 2560x1440. Backbuffer captures were black, so visual
+  appearance and foreground/fullscreen interaction remain unverified. The failed
+  capture probe was removed from the build.
+- Script patch, editor, and UI compatibility-contract tests pass. The updater's
+  synthetic full/patch/rollback suite previously passed 17 checks; published
+  0.9.1 discovery and download were also exercised by the 0.9.0 client.
+
+The root checkout intentionally remains 0.9.0 for update testing. The separately
+built GitHub payload is 0.9.1. `Deploy.cmd` requests UAC and deploys the complete
+current packaged runtime through `tools/deploy/Deploy-FixPack.ps1`, verifying all
+seven hashes and the save tree and retaining a recoverable backup. Packaging must
+be refreshed whenever runtime sources change.

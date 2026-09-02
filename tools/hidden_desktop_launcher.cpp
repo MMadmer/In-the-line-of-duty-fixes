@@ -43,6 +43,22 @@ BOOL CALLBACK hide_process_window(HWND window, LPARAM parameter)
     return TRUE;
 }
 
+BOOL CALLBACK park_process_window(HWND window, LPARAM parameter)
+{
+    const auto& context = *reinterpret_cast<const CloseContext*>(parameter);
+    DWORD process_id{};
+    GetWindowThreadProcessId(window, &process_id);
+    if (process_id == context.process_id)
+    {
+        wchar_t title[128]{};
+        GetWindowTextW(window, title, 128);
+        if (std::wstring_view(title).starts_with(L"S.T.A.L.K.E.R."))
+            SetWindowPos(window, HWND_BOTTOM, -5000, -5000, 0, 0,
+                SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+    return TRUE;
+}
+
 struct FocusContext
 {
     DWORD process_id{};
@@ -189,7 +205,7 @@ int wmain(int argc, wchar_t** argv)
 {
     if (argc < 7)
     {
-        std::wcerr << L"Usage: ild_hidden_desktop_launcher <hidden-desktop|hidden-window> "
+        std::wcerr << L"Usage: ild_hidden_desktop_launcher <hidden-desktop|hidden-window|offscreen-window> "
                       L"<load-timeout> <soak-seconds> "
                       L"<ready-log> <ready-text> <exe> [args...]\n";
         return 2;
@@ -197,7 +213,8 @@ int wmain(int argc, wchar_t** argv)
 
     const std::wstring mode = argv[1];
     const auto hidden_desktop = mode == L"hidden-desktop";
-    if (!hidden_desktop && mode != L"hidden-window")
+    const auto offscreen = mode == L"offscreen-window";
+    if (!hidden_desktop && mode != L"hidden-window" && !offscreen)
     {
         return 2;
     }
@@ -277,14 +294,18 @@ int wmain(int argc, wchar_t** argv)
     }
     else
     {
-        hider = std::thread([process_id = process.dwProcessId, &stop_hiding]
+        hider = std::thread([process_id = process.dwProcessId, &stop_hiding, offscreen]
         {
             const CloseContext context{process_id};
+            const auto target = OpenDesktopW(L"Default", 0, FALSE,
+                DESKTOP_ENUMERATE | DESKTOP_READOBJECTS | DESKTOP_WRITEOBJECTS);
             while (!stop_hiding.load(std::memory_order_relaxed))
             {
-                EnumWindows(hide_process_window, reinterpret_cast<LPARAM>(&context));
+                if (target) EnumDesktopWindows(target, offscreen ? park_process_window : hide_process_window,
+                    reinterpret_cast<LPARAM>(&context));
                 Sleep(50);
             }
+            if (target) CloseDesktop(target);
         });
     }
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(load_timeout_seconds);
@@ -318,7 +339,12 @@ int wmain(int argc, wchar_t** argv)
         }
         else
         {
-            EnumWindows(close_process_window, reinterpret_cast<LPARAM>(&context));
+            const auto target = OpenDesktopW(L"Default", 0, FALSE, DESKTOP_ENUMERATE | DESKTOP_READOBJECTS);
+            if (target)
+            {
+                EnumDesktopWindows(target, close_process_window, reinterpret_cast<LPARAM>(&context));
+                CloseDesktop(target);
+            }
         }
         if (WaitForSingleObject(process.hProcess, 10'000) == WAIT_TIMEOUT)
         {
