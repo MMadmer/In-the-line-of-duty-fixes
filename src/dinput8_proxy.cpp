@@ -3,6 +3,7 @@
 #include "iat_hook.h"
 #include "console_hooks.h"
 #include "update_bridge.h"
+#include "inventory_hooks.h"
 #include "script_patch.h"
 #include "sha256.h"
 
@@ -53,6 +54,14 @@ constexpr ild::Sha256 expected_script_hash{
 
 CreateFileMappingAFn real_create_file_mapping{};
 ReadFn real_read{};
+constexpr ild::Sha256 expected_actor_hash{
+    std::byte{0x34}, std::byte{0x73}, std::byte{0x21}, std::byte{0x68}, std::byte{0xAF}, std::byte{0x8F},
+    std::byte{0x79}, std::byte{0x41}, std::byte{0xA8}, std::byte{0xBC}, std::byte{0x87}, std::byte{0xB7},
+    std::byte{0x48}, std::byte{0x1A}, std::byte{0x8A}, std::byte{0x86}, std::byte{0x86}, std::byte{0xB4},
+    std::byte{0x47}, std::byte{0xC2}, std::byte{0x7C}, std::byte{0x25}, std::byte{0xA9}, std::byte{0x14},
+    std::byte{0xA1}, std::byte{0x19}, std::byte{0x86}, std::byte{0xD4}, std::byte{0x23}, std::byte{0xB5},
+    std::byte{0xC5}, std::byte{0xB9}
+};
 constexpr ild::Sha256 expected_menu_hash{
     std::byte{0xF1}, std::byte{0x85}, std::byte{0x03}, std::byte{0x04}, std::byte{0x0E}, std::byte{0xD2},
     std::byte{0xFB}, std::byte{0xBB}, std::byte{0x84}, std::byte{0x16}, std::byte{0x18}, std::byte{0x57},
@@ -62,6 +71,8 @@ constexpr ild::Sha256 expected_menu_hash{
     std::byte{0x7E}, std::byte{0x08},
 };
 std::filesystem::path target_script;
+std::filesystem::path target_actor;
+std::filesystem::path game_root;
 INIT_ONCE install_once = INIT_ONCE_STATIC_INIT;
 INIT_ONCE message_once = INIT_ONCE_STATIC_INIT;
 
@@ -83,13 +94,16 @@ INIT_ONCE message_once = INIT_ONCE_STATIC_INIT;
 
 int __cdecl read_hook(int file, void* buffer, unsigned int size)
 {
+    static_cast<void>(ild::install_inventory_hooks(game_root));
     const auto read = real_read(file, buffer, size);
-    if (read == 8844 && buffer)
+    if ((read == 8844 || read == 18708) && buffer)
     {
         const auto bytes = std::span(static_cast<std::byte*>(buffer), static_cast<std::size_t>(read));
         ild::Sha256 actual{};
         if (ild::sha256_bytes(bytes, actual) && actual == expected_menu_hash)
             static_cast<void>(ild::script_patch::bind_update_menu(bytes));
+        else if (actual == expected_actor_hash)
+            static_cast<void>(ild::script_patch::bind_gameplay(bytes));
     }
     return read;
 }
@@ -185,7 +199,8 @@ void report_unsupported(const wchar_t* reason)
         buffer.erase(0, extended_prefix.size());
     }
 
-    return _wcsicmp(buffer.c_str(), target_script.c_str()) == 0;
+    return _wcsicmp(buffer.c_str(), target_script.c_str()) == 0 ||
+        _wcsicmp(buffer.c_str(), target_actor.c_str()) == 0;
 }
 
 HANDLE WINAPI create_file_mapping_hook(
@@ -238,8 +253,12 @@ HANDLE WINAPI create_file_mapping_hook(
         std::memcpy(destination, source, static_cast<SIZE_T>(size.QuadPart));
         const auto bytes = std::span(static_cast<std::byte*>(destination), static_cast<SIZE_T>(size.QuadPart));
         ild::Sha256 source_hash{};
-        patched = ild::sha256_bytes(bytes, source_hash) && source_hash == expected_script_hash &&
-            ild::script_patch::remove_console_execution(bytes) == ild::script_patch::Result::applied;
+        if (ild::sha256_bytes(bytes, source_hash))
+        {
+            patched = source_hash == expected_script_hash ?
+                ild::script_patch::remove_console_execution(bytes) == ild::script_patch::Result::applied :
+                source_hash == expected_actor_hash && ild::script_patch::bind_gameplay(bytes);
+        }
     }
 
     if (source)
@@ -273,8 +292,10 @@ BOOL CALLBACK install_fixes(PINIT_ONCE, PVOID, PVOID*)
 
     const auto bin = engine.parent_path();
     const auto root = bin.parent_path();
+    game_root = root;
     const auto core = bin / L"xrCore.dll";
     target_script = root / L"gamedata" / L"scripts" / L"_g.script";
+    target_actor = root / L"gamedata" / L"scripts" / L"bind_stalker.script";
 
     if (!equals_hash(engine, expected_engine_hash) || !equals_hash(core, expected_core_hash) ||
         !equals_hash(target_script, expected_script_hash))

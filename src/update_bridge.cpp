@@ -1,4 +1,5 @@
 #include "update_bridge.h"
+#include "inventory_hooks.h"
 
 #include <algorithm>
 #include <array>
@@ -9,6 +10,14 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+
+#ifdef ILD_CONSOLE_QA
+namespace ild::qa
+{
+void install_capture(const std::filesystem::path& root);
+void request_capture(const std::string& state);
+}
+#endif
 
 namespace ild
 {
@@ -56,6 +65,9 @@ public:
         std::array<wchar_t, 8> value{};
         const auto length = GetEnvironmentVariableW(L"ILD_QA_UI_DOWNLOAD", value.data(), 8);
         qa_download_ = qa_ && length == 1 && value[0] == L'1';
+#ifdef ILD_CONSOLE_QA
+        if (qa_) qa::install_capture(root);
+#endif
     }
 
     void Execute(const char* arguments) override
@@ -76,8 +88,26 @@ public:
         }
         else if (qa_ && action == "qa_ui_ready")
         {
+#ifdef ILD_CONSOLE_QA
+            qa::request_capture(field("state"));
+#endif
             write_atomic(L"ui-proof.txt", "ui=CUIScriptWnd\nstate=" + field("state") + "\n");
         }
+#ifdef ILD_CONSOLE_QA
+        else if (qa_ && action == "qa_game_ready") write_atomic(L"game-proof.txt", "actor=ready\n");
+        else if (qa_ && action == "qa_ui_last_page") qa::request_capture("last-page");
+        else if (qa_ && action == "qa_game_done")
+            write_atomic(L"game-proof.txt", "actor=ready\nsoak=5\nknife-checks=6\ndescriptions=5\ncompleted=1\n");
+        else if (qa_ && action.starts_with("qa_knife "))
+        {
+            unsigned id{};
+            const auto number = action.substr(9);
+            const auto parsed = std::from_chars(number.data(), number.data() + number.size(), id);
+            if (parsed.ec == std::errc{} && parsed.ptr == number.data() + number.size())
+                knife_result_ = qa_inventory_swap(id);
+        }
+        else if (qa_ && action.starts_with("qa_fail ")) write_atomic(L"game-failure.txt", std::string(action.substr(8)));
+#endif
     }
 
     void Status(char (&text)[256]) override
@@ -85,6 +115,14 @@ public:
         std::string value;
         if (selected_ == "clock") value = std::to_string(GetTickCount64());
         else if (selected_ == "qa_download") value = qa_download_ ? "1" : "0";
+#ifdef ILD_CONSOLE_QA
+        else if (selected_ == "qa_game")
+        {
+            wchar_t flag[8]{};
+            value = qa_ && GetEnvironmentVariableW(L"ILD_QA_GAME", flag, 8) == 1 && flag[0] == L'1' ? "1" : "0";
+        }
+        else if (selected_ == "knife_result") value = knife_result_;
+#endif
         else if (selected_.starts_with("changes:"))
         {
             const auto index_text = std::string_view(selected_).substr(8);
@@ -167,6 +205,9 @@ private:
     std::string selected_;
     ULONGLONG last_read_{};
     bool checked_{}, qa_{}, qa_download_{};
+#ifdef ILD_CONSOLE_QA
+    std::string knife_result_;
+#endif
 };
 }
 

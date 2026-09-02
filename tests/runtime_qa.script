@@ -1,0 +1,42 @@
+local started
+local knives = {"wpn_knife_6x2", "wpn_knife_6x4", "wpn_knife_nkvd", "wpn_knife_tip30", "wpn_knify"}
+local ids = {}
+local step = 1
+local failed = false
+
+function install()
+    local original_update = bind_stalker.actor_binder.update
+    bind_stalker.actor_binder.update = function(self, delta)
+        original_update(self, delta)
+        local console = get_console()
+        console:execute("ild_update read clock")
+        local now = tonumber(console:get_string("ild_update"))
+        if not started then
+            started = now
+            local actor = db.actor
+            for _, section in ipairs(knives) do
+                local item = alife():create(section, actor:position(), actor:level_vertex_id(), actor:game_vertex_id(), actor:id())
+                ids[#ids + 1] = item.id
+                if string.find(system_ini():r_string(section, "description"), "9000000000", 1, true) then
+                    console:execute("ild_update qa_fail description-warning-not-removed")
+                    failed = true
+                end
+            end
+            ids[#ids + 1] = ids[1]
+            actor:activate_slot(0)
+            console:execute("ild_update qa_game_ready")
+        elseif step <= #ids and now - started >= 700 * step then
+            console:execute("ild_update qa_knife " .. ids[step])
+            console:execute("ild_update read knife_result")
+            local result = console:get_string("ild_update")
+            if result ~= "ok" then
+                console:execute("ild_update qa_fail knife-" .. step .. "-" .. result)
+                failed = true
+            end
+            step = step + 1
+        elseif now - started >= 5000 then
+            if not failed and step > #ids then console:execute("ild_update qa_game_done") end
+            console:execute("quit")
+        end
+    end
+end

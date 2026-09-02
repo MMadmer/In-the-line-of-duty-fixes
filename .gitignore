@@ -13,6 +13,7 @@
 
 # Read-only binary analysis copies and IDA databases
 /analysis/reference-bin/
+/analysis/soc-reference/
 /analysis/**/*.idb
 /analysis/**/*.i64
 /analysis/**/*.id0

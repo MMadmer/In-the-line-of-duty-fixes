@@ -116,6 +116,7 @@ namespace IldFixes.Updater
                         WriteStatus(null);
                     }
                 });
+                downloaded = new FileInfo(archive).Length;
                 state = "ready";
                 WriteStatus(null);
             }
@@ -206,8 +207,7 @@ namespace IldFixes.Updater
             }
             fields["error"] = error ?? string.Empty;
             bool ru = context.Russian;
-            fields["caption"] = majorPending ? (ru ? "Новая крупная версия" : "New major version") :
-                (ru ? "Обновление фиксов «По долгу службы»" : "In the Line of Duty Fixes update");
+            fields["caption"] = ru ? "Обновление In the Line of Duty Fixes" : "In the Line of Duty Fixes update";
             fields["message"] = majorPending ?
                 (ru ? "Установи крупную версию в отдельную папку. Текущие моды и сейвы останутся на месте." :
                     "Install the major version in a separate folder. Current mods and saves stay in place.") :
@@ -215,16 +215,16 @@ namespace IldFixes.Updater
                     "Archive verified. Installation will restart the game.") :
                 state == "download_failed" || state == "apply_failed" ?
                     (ru ? "Не удалось обновить фикспак. Можно повторить попытку." : "Update failed. You can retry.") :
-                string.Format(ru ? "Установлено: {0}    Доступно: {1}" : "Installed: {0}    Available: {1}",
+                string.Format(ru ? "Фикспак: {0}    Доступно: {1}" : "Fix pack: {0}    Available: {1}",
                     ProductInfo.VersionText, fields.ContainsKey("version") ? fields["version"] : "...");
             fields["size_label"] = result != null && result.Update != null ?
                 string.Format(ru ? "Размер загрузки: {0:0.00} МиБ" : "Download size: {0:0.00} MiB",
                     result.Update.Asset.Size / 1048576.0) : string.Empty;
             fields["action_label"] = majorPending ? (ru ? "Страница релиза" : "Release page") :
-                state == "ready" ? (ru ? "Установить и перезапустить" : "Install and restart") :
+                state == "ready" ? (ru ? "Установить" : "Install") :
                 state == "downloading" ? (ru ? "Загрузка..." : "Downloading...") : (ru ? "Скачать" : "Download");
             fields["cancel_label"] = ru ? "Не сейчас" : "Not now";
-            fields["disable_label"] = ru ? "Не уведомлять о крупных версиях" : "Disable major-version notices";
+            fields["disable_label"] = ru ? "Не напоминать" : "Don't remind me";
             StringBuilder text = new StringBuilder();
             foreach (KeyValuePair<string, string> field in fields)
                 text.Append(field.Key).Append('=').Append(Escape(field.Value)).Append('\n');

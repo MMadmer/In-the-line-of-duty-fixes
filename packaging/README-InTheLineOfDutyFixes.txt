@@ -1,9 +1,6 @@
-In the Line of Duty Fixes — development candidate
+In the Line of Duty Fixes
 
-This candidate is not a verified release. The in-game updater UI and full update
-flow still require runtime QA. Do not treat a successful build as release approval.
-
-Installation of a verified release:
+Installation:
 Extract the complete archive into the Shadow of Chernobyl game root. Its bin and
 gamedata directories merge with existing directories; no original file should be
 replaced. Cancel extraction if it asks to replace an unknown existing file.
@@ -19,6 +16,11 @@ caret are display-only and are never included in the executed command.
 
 The helper uses Windows .NET Framework 4.x. It performs networking and applies
 verified updates; the update dialog itself uses the game's existing UI classes.
+
+Knife replacement uses the ordinary inventory equip action. The obsolete knife
+warning is removed in memory; the main descriptions remain intact.
+The incorrectly configured decorative table no longer runs a door controller.
+Updater changes are paginated using the game's fonts and native buttons.
 
 Removal:
 Close the game and helper, then remove only this release's files listed in

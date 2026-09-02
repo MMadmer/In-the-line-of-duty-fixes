@@ -25,6 +25,7 @@ add_library(ild_script_patch STATIC
 target_include_directories(ild_script_patch PUBLIC src)
 
 add_library(dinput8 SHARED
+    src/inventory_hooks.cpp
     src/update_bridge.cpp
     src/console_hooks.cpp
     src/x86_detour.cpp
@@ -40,6 +41,8 @@ target_link_libraries(dinput8 PRIVATE ild_script_patch advapi32 shell32)
 set_target_properties(dinput8 PROPERTIES PREFIX "" OUTPUT_NAME "dinput8")
 
 add_library(dinput8_console_qa SHARED EXCLUDE_FROM_ALL
+    src/inventory_hooks.cpp
+    tests/runtime_capture.cpp
     src/update_bridge.cpp
     src/dinput8_proxy.cpp src/console_hooks.cpp src/x86_detour.cpp src/iat_hook.cpp src/sha256.cpp
     src/dinput8_proxy.def

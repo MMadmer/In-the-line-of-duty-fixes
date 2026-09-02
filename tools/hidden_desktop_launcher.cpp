@@ -227,6 +227,9 @@ int wmain(int argc, wchar_t** argv)
     }
 
     const std::filesystem::path ready_log = std::filesystem::absolute(argv[4]);
+    std::error_code timestamp_error;
+    const auto previous_stamp = std::filesystem::last_write_time(ready_log, timestamp_error);
+    const auto had_ready_log = !timestamp_error;
     const auto ready_text = narrow_ascii(argv[5]);
     if (ready_text.empty())
     {
@@ -319,7 +322,9 @@ int wmain(int argc, wchar_t** argv)
             break;
         }
 
-        if (file_contains(ready_log, ready_text))
+        std::error_code ready_error;
+        const auto current_stamp = std::filesystem::last_write_time(ready_log, ready_error);
+        if (!ready_error && (!had_ready_log || current_stamp != previous_stamp) && file_contains(ready_log, ready_text))
         {
             ready = true;
             std::wcout << L"ready=1 soak_seconds=" << soak_seconds << L'\n';
