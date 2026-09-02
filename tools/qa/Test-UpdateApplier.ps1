@@ -138,3 +138,4 @@ try { $code = Invoke-Apply $rollback $full } finally { $lock.Dispose() }
 Assert-That ($code -eq 22) "failed replacement rolled back, exit=$code"
 Assert-That ((Snapshot $rollback) -eq $before) 'rollback restored complete prior file set'
 Write-Output "PASS $script:checks checks. Artifacts: $root"
+exit 0

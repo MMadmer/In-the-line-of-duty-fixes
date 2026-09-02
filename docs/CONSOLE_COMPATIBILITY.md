@@ -45,11 +45,12 @@ translation, history, completion, and log scrolling still use the engine paths.
   save test used a hidden window on the normal graphics Desktop instead. This
   is not proof of fullscreen rendering or hidden-Desktop compatibility.
 
-The in-game update UI and end-to-end updater remain unverified because the tool
-refuses the updater QA process launch. This blocks declaring a verified release,
-not the mandatory deployment of the complete development candidate under
-`PROJECT_RULES.md` section 7.1. The missing QA must be disclosed with that deployment.
-
-The deployment operation itself was subsequently rejected with `blocked by policy`
-before its process started. No runtime files were copied into the main game root.
-The local 0.9.0 source/build is therefore not an installed game version yet.
+The updater applier passed 17 checks on synthetic installations: full and patch
+equivalence, restart, original-file/save preservation, patch rejection, full
+fallback, invalid digest rejection, destination collisions, and rollback.
+The installed 0.9.0 updater also applied the actual 0.9.1 release archive on an
+isolated installation: all seven target hashes matched, protected files and the
+copied save were unchanged, and the restart stub completed.
+The main game contains the complete 0.9.0 payload, intentionally retained as the
+update source for 0.9.1. The in-game update dialog still requires visual/runtime QA;
+the applier tests do not establish that the dialog renders or receives input.

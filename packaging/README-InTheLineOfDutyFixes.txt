@@ -1,9 +1,6 @@
-In the Line of Duty Fixes — development candidate
+In the Line of Duty Fixes 0.9.1
 
-This candidate is not a verified release. The in-game updater UI and full update
-flow still require runtime QA. Do not treat a successful build as release approval.
-
-Installation of a verified release:
+Installation:
 Extract the complete archive into the Shadow of Chernobyl game root. Its bin and
 gamedata directories merge with existing directories; no original file should be
 replaced. Cancel extraction if it asks to replace an unknown existing file.
