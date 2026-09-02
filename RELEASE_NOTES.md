@@ -6,6 +6,9 @@
 * Строка ввода консоли сохраняется при выполнении команд из скриптов.
 * Добавлены выделение текста, Ctrl+C и Ctrl+V в консоли.
 * Исправлен вылет при создании окна обновления после заставок.
+* Исправлена ошибочная логика двери у декоративного стола, вызывавшая ошибку ph_door.
+* Ножи корректно заменяются через инвентарь. Устаревшее предупреждение убрано без изменения основного описания.
+* Исправлены вёрстка окна фикспака, просмотр длинного списка изменений и прогресс кэшированной загрузки.
 
 ## Установка
 
@@ -21,6 +24,9 @@
 * Console input is preserved when scripts execute commands.
 * Added text selection and Ctrl+C/Ctrl+V console shortcuts.
 * Fixed the crash when creating the update dialog after the intro.
+* Fixed door logic incorrectly assigned to a decorative table, causing a ph_door error.
+* Knives can be replaced through inventory. Removed the obsolete warning while preserving their descriptions.
+* Fixed the fix-pack window layout, long change lists and cached-download progress.
 
 ## Installation
 

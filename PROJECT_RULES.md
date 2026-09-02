@@ -46,6 +46,9 @@ extend it, but they must not weaken or override these rules.
    script path, and affected game state before choosing a fix.
 5. Fix the cause. Do not hide errors globally, suppress unrelated diagnostics,
    or disable validation merely to make the console quiet.
+6. Existing defects discovered during the task are also in scope. Investigate
+   and fix reproducible errors instead of leaving them solely because they
+   predate the current changes. Preserve story, physics, and save compatibility.
 
 Reference binaries, IDA databases, extracted scripts, dumps, and analysis
 trees are strictly read-only. Store generated databases and notes in this

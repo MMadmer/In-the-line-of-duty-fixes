@@ -31,6 +31,7 @@ local function command(action)
 end
 
 function i(menu)
+    ild_gameplay.install()
     menu:InitControls()
     ui_main_menu.main_menu.Update = u
     if not original_keyboard then
@@ -74,14 +75,20 @@ function update_dialog:__init() super()
     self:Init(0, 0, 1024, 768)
     local xml = CScriptXmlInit()
     xml:ParseFile("ild_fixes_update.xml")
-    xml:InitStatic("background", self)
+    self.background = xml:InitStatic("background", self)
+    self.background:SetStretchTexture(true)
     self.caption = xml:InitStatic("caption", self)
     self.message = xml:InitStatic("message", self)
     self.size = xml:InitStatic("size", self)
     self.theme = xml:InitStatic("theme", self)
-    self.changes = xml:InitScrollView("changes", self)
-    self.changes_text = xml:InitStatic("changes_text", nil)
-    self.changes:AddWindow(self.changes_text, true)
+    self.changes_text = xml:InitStatic("changes_text", self)
+    self.previous_page = xml:Init3tButton("previous_page", self)
+    self.next_page = xml:Init3tButton("next_page", self)
+    self.page_label = xml:InitStatic("page_label", self)
+    self:Register(self.previous_page, "ild_previous_page")
+    self:Register(self.next_page, "ild_next_page")
+    self:AddCallback("ild_previous_page", ui_events.BUTTON_CLICKED, self.on_previous_page, self)
+    self:AddCallback("ild_next_page", ui_events.BUTTON_CLICKED, self.on_next_page, self)
     self.progress_text = xml:InitStatic("progress_text", self)
     self.progress_back = xml:InitStatic("progress_back", self)
     self.progress = xml:InitStatic("progress_fill", self)
@@ -103,6 +110,15 @@ function update_dialog:Update()
     if now < self.next_poll then return end
     self.next_poll = now + 250
     self:refresh(read_status())
+    if self.qa_page_at and now >= self.qa_page_at then
+        self.qa_page_at = nil
+        while self.page < #self.pages do self:on_next_page() end
+        command("qa_ui_last_page")
+    end
+    if self.qa_download_at and now >= self.qa_download_at then
+        self.qa_download_at = nil
+        self:on_action()
+    end
     if self.qa_exit_at and now >= self.qa_exit_at then
         self.qa_exit_at = nil
         get_console():execute("quit")
@@ -116,13 +132,17 @@ function update_dialog:Update()
         if now >= self.qa_capture_at then
             self.qa_captured_state = self.state
             command("qa_ui_ready")
-            if self.state == "available" and status.qa_download == "1" then self:on_action() end
+            if self.state == "available" and status.qa_download == "1" then
+                if #self.pages > 1 then self.qa_page_at = now + 400 end
+                self.qa_download_at = now + 1000
+            end
             if self.state == "ready" and status.qa_download == "1" then self.qa_exit_at = now + 4000 end
         end
     end
 end
 
 function update_dialog:refresh(current)
+    if not current.state or current.state == "" then return end
     self.state = current.state
     self.caption:SetText(current.caption or "")
     self.message:SetText(current.message or "")
@@ -131,14 +151,19 @@ function update_dialog:refresh(current)
     local changes = current.changes or ""
     if changes ~= self.last_changes then
         self.last_changes = changes
-        self.changes_text:SetText(changes)
-        self.changes_text:AdjustHeightToText()
+        self:paginate(changes)
     end
     self.action:SetText(current.action_label or "")
     self.cancel:SetText(current.cancel_label or "")
     self.disable:SetText(current.disable_label or "")
     local progress = current.state == "downloading" or current.state == "ready"
-    self.changes:Show(not progress)
+    self.changes_text:Show(not progress)
+    local multiple_pages = not progress and #self.pages > 1
+    self.previous_page:Show(multiple_pages)
+    self.next_page:Show(multiple_pages)
+    self.page_label:Show(multiple_pages)
+    self.previous_page:SetText("<")
+    self.next_page:SetText(">")
     self.theme:Show(not progress)
     self.progress:Show(progress)
     self.progress_back:Show(progress)
@@ -153,6 +178,42 @@ function update_dialog:refresh(current)
     self.progress_text:SetText(string.format("%.2f / %.2f MiB", downloaded / 1048576, total / 1048576))
     if current.state == "apply_started" then get_console():execute("quit") end
     if current.state == "dismissed" or current.state == "current" then self:close() end
+end
+
+function update_dialog:paginate(text)
+    self.pages = {}
+    local page = ""
+    -- Measure with the game's font metrics, rather than assuming a fixed line count.
+    for word in string.gmatch(text, "%S+%s*") do
+        local candidate = page .. word
+        self.changes_text:SetText(string.gsub(candidate, "\n", "\\n"))
+        self.changes_text:AdjustHeightToText()
+        if page ~= "" and self.changes_text:GetHeight() > 145 then
+            self.pages[#self.pages + 1] = page
+            page = word
+        else
+            page = candidate
+        end
+    end
+    self.pages[#self.pages + 1] = page
+    self:show_page(1)
+end
+
+function update_dialog:show_page(index)
+    self.page = math.max(1, math.min(index, #self.pages))
+    self.changes_text:SetText(string.gsub(self.pages[self.page], "\n", "\\n"))
+    self.changes_text:AdjustHeightToText()
+    self.previous_page:Enable(self.page > 1)
+    self.next_page:Enable(self.page < #self.pages)
+    self.page_label:SetText(self.page .. " / " .. #self.pages)
+end
+
+function update_dialog:on_previous_page()
+    self:show_page(self.page - 1)
+end
+
+function update_dialog:on_next_page()
+    self:show_page(self.page + 1)
 end
 
 function update_dialog:on_action()

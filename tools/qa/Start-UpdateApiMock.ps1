@@ -3,6 +3,7 @@ param(
     [ValidateSet('Full', 'Patch', 'Major', 'Both', 'BadDigest', 'Empty')]
     [string]$Scenario = 'Full',
     [string]$InstalledVersion = '0.9.0',
+    [switch]$LongNotes,
     [string]$AssetRoot = (Join-Path $PSScriptRoot '..\..\qa\mock-assets')
 )
 
@@ -36,6 +37,13 @@ $releases = foreach ($version in $versions) {
        html_url = "https://github.com/MMadmer/In-the-line-of-duty-fixes/releases/tag/$version"
        body = "## RU`n`n## Тема`n`nКонсоль без лишнего шума`n`n## Изменения`n`n* Исправлен поток ложных ошибок в консоли.`n* Строка ввода остаётся на месте.`n`n## EN`n`n## Theme`n`nA quieter console`n`n## Changes`n`n* Fixed recurring false console errors.`n* Input is preserved.`n"
        assets = @($releaseAssets) }
+}
+if ($LongNotes) {
+    foreach ($release in $releases) {
+        $ru = (1..24 | ForEach-Object { "* Проверка строки $_`: перенос текста и прокрутка списка изменений." }) -join "`n"
+        $en = (1..24 | ForEach-Object { "* Check $_`: wrapping and scrolling the complete change list." }) -join "`n"
+        $release.body = "## RU`n`n## Изменения`n`n$ru`n`n## EN`n`n## Changes`n`n$en`n"
+    }
 }
 $payload = ConvertTo-Json -InputObject @($releases) -Depth 8 -Compress
 $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $Port)

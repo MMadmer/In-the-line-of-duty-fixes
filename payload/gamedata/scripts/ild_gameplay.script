@@ -1,0 +1,30 @@
+local installed = false
+
+class "decoration_action"
+
+function decoration_action:__init(object)
+    self.object = object
+end
+
+function decoration_action:reset_scheme()
+    self.object:set_tip_text("")
+    self.object:set_nonscript_usable(false)
+end
+
+function install()
+    if installed then return end
+    installed = true
+    get_console():execute("ild_update read qa_game")
+    if get_console():get_string("ild_update") == "1" then ild_qa.install() end
+    local original_add = ph_door.add_to_binder
+    ph_door.add_to_binder = function(object, ini, scheme, section, storage)
+        local spawn = object:spawn_ini()
+        -- This named table was shipped with door logic; keep its binder and save layout intact.
+        if object:name() == "esc_tixona_xyinia4" and spawn and spawn:line_exist("logic", "cfg") and
+            spawn:r_string("logic", "cfg") == "scripts\\door_logic.ltx" then
+            xr_logic.subscribe_action_for_events(object, storage, decoration_action(object))
+            return
+        end
+        return original_add(object, ini, scheme, section, storage)
+    end
+end

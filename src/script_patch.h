@@ -5,6 +5,7 @@
 
 namespace ild::script_patch
 {
+[[nodiscard]] bool bind_gameplay(std::span<std::byte> source);
 enum class Result
 {
     applied,

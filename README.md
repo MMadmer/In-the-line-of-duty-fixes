@@ -3,8 +3,12 @@
 Non-destructive fixes for S.T.A.L.K.E.R.: Shadow of Chernobyl and the mod
 «По долгу службы». Original game/mod files and saves must remain unchanged.
 
-Current version: 0.9.1. The project contains in-memory console fixes and an
-in-game update dialog based on existing Shadow of Chernobyl UI classes.
+Current version: 0.9.1. The fix pack repairs console editing, incorrect door logic assigned
+to a decorative table, knife replacement through inventory, and the in-game
+updater layout. Original assets are changed only in private memory or through
+runtime hooks, never on disk.
+
+See [gameplay and UI QA](docs/GAMEPLAY_AND_UI.md) for the tested cases and limits.
 
 Read [PROJECT_RULES.md](PROJECT_RULES.md) before working on the project.
 

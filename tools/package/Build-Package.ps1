@@ -18,6 +18,7 @@ $sourceMap = [ordered]@{
     'bin/dinput8.dll' = 'build/Release/dinput8.dll'
     'InTheLineOfDutyFixesUpdater.exe' = 'build/updater/InTheLineOfDutyFixesUpdater.exe'
     'gamedata/scripts/ild_fix_ui.script' = 'payload/gamedata/scripts/ild_fix_ui.script'
+    'gamedata/scripts/ild_gameplay.script' = 'payload/gamedata/scripts/ild_gameplay.script'
     'gamedata/config/ui/ild_fixes_update.xml' = 'payload/gamedata/config/ui/ild_fixes_update.xml'
     'README-InTheLineOfDutyFixes.txt' = 'packaging/README-InTheLineOfDutyFixes.txt'
 }

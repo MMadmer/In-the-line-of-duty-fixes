@@ -57,4 +57,16 @@ bool bind_update_menu(std::span<std::byte> source)
     std::fill(match + replacement.size(), match + original.size(), std::byte{' '});
     return true;
 }
+
+bool bind_gameplay(std::span<std::byte> source)
+{
+    const auto original = as_bytes("printf(\"actor net spawn\")");
+    const auto replacement = as_bytes("ild_gameplay.install()");
+    const auto match = std::search(source.begin(), source.end(), original.begin(), original.end());
+    if (match == source.end() ||
+        std::search(match + original.size(), source.end(), original.begin(), original.end()) != source.end()) return false;
+    std::copy(replacement.begin(), replacement.end(), match);
+    std::fill(match + replacement.size(), match + original.size(), std::byte{' '});
+    return true;
+}
 }

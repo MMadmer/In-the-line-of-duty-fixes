@@ -17,6 +17,11 @@ caret are display-only and are never included in the executed command.
 The helper uses Windows .NET Framework 4.x. It performs networking and applies
 verified updates; the update dialog itself uses the game's existing UI classes.
 
+Knife replacement uses the ordinary inventory equip action. The obsolete knife
+warning is removed in memory; the main descriptions remain intact.
+The incorrectly configured decorative table no longer runs a door controller.
+Updater changes are paginated using the game's fonts and native buttons.
+
 Removal:
 Close the game and helper, then remove only this release's files listed in
 .ild-fixes/managed-files.txt. Never delete the whole bin or gamedata directory.

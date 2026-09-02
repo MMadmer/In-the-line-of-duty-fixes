@@ -1,25 +1,34 @@
 <?xml version="1.0" encoding="windows-1251"?>
 <main>
     <background x="232" y="134" width="560" height="500" stretch="1">
-        <texture>ui\ui_dg_inventory</texture>
+        <texture>ui_menu_options_dlg</texture>
     </background>
     <caption x="262" y="158" width="500" height="32">
         <text font="graffiti22" align="c" vert_align="c" r="230" g="200" b="140"/>
     </caption>
-    <message x="270" y="208" width="484" height="48">
-        <text font="letterica16" align="c" complex_mode="1"/>
+    <message x="270" y="208" width="484" height="48" complex_mode="1">
+        <text font="letterica16" align="c"/>
     </message>
     <size x="270" y="263" width="484" height="24">
         <text font="letterica16" align="c"/>
     </size>
-    <theme x="270" y="297" width="484" height="28">
-        <text font="graffiti19" align="c" complex_mode="1"/>
+    <theme x="270" y="297" width="484" height="28" complex_mode="1">
+        <text font="graffiti19" align="c"/>
     </theme>
-    <changes x="270" y="337" width="484" height="173" always_show_scroll="1" vert_interval="4"
-             right_ident="4" left_ident="4" top_indent="4" bottom_indent="4"/>
-    <changes_text x="0" y="0" width="452" height="20">
-        <text font="letterica16" align="l" complex_mode="1"/>
+    <changes_text x="270" y="337" width="484" height="145" complex_mode="1">
+        <text font="letterica16" align="l"/>
     </changes_text>
+    <previous_page x="370" y="496" width="117" height="29">
+        <texture>ui_button_ordinary</texture>
+        <text font="letterica16" align="c"/>
+    </previous_page>
+    <page_label x="487" y="500" width="50" height="24">
+        <text font="letterica16" align="c"/>
+    </page_label>
+    <next_page x="537" y="496" width="117" height="29">
+        <texture>ui_button_ordinary</texture>
+        <text font="letterica16" align="c"/>
+    </next_page>
     <progress_text x="270" y="368" width="484" height="24">
         <text font="letterica16" align="c"/>
     </progress_text>
@@ -29,22 +38,16 @@
     <progress_fill x="286" y="414" width="452" height="12" stretch="1">
         <texture r="215" g="190" b="110">ui\ui_btn_mm_t</texture>
     </progress_fill>
-    <action x="276" y="542" width="280" height="30" stretch="1">
-        <texture_e>ui_button_ordinary_e</texture_e>
-        <texture_t>ui_button_ordinary_t</texture_t>
-        <texture_h>ui_button_ordinary_h</texture_h>
+    <action x="387" y="542" width="117" height="29">
+        <texture>ui_button_ordinary</texture>
         <text font="letterica16" align="c"/>
     </action>
-    <cancel x="574" y="542" width="170" height="30" stretch="1">
-        <texture_e>ui_button_ordinary_e</texture_e>
-        <texture_t>ui_button_ordinary_t</texture_t>
-        <texture_h>ui_button_ordinary_h</texture_h>
+    <cancel x="520" y="542" width="117" height="29">
+        <texture>ui_button_ordinary</texture>
         <text font="letterica16" align="c"/>
     </cancel>
-    <disable x="292" y="584" width="440" height="26" stretch="1">
-        <texture_e>ui_button_ordinary_e</texture_e>
-        <texture_t>ui_button_ordinary_t</texture_t>
-        <texture_h>ui_button_ordinary_h</texture_h>
+    <disable x="454" y="584" width="117" height="29">
+        <texture>ui_button_ordinary</texture>
         <text font="letterica16" align="c"/>
     </disable>
 </main>

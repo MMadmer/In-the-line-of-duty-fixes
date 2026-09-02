@@ -1,5 +1,8 @@
 # Console compatibility
 
+Later gameplay and visual verification supersede the earlier limitations below;
+see [Gameplay and UI](GAMEPLAY_AND_UI.md).
+
 The supported `XR_3DA.exe` SHA-256 is
 `B22BC15B94A2A58C4E7046E46D46A3750D80C399BA8F37A2EF40CCF78EE3126D`.
 Do not reuse its offsets against another executable.

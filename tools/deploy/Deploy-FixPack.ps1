@@ -11,7 +11,7 @@ $version = [regex]::Match((Get-Content "$repo\CMakeLists.txt" -Raw),
     'project\(InTheLineOfDutyFixes VERSION ([0-9]+\.[0-9]+\.[0-9]+)').Groups[1].Value
 $payload = Join-Path $repo "artifacts\candidate\payload-$version"
 $expected = @('bin/dinput8.dll', 'InTheLineOfDutyFixesUpdater.exe',
-    'gamedata/scripts/ild_fix_ui.script', 'gamedata/config/ui/ild_fixes_update.xml',
+    'gamedata/scripts/ild_fix_ui.script', 'gamedata/scripts/ild_gameplay.script', 'gamedata/config/ui/ild_fixes_update.xml',
     'README-InTheLineOfDutyFixes.txt', '.ild-fixes/version.txt', '.ild-fixes/managed-files.txt') | Sort-Object
 
 function Save-Snapshot {
@@ -89,7 +89,7 @@ try {
         throw
     }
     if (Compare-Object $savesBefore @(Save-Snapshot)) { throw 'Save tree changed during deployment.' }
-    Write-Output "Deployed $version to $GameRoot; all 7 runtime hashes verified; saves unchanged."
+    Write-Output "Deployed $version to $GameRoot; all $($expected.Count) runtime hashes verified; saves unchanged."
     Write-Output "Recoverable backup: $backup"
 }
 catch {

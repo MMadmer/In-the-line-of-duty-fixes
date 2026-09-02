@@ -65,5 +65,12 @@ int main()
     auto ambiguous_menu = bytes_of("self:InitControls() self:InitControls()");
     if (ild::script_patch::bind_update_menu(ambiguous_menu)) return 7;
 
+    auto actor = bytes_of("function actor_binder:net_spawn(data)\r\n printf(\"actor net spawn\")\r\nend");
+    const auto actor_size = actor.size();
+    if (!ild::script_patch::bind_gameplay(actor) || actor.size() != actor_size ||
+        string_of(actor).find("ild_gameplay.install()") == std::string::npos) return 8;
+    auto ambiguous_actor = bytes_of("printf(\"actor net spawn\") printf(\"actor net spawn\")");
+    if (ild::script_patch::bind_gameplay(ambiguous_actor)) return 9;
+
     return 0;
 }
