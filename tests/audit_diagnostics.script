@@ -1,0 +1,21 @@
+local started
+
+function install()
+    local original = bind_stalker.actor_binder.update
+    bind_stalker.actor_binder.update = function(self, delta)
+        original(self, delta)
+        local console = get_console()
+        console:execute("ild_update read clock")
+        local now = tonumber(console:get_string("ild_update"))
+        if not started then
+            started = now
+            console:execute("ild_update qa_game_ready")
+            console:execute("ild_audit_unknown_command")
+            console:execute("rs_detail on")
+            console:execute("ild_update qa_assets")
+        elseif now - started >= 5000 then
+            console:execute("ild_update qa_smoke_done")
+            console:execute("quit")
+        end
+    end
+end

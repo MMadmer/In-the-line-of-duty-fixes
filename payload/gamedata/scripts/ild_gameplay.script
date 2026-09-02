@@ -14,6 +14,7 @@ end
 function install()
     if installed then return end
     installed = true
+    ild_script_repairs.install()
     get_console():execute("ild_update read qa_game")
     if get_console():get_string("ild_update") == "1" then ild_qa.install() end
     local original_add = ph_door.add_to_binder

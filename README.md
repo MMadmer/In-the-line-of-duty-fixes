@@ -10,6 +10,8 @@ updater layout. Original assets are changed only in private memory or through
 runtime hooks, never on disk.
 
 See [gameplay and UI QA](docs/GAMEPLAY_AND_UI.md) for the tested cases and limits.
+The later [gamedata audit](docs/GAMEDATA_AUDIT.md) covers startup diagnostics,
+script/save integrity, dialog graphs, recipes, and original-resource validation.
 
 Read [PROJECT_RULES.md](PROJECT_RULES.md) before working on the project.
 

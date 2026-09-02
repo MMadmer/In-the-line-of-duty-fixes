@@ -374,6 +374,8 @@ namespace IldFixes.Updater
             return path.Equals("bin/dinput8.dll", StringComparison.OrdinalIgnoreCase) ||
                 path.Equals("gamedata/scripts/ild_fix_ui.script", StringComparison.OrdinalIgnoreCase) ||
                 path.Equals("gamedata/scripts/ild_gameplay.script", StringComparison.OrdinalIgnoreCase) ||
+                path.Equals("gamedata/scripts/ild_script_repairs.script", StringComparison.OrdinalIgnoreCase) ||
+                path.Equals("gamedata/scripts/ild_recipe_repairs.script", StringComparison.OrdinalIgnoreCase) ||
                 path.Equals("gamedata/config/ui/ild_fixes_update.xml", StringComparison.OrdinalIgnoreCase) ||
                 path.StartsWith("bin/ild_fixes_", StringComparison.OrdinalIgnoreCase) ||
                 path.Equals("InTheLineOfDutyFixesUpdater.exe", StringComparison.OrdinalIgnoreCase) ||

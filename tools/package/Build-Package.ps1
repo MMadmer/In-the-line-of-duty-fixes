@@ -19,6 +19,8 @@ $sourceMap = [ordered]@{
     'InTheLineOfDutyFixesUpdater.exe' = 'build/updater/InTheLineOfDutyFixesUpdater.exe'
     'gamedata/scripts/ild_fix_ui.script' = 'payload/gamedata/scripts/ild_fix_ui.script'
     'gamedata/scripts/ild_gameplay.script' = 'payload/gamedata/scripts/ild_gameplay.script'
+    'gamedata/scripts/ild_script_repairs.script' = 'payload/gamedata/scripts/ild_script_repairs.script'
+    'gamedata/scripts/ild_recipe_repairs.script' = 'payload/gamedata/scripts/ild_recipe_repairs.script'
     'gamedata/config/ui/ild_fixes_update.xml' = 'payload/gamedata/config/ui/ild_fixes_update.xml'
     'README-InTheLineOfDutyFixes.txt' = 'packaging/README-InTheLineOfDutyFixes.txt'
 }

@@ -1,0 +1,253 @@
+local installed = false
+local actor_repairs_installed = false
+local detector_started = false
+local artefacts_dirty = false
+
+local giant_sections = {
+    ["mob_walker@1"] = true,
+    ["mob_walker@2"] = true,
+    ["mob_walker@3"] = true,
+    ["mob_walker@4"] = true
+}
+local giant_bad_transition = "{=actor_in_zone(x18_dlia_sevducha_gg_tyt5)} %=bar_arena_hit% mob_walker@6"
+
+local knife_sections = {
+    wpn_knife = "fake_wpn_knife",
+    wpn_knife_6x4 = "fake_wpn_knife_6x4",
+    wpn_knife_6x2 = "fake_wpn_knife_6x2",
+    lom = "fake_lom",
+    wpn_knife_nkvd = "fake_wpn_knife_nkvd"
+}
+
+local detector_sections = {
+    af_medusa = true,
+    af_cristall_flower = true,
+    af_vyvert = true,
+    af_gravi = true,
+    af_blood = true,
+    af_mincer_meat = true,
+    af_electra_sparkler = true,
+    af_electra_flash = true,
+    af_rusty_thorn = true,
+    af_rusty_kristall = true,
+    af_ameba_slime = true,
+    af_ameba_slug = true,
+    af_drops = true,
+    af_fireball = true,
+    af_dummy_battery = true,
+    af_dummy_dummy = true,
+    af_dummy_spring = true
+}
+
+local function reconcile_artefacts()
+    local simulator = alife()
+    if not simulator then return end
+    for id = 1, 65534 do
+        local object = simulator:object(id)
+        if object and detector_sections[object:section_name()] and not db.artefacts[id] then
+            db.artefacts[id] = {spot = false, tim_beep = 0}
+        end
+    end
+    return true
+end
+
+local function install_zone_update(zone_class, native_class)
+    zone_class.update = function(self)
+        native_class.update(self)
+        if not self.last_spawn_time then self.last_spawn_time = game.get_game_time() end
+        if game.get_game_time():diffSec(self.last_spawn_time) >= self.artefact_spawn_idle then
+            self.last_spawn_time = game.get_game_time()
+            if math.random(100) <= self.artefact_spawn_rnd then
+                -- The native method returns void and can create several server objects.
+                self:spawn_artefacts()
+                artefacts_dirty = true
+            end
+        end
+    end
+end
+
+local function install_monster_death()
+    local binder = bind_monster.generic_object_binder
+    local original = binder.death_callback
+    binder.death_callback = function(self, victim, who)
+        if who and db.actor then return original(self, victim, who) end
+        -- Environmental deaths have no killer; retain the original event arguments.
+        if self.st.mob_death then
+            xr_logic.issue_event(self.object, self.st.mob_death, "death_callback", victim, who)
+        end
+        if self.st.active_section then
+            xr_logic.issue_event(self.object, self.st[self.st.active_scheme], "death_callback", victim, who)
+        end
+        smart_terrain.on_death(self.object:id())
+        if db.actor then
+            local impulse = hit()
+            impulse.draftsman = self.object
+            impulse.type = hit.fire_wound
+            impulse.direction = db.actor:position():sub(self.object:position())
+            impulse:bone("pelvis")
+            impulse.power = 1
+            impulse.impulse = 10
+            self.object:hit(impulse)
+        end
+    end
+end
+
+local function install_hidden_slots()
+    local window = hidden_slots.BkgrWnd
+    local original_add = window.AddCallback
+    window.AddCallback = function(self, name, event, handler, context)
+        if name == "check_button_1" and event == ui_events.WINDOW_LBUTTON_DB_CLICK then
+            -- InitControls registers each button immediately after assigning self.btn.
+            local button = self.btn
+            handler = function()
+                local actor = db.actor
+                local item = actor and actor:item_in_slot(0)
+                local section = item and knife_sections[item:section()]
+                if not section then return end
+                hidden_slots.spawn_item_in_inv(section)
+                hidden_slots.remove_item(item:id())
+                button:Show(false)
+            end
+            self.ClickBtn[1] = handler
+        end
+        return original_add(self, name, event, handler, context)
+    end
+end
+
+local function install_actor_repairs()
+    if actor_repairs_installed then return end
+    main_sleep.eat_food = function()
+        local actor = db.actor
+        if not actor then return end
+        for _, section in ipairs({"conserva", "bread", "kolbasa"}) do
+            local item = actor:object(section)
+            if item then
+                actor:eat(item)
+                return
+            end
+        end
+    end
+    amk.remove_items = function(section, count)
+        local actor, simulator = db.actor, alife()
+        if not actor or not simulator then return end
+        count = count or 1
+        for index = actor:object_count() - 1, 0, -1 do
+            if count <= 0 then break end
+            local item = actor:object(index)
+            if item and item:section() == section then
+                local server_object = simulator:object(item:id())
+                if server_object then
+                    simulator:release(server_object, true)
+                    count = count - 1
+                end
+            end
+        end
+    end
+    install_hidden_slots()
+    ild_recipe_repairs.install()
+
+    local detector = bind_det_arts
+    local original_start = detector.start_update
+    detector.start_update = function()
+        if not db.actor then return end
+        original_start()
+        detector_started = true
+    end
+    detector.update = function()
+        local actor = db.actor
+        if not actor then return true end
+        local item = actor:item_in_slot(1)
+        local section = item and item:section()
+        if section == "det_artefact_indy" then detector.det_indy()
+        elseif section == "det_artefact_pro" then detector.det_normal()
+        elseif section == "det_artefact_super" then detector.det_super()
+        else detector.iteration_del_spot() end
+        -- A true fastcall result removes the callback from the physics commander.
+        return false
+    end
+    actor_repairs_installed = true
+end
+
+local function reset_detector_registry()
+    for id, entry in pairs(db.artefacts) do
+        if entry.spot then level.map_remove_object_spot(id, "artefact_location") end
+    end
+    db.artefacts = {}
+    detector_started = false
+end
+
+local function restore_input_timeout(binder)
+    local storage = binder.st
+    if storage and storage.disable_input_time and not storage.disable_input_idle then
+        -- The existing save stores the timestamp, not actor_punch's fixed 30-second duration.
+        storage.disable_input_idle = 30
+    end
+end
+
+function install()
+    if installed then return end
+    if not new_life.new_gg_2 then new_life.new_gg_2 = moa_agro.new_gg_2 end
+    if not new_life.dengi_esti then
+        new_life.dengi_esti = function() return db.actor and db.actor:money() >= 3000 or false end
+    end
+    if not new_life.give_baaablo then
+        new_life.give_baaablo = function(first_speaker, second_speaker)
+            if new_life.dengi_esti() then dialogs.relocate_money(second_speaker, 3000, "out") end
+        end
+    end
+    if not delete.esc_ydalaem_bbbbbbbbbbbbbtttttttttttrrrrr then
+        delete.esc_ydalaem_bbbbbbbbbbbbbtttttttttttrrrrr = delete.esc_ydalaem_bbbbbbbbbbbbbtttttttttttrrrrrrrrrrrrr
+    end
+    local original_parse = xr_logic.parse_condlist
+    xr_logic.parse_condlist = function(npc, section, field, source)
+        -- Inline all.spawn logic contains extra damage triggers that must remain untouched.
+        if field == "on_info" and giant_sections[section] and type(source) == "string" and
+            string.gsub(source, "%s+", "") == string.gsub(giant_bad_transition, "%s+", "") and npc and
+            npc:name() == "labx_psevdogiant" and npc:section() == "gigant_strong" then
+            source = string.gsub(source, "mob_walker@6", "mob_walker@5", 1)
+        end
+        return original_parse(npc, section, field, source)
+    end
+    local menu = ui_main_menu.main_menu
+    local original_credits = menu.OnButton_credits_clicked
+    menu.OnButton_credits_clicked = function(self, ...)
+        if db.actor then return original_credits(self, ...) end
+        game.start_tutorial("credits_seq")
+    end
+
+    sound_theme.ph_snd_themes.moa_psi_antena = {[[characters_voice\scenario\yantar\psy_voices_1]]}
+    sound_theme.ph_snd_themes.grey_grey_later = {[[characters_voice\scenario\garbage\grey_grey_later]]}
+    install_monster_death()
+    install_zone_update(se_zones.se_zone_anom, cse_anomalous_zone)
+    install_zone_update(se_zones.se_zone_visual, cse_zone_visual)
+
+    local binder = bind_stalker.actor_binder
+    local original_load = binder.load
+    binder.load = function(self, ...)
+        local result = original_load(self, ...)
+        restore_input_timeout(self)
+        return result
+    end
+    local original_spawn = binder.net_spawn
+    binder.net_spawn = function(self, ...)
+        local result = original_spawn(self, ...)
+        if result and db.actor then
+            install_actor_repairs()
+            reset_detector_registry()
+        end
+        return result
+    end
+    local original_update = binder.update
+    binder.update = function(self, ...)
+        restore_input_timeout(self)
+        if db.actor then install_actor_repairs() end
+        original_update(self, ...)
+        if db.actor and not detector_started then
+            install_actor_repairs()
+            bind_det_arts.start_update()
+        end
+        -- Several zones can respawn in one simulation batch; reconcile only once here.
+        if db.actor and artefacts_dirty and reconcile_artefacts() then artefacts_dirty = false end
+    end
+    installed = true
+end

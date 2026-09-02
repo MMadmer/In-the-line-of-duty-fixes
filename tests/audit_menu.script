@@ -1,0 +1,18 @@
+local started
+
+function install()
+    local original = ild_fix_ui.u
+    ild_fix_ui.u = function(menu)
+        original(menu)
+        local console = get_console()
+        console:execute("ild_update read clock")
+        local now = tonumber(console:get_string("ild_update"))
+        if not started then
+            started = now
+            console:execute("ild_update qa_menu_ready")
+        elseif now - started >= 5000 then
+            console:execute("ild_update qa_menu_done")
+            console:execute("quit")
+        end
+    end
+end

@@ -67,6 +67,16 @@ bool bind_gameplay(std::span<std::byte> source)
         std::search(match + original.size(), source.end(), original.begin(), original.end()) != source.end()) return false;
     std::copy(replacement.begin(), replacement.end(), match);
     std::fill(match + replacement.size(), match + original.size(), std::byte{' '});
+    const auto replace_equal = [&](std::string_view before, std::string_view after)
+    {
+        const auto old_bytes = as_bytes(before);
+        const auto new_bytes = as_bytes(after);
+        const auto at = std::search(source.begin(), source.end(), old_bytes.begin(), old_bytes.end());
+        if (at != source.end() && old_bytes.size() == new_bytes.size())
+            std::copy(new_bytes.begin(), new_bytes.end(), at);
+    };
+    replace_equal("packer:w_bool(true)", "packet:w_bool(true)");
+    replace_equal("stored_input_time == true then", "stored_input_time == 1    then");
     return true;
 }
 }

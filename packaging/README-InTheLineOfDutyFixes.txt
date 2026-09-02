@@ -22,6 +22,11 @@ warning is removed in memory; the main descriptions remain intact.
 The incorrectly configured decorative table no longer runs a door controller.
 Updater changes are paginated using the game's fonts and native buttons.
 
+Additional repairs cover Unicode keyboard labels, sound metadata, stock graphics
+presets, missing-bump fallbacks, model chunk boundaries, actor save data, dialog
+graphs, detector callbacks, food use and complete recipe preconditions.
+These fixes do not disable genuine engine diagnostics or overwrite original assets.
+
 Removal:
 Close the game and helper, then remove only this release's files listed in
 .ild-fixes/managed-files.txt. Never delete the whole bin or gamedata directory.

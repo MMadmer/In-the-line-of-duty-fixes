@@ -13,6 +13,8 @@ $payload = Join-Path $repo "artifacts\candidate\payload-$version"
 $expected = @('bin/dinput8.dll', 'InTheLineOfDutyFixesUpdater.exe',
     'gamedata/scripts/ild_fix_ui.script', 'gamedata/scripts/ild_gameplay.script', 'gamedata/config/ui/ild_fixes_update.xml',
     'README-InTheLineOfDutyFixes.txt', '.ild-fixes/version.txt', '.ild-fixes/managed-files.txt') | Sort-Object
+$expected = @($expected + 'gamedata/scripts/ild_script_repairs.script' | Sort-Object)
+$expected = @($expected + 'gamedata/scripts/ild_recipe_repairs.script' | Sort-Object)
 
 function Save-Snapshot {
     Get-ChildItem 'C:\Users\Public\Documents\STALKER-SHOC\savedgames' -Recurse -File |

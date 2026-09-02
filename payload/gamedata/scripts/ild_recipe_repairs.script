@@ -1,0 +1,107 @@
+local installed = false
+
+-- These quantities mirror the original handlers; validation never changes their recipes.
+local vehicle_recipes = {
+    slom_zaz_pochin = {
+        item_zaz_benzbak = 1, item_akkym = 1, item_koleso_avto = 1, kanistra_benziny = 1,
+        item_avto_fara = 1, item_avto_maslo = 1, item_podshipnik = 4, item_svecha_zajigania = 1
+    },
+    slom_zil_pochin = {
+        item_benzbak_gryz = 2, item_akkym = 1, item_koleso_gryz = 4, kanistra_dizeli = 1,
+        item_avto_fara = 1, item_avto_maslo = 1, item_podshipnik = 1, item_svecha_zajigania = 1
+    },
+    slom_niva_pochin = {
+        item_podshipnik = 4, item_koleso_avto = 4, kanistra_benziny = 1,
+        item_avto_fara = 2, item_avto_maslo = 1, item_avto_pryjinu = 4
+    },
+    slom_volga_pochin = {
+        item_avto_xyinia10 = 1, item_avto_xyinia108 = 1, item_avto_xyinia107 = 1,
+        kanistra_benziny = 1, item_avto_xyinia106 = 2, item_avto_xyinia101 = 1, item_akkym = 1
+    },
+    slom_jiglo1_pochin = {
+        -- The description says two headlights, but both original predicates and consumption use one.
+        item_avto_xyinia108 = 1, item_avto_xyinia107 = 1, item_avto_xyinia106 = 1,
+        item_avto_xyinia101 = 1, item_akkym = 1, item_avto_fara = 1, item_zaz_benzbak = 1,
+        item_avto_maslo = 1, item_svecha_zajigania = 1
+    },
+    slom_jiglo2_pochin = {
+        item_avto_xyinia105 = 1, item_avto_pryjinu = 2, kanistra_benziny = 1,
+        item_avto_maslo = 1, item_svecha_zajigania = 1
+    }
+}
+
+local weapon_recipes = {
+    {
+        lr300_zapchasti1 = 1, lr300_zapchasti2 = 1, lr300_zapchasti3 = 1,
+        lr300_zapchasti4 = 1, lr300_zapchasti5 = 1
+    },
+    {vntrz_zapchasti1 = 1, vntrz_zapchasti2 = 1, vntrz_zapchasti3 = 1, wpn_addon_scope = 1},
+    {svd_zapchasti1 = 1, svd_zapchasti2 = 1, svd_zapchasti3 = 1, svd_zapchasti4 = 1, wpn_addon_scope = 1},
+    {vsk_zapchasti1 = 1, vsk_zapchasti2 = 1, vsk_zapchasti3 = 1, vsk_zapchasti4 = 1}
+}
+
+local function inventory_counts()
+    local actor, simulator = db.actor, alife()
+    if not actor or not simulator then return end
+    local counts, counted = {}, {}
+    for index = 0, actor:object_count() - 1 do
+        local item = actor:object(index)
+        if item then
+            local id = item:id()
+            -- Match amk.remove_items: only an existing server object can pay the cost.
+            if not counted[id] and simulator:object(id) then
+                local section = item:section()
+                counts[section] = (counts[section] or 0) + 1
+                counted[id] = true
+            end
+        end
+    end
+    return counts
+end
+
+local function has_ingredients(counts, recipe)
+    if not counts then return false end
+    for section, required in pairs(recipe) do
+        if (counts[section] or 0) < required then return false end
+    end
+    return true
+end
+
+local function disable_button(window, index)
+    local button = window["btn_" .. index]
+    if button then button:Enable(false) end
+end
+
+local function wrap_handler(window_class, index, recipe)
+    local name = "btn" .. index
+    local original = window_class[name]
+    window_class[name] = function(self, ...)
+        -- Recheck at the action boundary before closing the UI, awarding progress, or removing anything.
+        if not has_ingredients(inventory_counts(), recipe) then
+            disable_button(self, index)
+            return
+        end
+        return original(self, ...)
+    end
+end
+
+local function wrap_window(window_class, recipes)
+    local original_init = window_class.InitControls
+    window_class.InitControls = function(self, ...)
+        local result = original_init(self, ...)
+        local counts = inventory_counts()
+        for index, recipe in ipairs(recipes) do
+            -- Retain all original visibility and enablement rules; only reject unpaid recipes.
+            if not has_ingredients(counts, recipe) then disable_button(self, index) end
+        end
+        return result
+    end
+    for index, recipe in ipairs(recipes) do wrap_handler(window_class, index, recipe) end
+end
+
+function install()
+    if installed then return end
+    for name, recipe in pairs(vehicle_recipes) do wrap_window(avtodroch[name], {recipe}) end
+    wrap_window(stanok.sborka, weapon_recipes)
+    installed = true
+end

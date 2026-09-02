@@ -4,6 +4,9 @@
 #include "console_hooks.h"
 #include "update_bridge.h"
 #include "inventory_hooks.h"
+#include "startup_repairs.h"
+#include "config_repairs.h"
+#include "texture_aliases.h"
 #include "script_patch.h"
 #include "sha256.h"
 
@@ -95,7 +98,10 @@ INIT_ONCE message_once = INIT_ONCE_STATIC_INIT;
 int __cdecl read_hook(int file, void* buffer, unsigned int size)
 {
     static_cast<void>(ild::install_inventory_hooks(game_root));
+    static_cast<void>(ild::install_texture_aliases(game_root));
     const auto read = real_read(file, buffer, size);
+    if (read > 0 && buffer)
+        static_cast<void>(ild::repair_config_buffer(std::span(static_cast<std::byte*>(buffer), static_cast<std::size_t>(read))));
     if ((read == 8844 || read == 18708) && buffer)
     {
         const auto bytes = std::span(static_cast<std::byte*>(buffer), static_cast<std::size_t>(read));
@@ -200,7 +206,7 @@ void report_unsupported(const wchar_t* reason)
     }
 
     return _wcsicmp(buffer.c_str(), target_script.c_str()) == 0 ||
-        _wcsicmp(buffer.c_str(), target_actor.c_str()) == 0;
+        _wcsicmp(buffer.c_str(), target_actor.c_str()) == 0 || ild::is_config_repair_path(buffer, game_root);
 }
 
 HANDLE WINAPI create_file_mapping_hook(
@@ -257,7 +263,8 @@ HANDLE WINAPI create_file_mapping_hook(
         {
             patched = source_hash == expected_script_hash ?
                 ild::script_patch::remove_console_execution(bytes) == ild::script_patch::Result::applied :
-                source_hash == expected_actor_hash && ild::script_patch::bind_gameplay(bytes);
+                source_hash == expected_actor_hash ? ild::script_patch::bind_gameplay(bytes) :
+                ild::repair_config_buffer(bytes);
         }
     }
 
@@ -305,6 +312,12 @@ BOOL CALLBACK install_fixes(PINIT_ONCE, PVOID, PVOID*)
     }
 
     const auto core_module = GetModuleHandleW(L"xrCore.dll");
+    if (!ild::install_input_name_fix(GetModuleHandleW(nullptr)))
+        report_unsupported(L"The validated keyboard-name conversion could not be hooked.");
+    if (!ild::install_preset_compatibility(GetModuleHandleW(nullptr)))
+        report_unsupported(L"The validated stock graphics presets could not be adapted.");
+    if (!ild::install_audio_metadata_fix(root))
+        report_unsupported(L"The validated audio metadata adapter could not be installed.");
     if (!ild::install_console_hooks(GetModuleHandleW(nullptr)))
         report_unsupported(L"The validated console entry points could not be hooked. Console editing was not changed.");
 #ifdef ILD_CONSOLE_QA

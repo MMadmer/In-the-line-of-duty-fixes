@@ -16,6 +16,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 add_library(ild_script_patch STATIC
+    src/audio_metadata.cpp
     src/console_clipboard.cpp
     src/console_editor.cpp
     src/script_patch.cpp
@@ -25,6 +26,9 @@ add_library(ild_script_patch STATIC
 target_include_directories(ild_script_patch PUBLIC src)
 
 add_library(dinput8 SHARED
+    src/texture_aliases.cpp
+    src/config_repairs.cpp
+    src/startup_repairs.cpp
     src/inventory_hooks.cpp
     src/update_bridge.cpp
     src/console_hooks.cpp
@@ -41,6 +45,9 @@ target_link_libraries(dinput8 PRIVATE ild_script_patch advapi32 shell32)
 set_target_properties(dinput8 PROPERTIES PREFIX "" OUTPUT_NAME "dinput8")
 
 add_library(dinput8_console_qa SHARED EXCLUDE_FROM_ALL
+    src/texture_aliases.cpp
+    src/config_repairs.cpp
+    src/startup_repairs.cpp
     src/inventory_hooks.cpp
     tests/runtime_capture.cpp
     src/update_bridge.cpp
@@ -61,6 +68,22 @@ if(MSVC)
 endif()
 
 enable_testing()
+add_executable(ild_audio_metadata_tests tests/audio_metadata_tests.cpp)
+target_link_libraries(ild_audio_metadata_tests PRIVATE ild_script_patch)
+add_test(NAME audio_metadata COMMAND ild_audio_metadata_tests)
+add_executable(ild_texture_alias_tests tests/texture_alias_tests.cpp)
+target_include_directories(ild_texture_alias_tests PRIVATE src)
+add_test(NAME texture_aliases COMMAND ild_texture_alias_tests)
+add_executable(ild_config_repair_tests tests/config_repair_tests.cpp src/config_repairs.cpp src/sha256.cpp)
+target_link_libraries(ild_config_repair_tests PRIVATE ild_script_patch advapi32)
+add_test(NAME config_repairs COMMAND ild_config_repair_tests)
+find_program(ILD_LUA51 NAMES lua PATHS "C:/Program Files (x86)/Lua/5.1")
+if(ILD_LUA51)
+    add_test(NAME recipe_repairs COMMAND ${ILD_LUA51} ${CMAKE_CURRENT_SOURCE_DIR}/tests/recipe_repairs_tests.lua
+        ${CMAKE_CURRENT_SOURCE_DIR}/payload/gamedata/scripts/ild_recipe_repairs.script)
+    add_test(NAME script_repairs COMMAND ${ILD_LUA51} ${CMAKE_CURRENT_SOURCE_DIR}/tests/script_repairs_tests.lua
+        ${CMAKE_CURRENT_SOURCE_DIR}/payload/gamedata/scripts/ild_script_repairs.script)
+endif()
 
 add_executable(ild_script_patch_tests
     tests/script_patch_tests.cpp
@@ -152,4 +175,7 @@ add_executable(ild_hidden_desktop_launcher
 
 if(MSVC)
     target_compile_options(ild_hidden_desktop_launcher PRIVATE /W4 /WX /permissive- /utf-8)
+    foreach(TEST_TARGET ild_audio_metadata_tests ild_texture_alias_tests ild_config_repair_tests)
+        target_compile_options(${TEST_TARGET} PRIVATE /W4 /WX /permissive- /utf-8)
+    endforeach()
 endif()

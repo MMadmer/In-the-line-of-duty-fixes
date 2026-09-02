@@ -129,6 +129,10 @@ reference installation.
 - After each run, check logs for fatal errors, assertions, access violations,
   Lua errors, and new recurring warnings. Verify that the game, debugger,
   compiler, linker, and helper processes started by the test have exited.
+- Keep intentional negative diagnostic tests in separate logs. A clean-run
+  claim must be based on a fresh completed log, not filtering or an old marker.
+- Do not remove logger output to pass QA. Repair malformed data, incorrect
+  API use, or narrowly identified compatibility inputs; real diagnostics stay active.
 - Remove temporary QA files and diagnostics after the result is recorded.
 
 ### 7.1. Mandatory end-of-work deployment

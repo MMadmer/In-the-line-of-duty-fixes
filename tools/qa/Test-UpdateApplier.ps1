@@ -32,6 +32,10 @@ function New-Version([string]$Path, [string]$Version, [bool]$Target) {
     Write-Text (Join-Path $Path 'bin\ild_fixes_unchanged.txt') 'unchanged'
     Write-Text (Join-Path $Path 'bin\ild_fixes_changed.txt') "changed-$Version"
     if ($Target) { Write-Text (Join-Path $Path 'gamedata\scripts\ild_gameplay.script') 'gameplay-fixes' }
+    if ($Target) {
+        Write-Text (Join-Path $Path 'gamedata\scripts\ild_script_repairs.script') 'script-repairs'
+        Write-Text (Join-Path $Path 'gamedata\scripts\ild_recipe_repairs.script') 'recipe-repairs'
+    }
     if ($Target) { Write-Text (Join-Path $Path 'bin\ild_fixes_added.txt') 'added' }
     else { Write-Text (Join-Path $Path 'bin\ild_fixes_dropped.txt') 'dropped' }
     Write-Text (Join-Path $Path '.ild-fixes\version.txt') "$Version`n"
@@ -139,3 +143,4 @@ try { $code = Invoke-Apply $rollback $full } finally { $lock.Dispose() }
 Assert-That ($code -eq 22) "failed replacement rolled back, exit=$code"
 Assert-That ((Snapshot $rollback) -eq $before) 'rollback restored complete prior file set'
 Write-Output "PASS $script:checks checks. Artifacts: $root"
+exit 0

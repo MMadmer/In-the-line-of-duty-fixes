@@ -1,5 +1,6 @@
 #include "update_bridge.h"
 #include "inventory_hooks.h"
+#include "texture_aliases.h"
 
 #include <algorithm>
 #include <array>
@@ -95,6 +96,17 @@ public:
         }
 #ifdef ILD_CONSOLE_QA
         else if (qa_ && action == "qa_game_ready") write_atomic(L"game-proof.txt", "actor=ready\n");
+        else if (qa_ && action == "qa_smoke_done")
+            write_atomic(L"game-proof.txt", "actor=ready\nsoak=5\ncompleted=1\n");
+        else if (qa_ && action == "qa_assets")
+            write_atomic(L"asset-proof.txt", verify_texture_repairs() ?
+                "aliases=5\nmodel-boundary=1\nbytes-unchanged=1\n" : "failed=1\n");
+        else if (qa_ && action == "qa_menu_ready") write_atomic(L"menu-proof.txt", "menu=ready\n");
+        else if (qa_ && action == "qa_menu_done") write_atomic(L"menu-proof.txt", "menu=ready\nsoak=5\ncompleted=1\n");
+        else if (qa_ && action == "qa_save_write")
+            write_atomic(L"save-proof.txt", "timed-input=written\ncompleted=1\n");
+        else if (qa_ && action == "qa_save_read")
+            write_atomic(L"save-proof.txt", "timed-input=restored-and-expired\ncompleted=1\n");
         else if (qa_ && action == "qa_ui_last_page") qa::request_capture("last-page");
         else if (qa_ && action == "qa_game_done")
             write_atomic(L"game-proof.txt", "actor=ready\nsoak=5\nknife-checks=6\ndescriptions=5\ncompleted=1\n");
@@ -106,7 +118,8 @@ public:
             if (parsed.ec == std::errc{} && parsed.ptr == number.data() + number.size())
                 knife_result_ = qa_inventory_swap(id);
         }
-        else if (qa_ && action.starts_with("qa_fail ")) write_atomic(L"game-failure.txt", std::string(action.substr(8)));
+        else if (qa_ && action.starts_with("qa_fail "))
+            write_atomic(L"game-failure.txt", std::string(action.substr(8)));
 #endif
     }
 
@@ -122,6 +135,15 @@ public:
             value = qa_ && GetEnvironmentVariableW(L"ILD_QA_GAME", flag, 8) == 1 && flag[0] == L'1' ? "1" : "0";
         }
         else if (selected_ == "knife_result") value = knife_result_;
+        else if (selected_ == "qa_save_mode")
+        {
+            wchar_t mode[16]{};
+            if (GetEnvironmentVariableW(L"ILD_QA_SAVE_MODE", mode, 16) < 16)
+            {
+                if (std::wcscmp(mode, L"write") == 0) value = "write";
+                if (std::wcscmp(mode, L"read") == 0) value = "read";
+            }
+        }
 #endif
         else if (selected_.starts_with("changes:"))
         {
@@ -196,7 +218,8 @@ private:
         const auto complete = WriteFile(file, data.data(), static_cast<DWORD>(data.size()), &written, nullptr) &&
             written == data.size() && FlushFileBuffers(file);
         CloseHandle(file);
-        if (complete) MoveFileExW(temporary.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+        if (complete)
+            MoveFileExW(temporary.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
         else DeleteFileW(temporary.c_str());
     }
 
@@ -215,7 +238,8 @@ bool install_update_bridge(HMODULE engine, const std::filesystem::path& root)
 {
     using AddCommand = void(__thiscall*)(void*, ConsoleCommand*);
     const auto console = reinterpret_cast<void**>(GetProcAddress(engine, "?Console@@3PAVCConsole@@A"));
-    const auto add = reinterpret_cast<AddCommand>(GetProcAddress(engine, "?AddCommand@CConsole@@QAEXPAVIConsole_Command@@@Z"));
+    const auto add = reinterpret_cast<AddCommand>(
+        GetProcAddress(engine, "?AddCommand@CConsole@@QAEXPAVIConsole_Command@@@Z"));
     if (!console || !*console || !add) return false;
     static UpdateCommand command;
     command.configure(root);
