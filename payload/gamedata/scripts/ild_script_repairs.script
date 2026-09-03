@@ -417,23 +417,44 @@ local function install_text_repairs()
     end
 end
 
--- Support diagnostics, driven from the console by "ild_update diag_spam_on|diag_spam_off|diag_knife".
--- The flood reproduces the mod's own broken printf output so that typing into the console can be tested
--- against it; the knife is there to check that the obsolete warning is gone.
-local diag_frames = 0
-local diag_line = "***__%s__--_State:_%d_--_Total_population:_%d/%d_--_Non_exclusive_population:_%d/%d"
+-- Every world sound source that plays radio or music. The volume slider on the Sound tab scales these and
+-- nothing else, so speech, machinery and ambience keep the volume the mod set for them.
+local radio_themes = {
+    bar_radio_letagina = true, esc_wolf_radio = true, esc_wolf_radio_1 = true,
+    melnica_radio = true, radio_gar_stalker_torgovec = true, radio_garaj_bar = true,
+    radio_garaj_bar_night = true, radio_sikret1 = true, radio_sikret1488 = true,
+    radio_sikret2 = true, radio_sikret3 = true, radio_sikret4 = true,
+    radio_sikret5 = true, radio_sikret8 = true, radio_yroveni0 = true,
+    radio_yroveni1 = true, radio_yroveni2 = true, radio_yroveni3 = true,
+    val_radio_kom_music = true, agro_music_nechisti = true, esc_angar_last_day_music = true,
+    esc_kd_soseda_music = true, kasset_music = true, kasseta_mysic_1 = true,
+    kasseta_mysic_2 = true, kasseta_mysic_3 = true, kasseta_mysic_4 = true,
+    kasseta_mysic_5 = true, kasseta_mysic_6 = true, kasseta_mysic_7 = true,
+    sidor_moi_music = true, val_chr_myzon = true
+}
+local radio_factor = 0.75
+local radio_checked = 0
 
-local function poll_diagnostics()
-    diag_frames = diag_frames + 1
-    -- About twice a second at 60 fps. Both keys are answered from memory, so nothing is read from disk.
-    if diag_frames % 30 ~= 0 then return end
+local function refresh_radio_volume()
+    local now = time_global()
+    if now - radio_checked < 1000 then return end
+    radio_checked = now
     local console = get_console()
-    console:execute("ild_update read diag_spam")
-    if console:get_string("ild_update") == "1" then console:execute(diag_line) end
-    console:execute("ild_update read diag_knife")
-    if console:get_string("ild_update") == "1" and db.actor then
-        alife():create("wpn_knife", db.actor:position(), db.actor:level_vertex_id(),
-            db.actor:game_vertex_id(), db.actor:id())
+    console:execute("ild_update read setting_radio_volume")
+    local percent = tonumber(console:get_string("ild_update"))
+    radio_factor = percent and percent / 100 or 0.75
+end
+
+local function install_radio_volume()
+    local original_update = ph_sound.snd_source.update
+    ph_sound.snd_source.update = function(self, delta)
+        local result = original_update(self, delta)
+        if self.played_sound and radio_themes[self.st.theme] then
+            refresh_radio_volume()
+            -- Zero is silence, which is what a recording needs; the scheme's own timing is untouched.
+            self.played_sound.volume = radio_factor
+        end
+        return result
     end
 end
 
@@ -491,6 +512,7 @@ function install()
     install_dialog_repairs()
     install_world_repairs()
     install_sound_repairs()
+    install_radio_volume()
     install_npc_repairs()
     install_hud_repairs()
     install_workbench_repairs()
@@ -524,7 +546,6 @@ function install()
     local original_update = binder.update
     binder.update = function(self, ...)
         restore_input_timeout(self)
-        poll_diagnostics()
         if db.actor then install_actor_repairs() end
         original_update(self, ...)
         if db.actor and not detector_started then

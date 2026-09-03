@@ -5,7 +5,8 @@ foreach(FORBIDDEN "io." "os." "time_global(" "start_stop_menu(" "GetHolder(" "Se
         message(FATAL_ERROR "Unsupported or unsafe menu API: ${FORBIDDEN}")
     endif()
 endforeach()
-foreach(REQUIRED "SetAutoDelete(false)" "menu:AttachChild(" "ild_update read " "now + 4000" "heartbeat")
+foreach(REQUIRED "SetAutoDelete(false)" "menu:AttachChild(" "ild_update read " "now + 4000" "heartbeat"
+        "install_options" "ild_fixes_options.xml")
     string(FIND "${UI}" "${REQUIRED}" POSITION)
     if(POSITION EQUAL -1)
         message(FATAL_ERROR "Missing update UI lifecycle contract: ${REQUIRED}")

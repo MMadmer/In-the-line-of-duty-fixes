@@ -34,13 +34,66 @@ public:
     virtual void Info(char (&text)[256]) { strcpy_s(text, "update bridge"); }
     virtual void Save(void*) {}
 
+protected:
+    explicit ConsoleCommand(const char* name) : name_(name) {}
+
 private:
-    const char* name_{"ild_update"};
+    const char* name_;
     bool enabled_{true};
     bool lowercase_{};
     bool empty_arguments_{true};
 };
 static_assert(sizeof(ConsoleCommand) == 12);
+
+// Borderless is not an engine mode: the game runs windowed and the window is restyled to cover the monitor.
+// Nothing here depends on the executable's build, so it works wherever the fix pack loads.
+struct WindowSearch { DWORD process; HWND window; };
+
+BOOL CALLBACK pick_main_window(HWND window, LPARAM parameter)
+{
+    auto& search = *reinterpret_cast<WindowSearch*>(parameter);
+    DWORD owner{};
+    GetWindowThreadProcessId(window, &owner);
+    if (owner != search.process || !IsWindowVisible(window) || GetWindow(window, GW_OWNER)) return TRUE;
+    search.window = window;
+    return FALSE;
+}
+
+[[nodiscard]] HWND main_window()
+{
+    WindowSearch search{GetCurrentProcessId(), nullptr};
+    EnumWindows(pick_main_window, reinterpret_cast<LPARAM>(&search));
+    return search.window;
+}
+
+void apply_borderless(bool enabled)
+{
+    static LONG saved_style{};
+    static RECT saved_rect{};
+    const auto window = main_window();
+    if (!window) return;
+    if (enabled)
+    {
+        if (!saved_style)
+        {
+            saved_style = GetWindowLongW(window, GWL_STYLE);
+            GetWindowRect(window, &saved_rect);
+        }
+        MONITORINFO monitor{sizeof(monitor)};
+        if (!GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor)) return;
+        SetWindowLongW(window, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+        SetWindowPos(window, HWND_TOP, monitor.rcMonitor.left, monitor.rcMonitor.top,
+            monitor.rcMonitor.right - monitor.rcMonitor.left, monitor.rcMonitor.bottom - monitor.rcMonitor.top,
+            SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+    }
+    else if (saved_style)
+    {
+        SetWindowLongW(window, GWL_STYLE, saved_style);
+        SetWindowPos(window, HWND_TOP, saved_rect.left, saved_rect.top, saved_rect.right - saved_rect.left,
+            saved_rect.bottom - saved_rect.top, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
+        saved_style = 0;
+    }
+}
 
 std::string unescape(std::string_view value)
 {
@@ -59,6 +112,8 @@ std::string unescape(std::string_view value)
 class UpdateCommand final : public ConsoleCommand
 {
 public:
+    UpdateCommand() : ConsoleCommand("ild_update") {}
+
     void configure(const std::filesystem::path& root)
     {
         runtime_ = root / L".ild-fixes" / L"runtime";
@@ -70,9 +125,27 @@ public:
         std::array<wchar_t, 8> value{};
         const auto length = GetEnvironmentVariableW(L"ILD_QA_UI_DOWNLOAD", value.data(), 8);
         qa_download_ = qa_ && length == 1 && value[0] == L'1';
+        settings_path_ = root / L".ild-fixes" / L"settings.txt";
+        load_settings();
 #ifdef ILD_CONSOLE_QA
         if (qa_) qa::install_capture(root);
 #endif
+    }
+
+    [[nodiscard]] int radio_volume()
+    {
+        const auto found = settings_.find("radio_volume");
+        if (found == settings_.end()) return 75;
+        int value{};
+        const auto parsed = std::from_chars(found->second.data(),
+            found->second.data() + found->second.size(), value);
+        return parsed.ec == std::errc{} ? value : 75;
+    }
+
+    void set_radio_volume(int value)
+    {
+        settings_["radio_volume"] = std::to_string(value);
+        save_settings();
     }
 
     void Execute(const char* arguments) override
@@ -86,11 +159,21 @@ public:
             if (selected_ != "clock" && !selected_.starts_with("diag_")) refresh();
             return;
         }
-        // Support diagnostics. Both are off until a player is asked to turn them on, and neither changes
-        // anything the game keeps: the flood is ordinary unknown-command output and the knife is one item.
-        if (action == "diag_spam_on") { diag_spam_ = true; return; }
-        if (action == "diag_spam_off") { diag_spam_ = false; return; }
-        if (action == "diag_knife") { diag_knife_ = true; return; }
+        // Player settings the game itself has no command for. They live beside the fix pack rather than in
+        // user.ltx, so removing the addon leaves no unknown command behind.
+        if (action.starts_with("setting "))
+        {
+            const auto rest = action.substr(8);
+            const auto space = rest.find(' ');
+            if (space != rest.npos && space <= 64)
+            {
+                settings_[std::string(rest.substr(0, space))] = std::string(rest.substr(space + 1, 64));
+                save_settings();
+            }
+            return;
+        }
+        if (action == "borderless_on") { apply_borderless(true); return; }
+        if (action == "borderless_off") { apply_borderless(false); return; }
         constexpr std::array allowed{"download", "apply", "dismiss", "dismiss_major", "disable_major", "open_major"};
         if (std::find(allowed.begin(), allowed.end(), action) != allowed.end())
         {
@@ -135,11 +218,10 @@ public:
     {
         std::string value;
         if (selected_ == "clock") value = std::to_string(GetTickCount64());
-        else if (selected_ == "diag_spam") value = diag_spam_ ? "1" : "0";
-        else if (selected_ == "diag_knife")
+        else if (selected_.starts_with("setting_"))
         {
-            value = diag_knife_ ? "1" : "0";
-            diag_knife_ = false;
+            const auto found = settings_.find(selected_.substr(8));
+            if (found != settings_.end()) value = found->second;
         }
         else if (selected_ == "qa_download") value = qa_download_ ? "1" : "0";
 #ifdef ILD_CONSOLE_QA
@@ -173,6 +255,51 @@ public:
     }
 
 private:
+    void load_settings()
+    {
+        const auto file = CreateFileW(settings_path_.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return;
+        std::string data;
+        LARGE_INTEGER size{};
+        DWORD read{};
+        if (GetFileSizeEx(file, &size) && size.QuadPart > 0 && size.QuadPart <= 65536 &&
+            (data.assign(static_cast<std::size_t>(size.QuadPart), '\0'), true) &&
+            ReadFile(file, data.data(), static_cast<DWORD>(data.size()), &read, nullptr) && read == data.size())
+        {
+            std::istringstream lines(data);
+            std::string line;
+            while (std::getline(lines, line) && settings_.size() < 64)
+            {
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                const auto separator = line.find('=');
+                if (separator != std::string::npos && separator <= 64)
+                    settings_[line.substr(0, separator)] = line.substr(separator + 1, 64);
+            }
+        }
+        CloseHandle(file);
+    }
+
+    void save_settings()
+    {
+        std::string data;
+        for (const auto& [key, value] : settings_) data += key + "=" + value + "\n";
+        std::error_code error;
+        std::filesystem::create_directories(settings_path_.parent_path(), error);
+        if (error) return;
+        const auto temporary = settings_path_.wstring() + L".tmp";
+        const auto file = CreateFileW(temporary.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+            FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return;
+        DWORD written{};
+        const auto complete = WriteFile(file, data.data(), static_cast<DWORD>(data.size()), &written, nullptr) &&
+            written == data.size() && FlushFileBuffers(file);
+        CloseHandle(file);
+        if (complete)
+            MoveFileExW(temporary.c_str(), settings_path_.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+        else DeleteFileW(temporary.c_str());
+    }
+
     std::string field(const std::string& key) const
     {
         const auto found = fields_.find(key);
@@ -221,6 +348,18 @@ private:
         fields_ = std::move(parsed);
     }
 
+    void append_line(const wchar_t* name, const std::string& data)
+    {
+        std::error_code error;
+        std::filesystem::create_directories(runtime_, error);
+        const auto file = CreateFileW((runtime_ / name).c_str(), FILE_APPEND_DATA, FILE_SHARE_READ,
+            nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) return;
+        DWORD written{};
+        static_cast<void>(WriteFile(file, data.data(), static_cast<DWORD>(data.size()), &written, nullptr));
+        CloseHandle(file);
+    }
+
     void write_atomic(const wchar_t* name, const std::string& data)
     {
         std::error_code error;
@@ -242,17 +381,49 @@ private:
         else DeleteFileW(temporary.c_str());
     }
 
-    std::filesystem::path runtime_;
+    std::filesystem::path runtime_, settings_path_;
+    std::map<std::string, std::string> settings_;
     std::wstring status_name_, command_name_;
     std::map<std::string, std::string> fields_;
     std::string selected_;
     ULONGLONG last_read_{};
-    bool checked_{}, qa_{}, qa_download_{}, diag_spam_{}, diag_knife_{};
+    bool checked_{}, qa_{}, qa_download_{};
 #ifdef ILD_CONSOLE_QA
     std::string knife_result_;
 #endif
 };
 }
+
+class RadioVolumeCommand final : public ConsoleCommand
+{
+public:
+    RadioVolumeCommand() : ConsoleCommand("ild_radio_volume") {}
+
+    void bind(UpdateCommand* owner) { owner_ = owner; }
+
+    void Execute(const char* arguments) override
+    {
+        if (!arguments || !owner_) return;
+        int value{};
+        const std::string_view text(arguments);
+        const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+        if (parsed.ec != std::errc{}) return;
+        owner_->set_radio_volume((std::max)(0, (std::min)(100, value)));
+    }
+
+    void Status(char (&text)[256]) override
+    {
+        const auto value = owner_ ? std::to_string(owner_->radio_volume()) : std::string("75");
+        const auto length = (std::min)(value.size(), std::size_t{255});
+        std::memcpy(text, value.data(), length);
+        text[length] = 0;
+    }
+
+    void Info(char (&text)[256]) override { strcpy_s(text, "radio and music volume, 0-100"); }
+
+private:
+    UpdateCommand* owner_{};
+};
 
 bool install_update_bridge(HMODULE engine, const std::filesystem::path& root)
 {
@@ -264,6 +435,9 @@ bool install_update_bridge(HMODULE engine, const std::filesystem::path& root)
     static UpdateCommand command;
     command.configure(root);
     add(*console, &command);
+    static RadioVolumeCommand radio;
+    radio.bind(&command);
+    add(*console, &radio);
     return true;
 }
 }

@@ -46,18 +46,19 @@ presets, missing-bump fallbacks, model chunk boundaries, actor save data, dialog
 graphs, detector callbacks, food use and complete recipe preconditions.
 These fixes do not disable genuine engine diagnostics or overwrite original assets.
 
+Added options:
+Sound tab - "Radio volume", default 75%. It scales every world radio and music
+source and nothing else; 0% is complete silence, which is what a recording needs.
+The console command ild_radio_volume accepts any value from 0 to 100 for finer
+control. Video tab - "Screen mode": fullscreen, borderless window, or windowed.
+Both are stored in .ild-fixes\settings.txt, not in user.ltx, so removing the addon
+leaves the game's own settings exactly as they were.
+
 If something did not take effect:
 Every launch writes .ild-fixes\runtime\loader-report.txt. It lists each file the
 pack checks with its expected and actual SHA-256, and whether each repair applied.
 Send that file when reporting a problem. If the file is absent, the loader never
 ran: check that bin\dinput8.dll is present and that nothing else replaced it.
-
-Support commands, typed in the game console (both off by default):
-  ild_update diag_spam_on    prints a log line about twice a second, so console
-                             typing can be checked against a busy log
-  ild_update diag_spam_off   stops it
-  ild_update diag_knife      puts one knife in the player's inventory
-They need the in-game updater to be active; the loader report says whether it is.
 
 Removal:
 Close the game and helper, remove the files listed in .ild-fixes\managed-files.txt,

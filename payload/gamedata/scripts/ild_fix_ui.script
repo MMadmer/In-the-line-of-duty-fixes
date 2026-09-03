@@ -45,9 +45,167 @@ local function service_stalled(current, now)
     return beat == nil or now - beat > stale_after
 end
 
+-- Options added to the vanilla tabs. The stock dialogs keep no named handles for their controls and this
+-- engine exposes no child lookup, so nothing existing can be reached or replaced; these are built from the
+-- fix pack's own XML and attached to the tab. Every step is guarded: a failure leaves the stock menu intact.
+-- Both use a combo box because the engine's track bar exposes no setter, so a slider could never be opened
+-- showing the value that is actually in force.
+local radio_steps = {0, 25, 50, 75, 100}
+local video_modes = {"\207\238\235\237\238\253\234\240\224\237\237\251\233", "\207\238\235\237\238\253\234\240\224\237\237\251\233 \226 \238\234\237\229", "\206\234\238\237\237\251\233"}
+local default_radio_volume = 75
+
+local function setting(key)
+    local console = get_console()
+    console:execute("ild_update read setting_" .. key)
+    local value = console:get_string("ild_update")
+    return value ~= "" and value or nil
+end
+
+local function store(key, value)
+    get_console():execute("ild_update setting " .. key .. " " .. value)
+end
+
+function radio_volume()
+    return tonumber(setting("radio_volume")) or default_radio_volume
+end
+
+function apply_video_mode(mode)
+    local console = get_console()
+    if mode == 0 then
+        console:execute("ild_update borderless_off")
+        console:execute("rs_fullscreen on")
+    elseif mode == 1 then
+        console:execute("rs_fullscreen off")
+        console:execute("ild_update borderless_on")
+    else
+        console:execute("ild_update borderless_off")
+        console:execute("rs_fullscreen off")
+    end
+end
+
+local function bottom_row(parent, index)
+    -- Sits under the stock content whatever height the tab turns out to have.
+    local height = 416
+    pcall(function() height = parent:GetHeight() end)
+    return height - 30 * (index + 1)
+end
+
+-- SetCurrentID is unreliable before the player picks something, so the value in force is added first and the
+-- combo therefore shows it whether or not the setter took.
+local function fill(combo, labels, current)
+    local order = {current}
+    for index = 1, #labels do
+        if index ~= current then order[#order + 1] = index end
+    end
+    for position, index in ipairs(order) do
+        combo:AddItem(labels[index], position - 1)
+    end
+    pcall(function() combo:SetCurrentID(0) end)
+end
+
+local function selected(combo, labels)
+    local text
+    if not pcall(function() text = combo:GetText() end) then return nil end
+    for index, label in ipairs(labels) do
+        if label == text then return index end
+    end
+    return nil
+end
+
+local function build(self, name, index)
+    local xml = CScriptXmlInit()
+    xml:ParseFile("ild_fixes_options.xml")
+    local caption = xml:InitStatic(name .. "_caption", self)
+    local combo = xml:InitComboBox(name == "radio" and "radio_volume" or "video_mode", self)
+    local y = bottom_row(self, index)
+    pcall(function() caption:SetWndPos(16, y) end)
+    pcall(function() combo:SetWndPos(250, y) end)
+    return combo
+end
+
+local function install_sound_tab()
+    local labels = {}
+    for index, percent in ipairs(radio_steps) do labels[index] = percent .. "%" end
+    local tab = ui_mm_opt_sound.opt_sound
+    local original = tab.InitControls
+    tab.InitControls = function(self, ...)
+        local result = original(self, ...)
+        pcall(function()
+            self.ild_radio = build(self, "radio", 0)
+            self.ild_radio_labels = labels
+            local value = radio_volume()
+            -- The console command accepts any 0-100 value, so show whichever step is nearest to it.
+            local current, best = 1, nil
+            for index, percent in ipairs(radio_steps) do
+                local distance = math.abs(percent - value)
+                if best == nil or distance < best then current, best = index, distance end
+            end
+            fill(self.ild_radio, labels, current)
+            self.ild_radio_last = value
+        end)
+        return result
+    end
+    local original_update = tab.Update
+    tab.Update = function(self, ...)
+        local result = original_update(self, ...)
+        pcall(function()
+            if not self.ild_radio then return end
+            local index = selected(self.ild_radio, self.ild_radio_labels)
+            local value = index and radio_steps[index]
+            if value and value ~= self.ild_radio_last then
+                self.ild_radio_last = value
+                -- Applied as it is picked rather than on OK, so the change is audible at once.
+                store("radio_volume", value)
+            end
+        end)
+        return result
+    end
+end
+
+local function install_video_tab()
+    local tab = ui_mm_opt_video.opt_video
+    local original = tab.InitControls
+    tab.InitControls = function(self, ...)
+        local result = original(self, ...)
+        pcall(function()
+            self.ild_mode = build(self, "video", 1)
+            self.ild_mode_last = tonumber(setting("video_mode")) or 0
+            fill(self.ild_mode, video_modes, self.ild_mode_last + 1)
+        end)
+        return result
+    end
+    local original_update = tab.Update
+    tab.Update = function(self, ...)
+        local result = original_update(self, ...)
+        pcall(function()
+            if not self.ild_mode then return end
+            local index = selected(self.ild_mode, video_modes)
+            if index and index - 1 ~= self.ild_mode_last then
+                self.ild_mode_last = index - 1
+                store("video_mode", self.ild_mode_last)
+                apply_video_mode(self.ild_mode_last)
+            end
+        end)
+        return result
+    end
+end
+
+function install_options()
+    if options_installed then return end
+    options_installed = true
+    pcall(install_sound_tab)
+    pcall(install_video_tab)
+    -- Restore the chosen screen mode once per session, so borderless survives a restart.
+    pcall(function()
+        local mode = tonumber(setting("video_mode"))
+        if mode and mode ~= 0 then apply_video_mode(mode) end
+    end)
+end
+
 function i(menu)
     ild_gameplay.install()
     menu:InitControls()
+    install_options()
     ui_main_menu.main_menu.Update = u
     if not original_keyboard then
         original_keyboard = ui_main_menu.main_menu.OnKeyboard

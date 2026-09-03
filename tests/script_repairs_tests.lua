@@ -54,6 +54,25 @@ local function fixture()
             end
         }
     end
+    -- Stands in for the native bridge: "read setting_x" selects a key, get_string returns it.
+    calls.settings = {radio_volume = "75"}
+    env.get_console = function()
+        return {
+            execute = function(_, line)
+                calls.console = calls.console or {}
+                calls.console[#calls.console + 1] = line
+                local key = string.match(line, "^ild_update read setting_(.+)$")
+                if key then calls.selected = key end
+            end,
+            get_string = function() return calls.settings[calls.selected] or "" end
+        }
+    end
+    env.ph_sound = {snd_source = {
+        update = function(self)
+            calls.sound_updates = (calls.sound_updates or 0) + 1
+            return "updated"
+        end
+    }}
     env.xr_sound = {
         get_safe_sound_object = function(path)
             -- The engine fatals inside the constructor when the file is absent.
@@ -869,6 +888,39 @@ do
     equal(light[2].x, -242, "the original position is preserved")
     equal(light[3], "lvid:-242", "the level vertex is resolved from that position")
     equal(light[4], 55, "the game vertex is the level the actor is actually on")
+end
+
+do
+    local env, calls, _, module = fixture()
+    module.install()
+    local function play(theme)
+        local source = {st = {theme = theme}, played_sound = {volume = 1.0}}
+        env.ph_sound.snd_source.update(source, 10)
+        return source.played_sound.volume
+    end
+
+    -- Only world radio and music sources are scaled; speech and machinery keep the mod's own volume.
+    equal(play("melnica_radio"), 0.75, "a radio source follows the slider")
+    equal(play("kasseta_mysic_3"), 0.75, "a music source follows the slider")
+    equal(play("bar_start_megafon"), 1.0, "speech is left alone")
+    equal(calls.sound_updates, 3, "the original scheme update always runs")
+
+    -- The setting is re-read, but not on every frame.
+    calls.settings.radio_volume = "0"
+    equal(play("melnica_radio"), 0.75, "the value is cached rather than read every update")
+    env.clock_ms = env.clock_ms + 2000
+    equal(play("melnica_radio"), 0, "zero mutes the source completely")
+    calls.settings.radio_volume = "100"
+    env.clock_ms = env.clock_ms + 2000
+    equal(play("radio_yroveni1"), 1, "full volume is restored")
+    calls.settings.radio_volume = ""
+    env.clock_ms = env.clock_ms + 2000
+    equal(play("melnica_radio"), 0.75, "an unset value falls back to the default")
+
+    -- A source that never started playing must not be touched.
+    local silent = {st = {theme = "melnica_radio"}}
+    env.ph_sound.snd_source.update(silent, 10)
+    equal(silent.played_sound, nil, "a source with no sound is left as it is")
 end
 
 print("script_repairs_tests: " .. tests .. " checks passed")
