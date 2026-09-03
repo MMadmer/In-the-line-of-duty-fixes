@@ -81,10 +81,16 @@ public:
         const std::string_view action(arguments);
         if (action.starts_with("read "))
         {
-            refresh();
             selected_ = action.substr(5, 64);
+            // Keys answered from memory never need the helper's status file.
+            if (selected_ != "clock" && !selected_.starts_with("diag_")) refresh();
             return;
         }
+        // Support diagnostics. Both are off until a player is asked to turn them on, and neither changes
+        // anything the game keeps: the flood is ordinary unknown-command output and the knife is one item.
+        if (action == "diag_spam_on") { diag_spam_ = true; return; }
+        if (action == "diag_spam_off") { diag_spam_ = false; return; }
+        if (action == "diag_knife") { diag_knife_ = true; return; }
         constexpr std::array allowed{"download", "apply", "dismiss", "dismiss_major", "disable_major", "open_major"};
         if (std::find(allowed.begin(), allowed.end(), action) != allowed.end())
         {
@@ -129,6 +135,12 @@ public:
     {
         std::string value;
         if (selected_ == "clock") value = std::to_string(GetTickCount64());
+        else if (selected_ == "diag_spam") value = diag_spam_ ? "1" : "0";
+        else if (selected_ == "diag_knife")
+        {
+            value = diag_knife_ ? "1" : "0";
+            diag_knife_ = false;
+        }
         else if (selected_ == "qa_download") value = qa_download_ ? "1" : "0";
 #ifdef ILD_CONSOLE_QA
         else if (selected_ == "knife_result") value = knife_result_;
@@ -235,7 +247,7 @@ private:
     std::map<std::string, std::string> fields_;
     std::string selected_;
     ULONGLONG last_read_{};
-    bool checked_{}, qa_{}, qa_download_{};
+    bool checked_{}, qa_{}, qa_download_{}, diag_spam_{}, diag_knife_{};
 #ifdef ILD_CONSOLE_QA
     std::string knife_result_;
 #endif

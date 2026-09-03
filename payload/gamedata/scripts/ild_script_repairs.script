@@ -417,6 +417,26 @@ local function install_text_repairs()
     end
 end
 
+-- Support diagnostics, driven from the console by "ild_update diag_spam_on|diag_spam_off|diag_knife".
+-- The flood reproduces the mod's own broken printf output so that typing into the console can be tested
+-- against it; the knife is there to check that the obsolete warning is gone.
+local diag_frames = 0
+local diag_line = "***__%s__--_State:_%d_--_Total_population:_%d/%d_--_Non_exclusive_population:_%d/%d"
+
+local function poll_diagnostics()
+    diag_frames = diag_frames + 1
+    -- About twice a second at 60 fps. Both keys are answered from memory, so nothing is read from disk.
+    if diag_frames % 30 ~= 0 then return end
+    local console = get_console()
+    console:execute("ild_update read diag_spam")
+    if console:get_string("ild_update") == "1" then console:execute(diag_line) end
+    console:execute("ild_update read diag_knife")
+    if console:get_string("ild_update") == "1" and db.actor then
+        alife():create("wpn_knife", db.actor:position(), db.actor:level_vertex_id(),
+            db.actor:game_vertex_id(), db.actor:id())
+    end
+end
+
 local function reset_detector_registry()
     for id, entry in pairs(db.artefacts) do
         if entry.spot then level.map_remove_object_spot(id, "artefact_location") end
@@ -504,6 +524,7 @@ function install()
     local original_update = binder.update
     binder.update = function(self, ...)
         restore_input_timeout(self)
+        poll_diagnostics()
         if db.actor then install_actor_repairs() end
         original_update(self, ...)
         if db.actor and not detector_started then

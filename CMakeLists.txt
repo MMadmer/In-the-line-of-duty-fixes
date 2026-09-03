@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(InTheLineOfDutyFixes VERSION 1.0.0 LANGUAGES CXX)
+project(InTheLineOfDutyFixes VERSION 1.0.1 LANGUAGES CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "In the Line of Duty Fixes supports Windows only")
@@ -42,6 +42,7 @@ add_library(dinput8 SHARED
 )
 
 target_link_libraries(dinput8 PRIVATE ild_script_patch advapi32 shell32)
+target_compile_definitions(dinput8 PRIVATE ILD_VERSION="${PROJECT_VERSION}")
 set_target_properties(dinput8 PROPERTIES PREFIX "" OUTPUT_NAME "dinput8")
 
 add_library(dinput8_console_qa SHARED EXCLUDE_FROM_ALL
@@ -54,7 +55,7 @@ add_library(dinput8_console_qa SHARED EXCLUDE_FROM_ALL
     src/dinput8_proxy.cpp src/console_hooks.cpp src/x86_detour.cpp src/iat_hook.cpp src/sha256.cpp
     src/dinput8_proxy.def
 )
-target_compile_definitions(dinput8_console_qa PRIVATE ILD_CONSOLE_QA=1)
+target_compile_definitions(dinput8_console_qa PRIVATE ILD_CONSOLE_QA=1 ILD_VERSION="${PROJECT_VERSION}")
 target_link_libraries(dinput8_console_qa PRIVATE ild_script_patch advapi32 shell32 ole32)
 if(MSVC)
     target_compile_options(dinput8_console_qa PRIVATE /W4 /WX /permissive- /utf-8)

@@ -65,6 +65,17 @@ reference installation.
 - Runtime hooks must fail closed: if the supported executable or module does
   not match the validated identity, leave the game unmodified and write one
   clear diagnostic instead of patching an unknown address.
+- Failing closed is per repair, never for the whole fix pack. A repair that does
+  not depend on the executable - anything reached through an import resolved by
+  name, any in-memory change to a mod script or config, the Lua payload - must
+  keep working on an installation whose binaries are unknown. Only the repairs
+  that write to a fixed address, or hand the engine an object it calls back
+  through a pinned ABI, may require the exact build, and they disable only
+  themselves. One unfamiliar file must never cost the player every other fix.
+- Every launch writes `.ild-fixes/runtime/loader-report.txt`: the identity of each
+  file the pack checks with its expected and actual hash, and the outcome of each
+  repair. It is written before and regardless of any identity check, so an
+  installation where nothing applied still explains itself without a console.
 - Hooks must be narrowly scoped. Console fixes may change console editing or
   the broken debug-print path, but must not suppress genuine engine, Lua, or
   configuration errors.
@@ -86,7 +97,10 @@ reference installation.
 - Add short English comments only where the reason, lifetime, synchronization,
   binary contract, or compatibility constraint would otherwise be unclear.
 - Do not ship temporary telemetry, probes, debug commands, verbose per-frame
-  logging, dumps, or profiler output.
+  logging, dumps, or profiler output. A deliberate support diagnostic is the one
+  exception: it must be off until a player turns it on, must not change anything
+  the game persists, must cost nothing measurable while off, and must be
+  documented in the packaging README.
 - Release builds must pass with warnings treated as errors.
 
 ## 6. Build and packaging

@@ -2,23 +2,14 @@
 
 ## Тема
 
-Первый релиз: аддон чинит «По долгу службы», не трогая его файлы
+Фикс-пак теперь работает на любых бинарниках движка
 
 ## Изменения
 
-* Устранены вылеты: разговор с Сахаровым на Янтаре, снайпер на ночном блокпосте Кордона, зомби-паразит на Агропроме и четыре реплики, которым нужны не вошедшие в мод звуки.
-* Разговор с прапорщиком на Агропроме больше не обрывается на середине: обстановка в казарме появляется, задание выдаётся.
-* Награды выдаются те, что обещаны: экзоскелет и «СКАТ» у бармена, а апгрейд «Форта» забирает улучшаемый пистолет, а не посторонний.
-* Тайник у грузовика на Кордоне больше не наполняется повторно и не оставляет висящую метку на карте.
-* Рецепты ремонта техники и сборки оружия проверяют все компоненты, прежде чем их забрать.
-* Верстак больше не портит вещь в состоянии лучше своего уровня, а прокачанный верстак не уничтожает броню вместо ремонта.
-* Скриптовые мутанты снова поворачиваются к игроку и не выпадают из своей логики, а трупы NPC перестали терять содержимое.
-* Значки полученных навыков наконец показываются, а иконка перегруза гаснет через десять секунд, а не висит до перезапуска.
-* Диалоги: убраны дублирующиеся реплики механика, недостижимые ветки и ссылки на несуществующие обработчики.
-* Консоль: убран поток ложных ошибок, ввод переживает вывод скриптов, добавлены выделение текста и Ctrl+A/C/V/X.
-* Замена ножа делается обычной экипировкой, а декоративный стол больше не ведёт себя как дверь.
-* Кириллические названия клавиш, отсутствующие bump-текстуры, звуковые метаданные и стандартные пресеты графики больше не засоряют лог.
-* Аддон обновляется прямо из главного меню игры.
+* Раньше одного несовпавшего файла движка хватало, чтобы отключить фикс-пак целиком. Теперь каждая правка отвечает только за себя: исправления скриптов, конфигов, диалогов и все квестовые правки работают на любой сборке 1.0006, а нативные мелочи, которые пишут по фиксированным адресам, пропускают только себя.
+* Из-за этого у части игроков не пропадал поток красных ошибок в консоли и оставалось устаревшее предупреждение у ножей — теперь это чинится и у них.
+* Каждый запуск пишет `.ild-fixes\runtime\loader-report.txt`: какие файлы проверены, их ожидаемые и настоящие хеши и что именно применилось. Этот файл можно приложить к сообщению о проблеме.
+* Добавлены две служебные консольные команды, по умолчанию выключенные: `ild_update diag_spam_on` печатает строку в лог примерно дважды в секунду, чтобы проверить набор текста в консоли под нагрузкой, и `ild_update diag_knife` выдаёт нож.
 
 ## Установка
 
@@ -30,23 +21,14 @@
 
 ## Theme
 
-First release: an addon that repairs In the Line of Duty without touching its files
+The fix pack now works on any build of the engine
 
 ## Changes
 
-* Fixed crashes: talking to Sakharov on Yantar, the blockpost sniper at night on Cordon, the parasite zombie on Agroprom, and four dialog lines that need sounds the mod never shipped.
-* The Agroprom warrant officer's conversation no longer breaks off halfway: the barracks are furnished and the task is handed out.
-* Rewards are the ones promised: the barman's exoskeleton and SKAT suit, and the Fort upgrade now takes the pistol being upgraded rather than an unrelated one.
-* The Cordon truck stash no longer refills itself or leaves a stale marker on the map.
-* Vehicle repair and weapon assembly recipes check every component before consuming any of them.
-* A workbench no longer damages an item already in better shape than its tier, and the upgraded bench no longer destroys armour instead of repairing it.
-* Scripted mutants turn to face the player again and stay in their logic, and NPC corpses stopped losing their contents.
-* Skill banners finally appear, and the overweight icon clears after ten seconds instead of staying until restart.
-* Dialogs: duplicated mechanic replies, unreachable branches and references to missing handlers are gone.
-* Console: the stream of false errors is gone, input survives script output, and text selection with Ctrl+A/C/V/X was added.
-* Knife replacement uses the ordinary equip action, and the decorative table no longer behaves like a door.
-* Cyrillic key names, missing bump textures, sound metadata and the stock graphics presets no longer flood the log.
-* The addon updates itself from the game's main menu.
+* One unfamiliar engine file used to disable the whole fix pack. Each repair now stands on its own: script, config, dialog and quest repairs work on any 1.0006 build, and the native tweaks that write to fixed addresses skip only themselves.
+* That is why some players still saw the flood of red console errors and the obsolete knife warning; both are now repaired for them too.
+* Every launch writes `.ild-fixes\runtime\loader-report.txt`: which files were checked, their expected and actual hashes, and what applied. Attach it when reporting a problem.
+* Two support console commands were added, both off by default: `ild_update diag_spam_on` prints a log line about twice a second so console typing can be tested under load, and `ild_update diag_knife` gives a knife.
 
 ## Installation
 

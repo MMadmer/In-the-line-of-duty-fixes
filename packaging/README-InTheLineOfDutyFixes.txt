@@ -9,7 +9,12 @@ The complete runtime consists of the dinput8 loader, updater helper, uniquely na
 Lua/UI files, and the .ild-fixes directory with the version, ownership and update
 manifests. Do not install individual DLLs.
 
-Supported installation (SHA-256; the loader stays inactive on anything else):
+Repairs to mod scripts, configs and dialogs, and the whole Lua payload, work on any
+build of the 1.0006 engine. The native tweaks below write to fixed addresses inside
+the executable and are applied only on the exact binaries listed here; on any other
+build each one skips itself and the rest of the fix pack still works.
+
+Validated binaries (SHA-256):
   bin\XR_3DA.exe                   B22BC15B94A2A58C4E7046E46D46A3750D80C399BA8F37A2EF40CCF78EE3126D
   bin\xrCore.dll                   E6B6E0C150C4C511B299AA3C0E4E91D6B77A4801B23C9B6E55BF7A557ABEEEEB
   bin\xrGame.dll                   277B67FD6D21839A2F6C246EF57C8AD0C31079C0EAAAB179A8072D1B74A0284F
@@ -40,6 +45,19 @@ Additional repairs cover Unicode keyboard labels, sound metadata, stock graphics
 presets, missing-bump fallbacks, model chunk boundaries, actor save data, dialog
 graphs, detector callbacks, food use and complete recipe preconditions.
 These fixes do not disable genuine engine diagnostics or overwrite original assets.
+
+If something did not take effect:
+Every launch writes .ild-fixes\runtime\loader-report.txt. It lists each file the
+pack checks with its expected and actual SHA-256, and whether each repair applied.
+Send that file when reporting a problem. If the file is absent, the loader never
+ran: check that bin\dinput8.dll is present and that nothing else replaced it.
+
+Support commands, typed in the game console (both off by default):
+  ild_update diag_spam_on    prints a log line about twice a second, so console
+                             typing can be checked against a busy log
+  ild_update diag_spam_off   stops it
+  ild_update diag_knife      puts one knife in the player's inventory
+They need the in-game updater to be active; the loader report says whether it is.
 
 Removal:
 Close the game and helper, remove the files listed in .ild-fixes\managed-files.txt,

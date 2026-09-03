@@ -177,14 +177,67 @@ void report_unsupported(const wchar_t* reason)
     InitOnceExecuteOnce(&message_once, show_unsupported_message, const_cast<wchar_t*>(reason), nullptr);
 }
 
-[[nodiscard]] bool handle_matches_target(HANDLE file)
+// A support report the player can send back. It is written on every launch, before and independently of the
+// identity gate, so an installation where nothing could be applied still says exactly why.
+std::string report;
+
+[[nodiscard]] std::string hex(const ild::Sha256& digest)
+{
+    constexpr char digits[] = "0123456789ABCDEF";
+    std::string text;
+    for (const auto byte : digest)
+    {
+        const auto value = std::to_integer<unsigned>(byte);
+        text += digits[value >> 4];
+        text += digits[value & 15];
+    }
+    return text;
+}
+
+void record_identity(std::string_view name, const std::filesystem::path& path, const ild::Sha256& expected)
+{
+    ild::Sha256 actual{};
+    const auto readable = ild::sha256_file(path, actual);
+    report += "  ";
+    report += name;
+    report += "\n    expected " + hex(expected) + "\n    actual   ";
+    report += readable ? hex(actual) : std::string("<file not readable>");
+    report += readable && actual == expected ? "  MATCH\n" : "  MISMATCH\n";
+}
+
+void record(std::string_view step, bool ok)
+{
+    report += "  ";
+    report += step;
+    report += ok ? " = ok\n" : " = FAILED\n";
+}
+
+void write_report(const std::filesystem::path& root)
+{
+    std::error_code error;
+    const auto directory = root / L".ild-fixes" / L"runtime";
+    std::filesystem::create_directories(directory, error);
+    if (error) return;
+    const auto file = CreateFileW((directory / L"loader-report.txt").c_str(), GENERIC_WRITE, FILE_SHARE_READ,
+        nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    DWORD written{};
+    static_cast<void>(WriteFile(file, report.data(), static_cast<DWORD>(report.size()), &written, nullptr));
+    CloseHandle(file);
+}
+
+// Which repair a mapped file needs. Chosen by path, so a copy of the mod whose bytes differ slightly
+// still gets the repair; each transform verifies its own anchor and refuses an unexpected file.
+enum class MappedFile { none, console_script, actor_script, config };
+
+[[nodiscard]] MappedFile classify_handle(HANDLE file)
 {
     std::wstring buffer(32768, L'\0');
     const auto length = GetFinalPathNameByHandleW(file, buffer.data(), static_cast<DWORD>(buffer.size()),
         FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
     if (!length || length >= buffer.size())
     {
-        return false;
+        return MappedFile::none;
     }
 
     buffer.resize(length);
@@ -194,8 +247,9 @@ void report_unsupported(const wchar_t* reason)
         buffer.erase(0, extended_prefix.size());
     }
 
-    return _wcsicmp(buffer.c_str(), target_script.c_str()) == 0 ||
-        _wcsicmp(buffer.c_str(), target_actor.c_str()) == 0 || ild::is_config_repair_path(buffer, game_root);
+    if (_wcsicmp(buffer.c_str(), target_script.c_str()) == 0) return MappedFile::console_script;
+    if (_wcsicmp(buffer.c_str(), target_actor.c_str()) == 0) return MappedFile::actor_script;
+    return ild::is_config_repair_path(buffer, game_root) ? MappedFile::config : MappedFile::none;
 }
 
 HANDLE WINAPI create_file_mapping_hook(
@@ -210,7 +264,8 @@ HANDLE WINAPI create_file_mapping_hook(
     {
         return CreateFileMappingA(file, attributes, protect, maximum_size_high, maximum_size_low, name);
     }
-    if (file == INVALID_HANDLE_VALUE || !handle_matches_target(file))
+    const auto kind = file == INVALID_HANDLE_VALUE ? MappedFile::none : classify_handle(file);
+    if (kind == MappedFile::none)
     {
         return real_create_file_mapping(file, attributes, protect, maximum_size_high, maximum_size_low, name);
     }
@@ -247,14 +302,10 @@ HANDLE WINAPI create_file_mapping_hook(
     {
         std::memcpy(destination, source, static_cast<SIZE_T>(size.QuadPart));
         const auto bytes = std::span(static_cast<std::byte*>(destination), static_cast<SIZE_T>(size.QuadPart));
-        ild::Sha256 source_hash{};
-        if (ild::sha256_bytes(bytes, source_hash))
-        {
-            patched = source_hash == expected_script_hash ?
-                ild::script_patch::remove_console_execution(bytes) == ild::script_patch::Result::applied :
-                source_hash == expected_actor_hash ? ild::script_patch::bind_gameplay(bytes) :
-                ild::repair_config_buffer(bytes);
-        }
+        patched = kind == MappedFile::console_script ?
+            ild::script_patch::remove_console_execution(bytes) == ild::script_patch::Result::applied :
+            kind == MappedFile::actor_script ? ild::script_patch::bind_gameplay(bytes) :
+            ild::repair_config_buffer(bytes);
     }
 
     if (source)
@@ -293,21 +344,31 @@ BOOL CALLBACK install_fixes(PINIT_ONCE, PVOID, PVOID*)
     target_script = root / L"gamedata" / L"scripts" / L"_g.script";
     target_actor = root / L"gamedata" / L"scripts" / L"bind_stalker.script";
 
-    if (!equals_hash(engine, expected_engine_hash) || !equals_hash(core, expected_core_hash) ||
-        !equals_hash(target_script, expected_script_hash))
-    {
-        report_unsupported(L"This game or mod build is not supported. No in-memory fixes were applied.");
-        return TRUE;
-    }
+    report = "In the Line of Duty Fixes - loader report\nversion " ILD_VERSION "\ngame root " + root.string() +
+        "\n\n[identity]\n";
+    record_identity("bin\\XR_3DA.exe", engine, expected_engine_hash);
+    record_identity("bin\\xrCore.dll", core, expected_core_hash);
+    record_identity("gamedata\\scripts\\_g.script", target_script, expected_script_hash);
+
+    // The identity above is informational. Script, config and Lua repairs reach the game through an import
+    // resolved by name and are chosen by path, so they apply on any build of this engine version. Every
+    // native repair verifies its own patch site or module identity and skips only itself when the build
+    // differs, so an unfamiliar executable costs those tweaks rather than the whole fix pack.
+    report += "\n[install]\n";
 
     const auto core_module = GetModuleHandleW(L"xrCore.dll");
-    if (!ild::install_input_name_fix(GetModuleHandleW(nullptr)))
-        report_unsupported(L"The validated keyboard-name conversion could not be hooked.");
-    if (!ild::install_preset_compatibility(GetModuleHandleW(nullptr)))
-        report_unsupported(L"The validated stock graphics presets could not be adapted.");
-    if (!ild::install_audio_metadata_fix(root))
-        report_unsupported(L"The validated audio metadata adapter could not be installed.");
-    if (!ild::install_console_hooks(GetModuleHandleW(nullptr)))
+    const auto keyboard = ild::install_input_name_fix(GetModuleHandleW(nullptr));
+    record("keyboard names", keyboard);
+    if (!keyboard) report_unsupported(L"The validated keyboard-name conversion could not be hooked.");
+    const auto presets = ild::install_preset_compatibility(GetModuleHandleW(nullptr));
+    record("graphics presets", presets);
+    if (!presets) report_unsupported(L"The validated stock graphics presets could not be adapted.");
+    const auto audio = ild::install_audio_metadata_fix(root);
+    record("sound metadata", audio);
+    if (!audio) report_unsupported(L"The validated audio metadata adapter could not be installed.");
+    const auto console = ild::install_console_hooks(GetModuleHandleW(nullptr));
+    record("console editing and spam", console);
+    if (!console)
         report_unsupported(L"The validated console entry points could not be hooked. Console editing was not changed.");
 #ifdef ILD_CONSOLE_QA
     if (ild::has_switch(ild::command_line_tail(GetCommandLineW()), L"-ild_console_qa"))
@@ -319,16 +380,25 @@ BOOL CALLBACK install_fixes(PINIT_ONCE, PVOID, PVOID*)
         "CreateFileMappingA",
         reinterpret_cast<void*>(&create_file_mapping_hook)));
 
+    // This one import carries the console-spam fix, every script and config repair, and the Lua payload with
+    // the quest and NPC repairs. It is resolved by name, so it does not care which build of the engine runs.
+    record("script, config and Lua repairs", real_create_file_mapping != nullptr);
     if (!real_create_file_mapping)
     {
         report_unsupported(L"The validated xrCore.dll import could not be hooked. The fix was disabled.");
     }
 
+    // The console command hands the engine an object it calls back through IConsole_Command's vtable. That
+    // layout was validated against this executable, and getting it wrong would misdispatch rather than fail
+    // cleanly, so the updater and its support verbs are the one part that does require the known engine.
     const auto menu = root / L"gamedata" / L"scripts" / L"ui_main_menu.script";
-    if (std::filesystem::exists(root / L"InTheLineOfDutyFixesUpdater.exe") &&
+    const auto payload_present = std::filesystem::exists(root / L"InTheLineOfDutyFixesUpdater.exe") &&
         std::filesystem::exists(root / L"gamedata" / L"scripts" / L"ild_fix_ui.script") &&
-        std::filesystem::exists(root / L"gamedata" / L"config" / L"ui" / L"ild_fixes_update.xml") &&
-        equals_hash(menu, expected_menu_hash) && ild::install_update_bridge(GetModuleHandleW(nullptr), root))
+        std::filesystem::exists(root / L"gamedata" / L"config" / L"ui" / L"ild_fixes_update.xml");
+    const auto bridge = payload_present && equals_hash(engine, expected_engine_hash) &&
+        equals_hash(menu, expected_menu_hash) && ild::install_update_bridge(GetModuleHandleW(nullptr), root);
+    record("in-game updater and support verbs", bridge);
+    if (bridge)
     {
         const auto crt = GetModuleHandleW(L"MSVCR80.dll");
         real_read = crt ? reinterpret_cast<ReadFn>(GetProcAddress(crt, "_read")) : nullptr;
@@ -337,6 +407,8 @@ BOOL CALLBACK install_fixes(PINIT_ONCE, PVOID, PVOID*)
             start_update_service(engine);
     }
 
+    report += "\nSend this file if a repair did not take effect.\n";
+    write_report(root);
     return TRUE;
 }
 
