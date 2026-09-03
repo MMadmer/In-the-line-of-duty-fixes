@@ -83,13 +83,6 @@ function apply_video_mode(mode)
     end
 end
 
-local function bottom_row(parent, index)
-    -- Sits under the stock content whatever height the tab turns out to have.
-    local height = 416
-    pcall(function() height = parent:GetHeight() end)
-    return height - 30 * (index + 1)
-end
-
 -- SetCurrentID is unreliable before the player picks something, so the value in force is added first and the
 -- combo therefore shows it whether or not the setter took.
 local function fill(combo, labels, current)
@@ -112,15 +105,13 @@ local function selected(combo, labels)
     return nil
 end
 
-local function build(self, name, index)
+local function build(self, name)
+    -- Both position and size come from the fix pack's own XML; the tab window is larger than the panel it
+    -- is drawn in, so anything derived from its height ends up under the Apply row.
     local xml = CScriptXmlInit()
     xml:ParseFile("ild_fixes_options.xml")
-    local caption = xml:InitStatic(name .. "_caption", self)
-    local combo = xml:InitComboBox(name == "radio" and "radio_volume" or "video_mode", self)
-    local y = bottom_row(self, index)
-    pcall(function() caption:SetWndPos(16, y) end)
-    pcall(function() combo:SetWndPos(250, y) end)
-    return combo
+    xml:InitStatic(name .. "_caption", self)
+    return xml:InitComboBox(name == "radio" and "radio_volume" or "video_mode", self)
 end
 
 local function install_sound_tab()
@@ -131,7 +122,7 @@ local function install_sound_tab()
     tab.InitControls = function(self, ...)
         local result = original(self, ...)
         pcall(function()
-            self.ild_radio = build(self, "radio", 0)
+            self.ild_radio = build(self, "radio")
             self.ild_radio_labels = labels
             local value = radio_volume()
             -- The console command accepts any 0-100 value, so show whichever step is nearest to it.
@@ -168,7 +159,7 @@ local function install_video_tab()
     tab.InitControls = function(self, ...)
         local result = original(self, ...)
         pcall(function()
-            self.ild_mode = build(self, "video", 1)
+            self.ild_mode = build(self, "video")
             self.ild_mode_last = tonumber(setting("video_mode")) or 0
             fill(self.ild_mode, video_modes, self.ild_mode_last + 1)
         end)
