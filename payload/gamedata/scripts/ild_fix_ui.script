@@ -128,8 +128,6 @@ local function build(self, name)
 end
 
 local function install_sound_tab()
-    local labels = {}
-    for index, percent in ipairs(radio_steps) do labels[index] = percent .. "%" end
     local tab = ui_mm_opt_sound.opt_sound
     local original = tab.InitControls
     tab.InitControls = function(self, ...)
@@ -138,13 +136,26 @@ local function install_sound_tab()
             self.ild_radio = build(self, "radio")
             self.ild_radio_labels = labels
             local value = radio_volume()
-            -- The console command accepts any 0-100 value, so show whichever step is nearest to it.
-            local current, best = 1, nil
-            for index, percent in ipairs(radio_steps) do
-                local distance = math.abs(percent - value)
-                if best == nil or distance < best then current, best = index, distance end
+            -- The default is 75 and the steps go in tens, so the value in force is inserted where it
+            -- belongs rather than rounded away; otherwise reopening the tab would show a different figure.
+            local steps, current = {}, nil
+            for _, percent in ipairs(radio_steps) do
+                if percent == value then current = #steps + 1 end
+                if current == nil and percent > value then
+                    steps[#steps + 1] = value
+                    current = #steps
+                end
+                steps[#steps + 1] = percent
             end
-            fill(self.ild_radio, labels, current)
+            if current == nil then
+                steps[#steps + 1] = value
+                current = #steps
+            end
+            self.ild_radio_values = steps
+            local shown = {}
+            for index, percent in ipairs(steps) do shown[index] = percent .. "%" end
+            self.ild_radio_labels = shown
+            fill(self.ild_radio, shown, current)
             self.ild_radio_last = value
         end)
         return result
@@ -155,7 +166,7 @@ local function install_sound_tab()
         pcall(function()
             if not self.ild_radio then return end
             local index = selected(self.ild_radio, self.ild_radio_labels)
-            local value = index and radio_steps[index]
+            local value = index and self.ild_radio_values[index]
             if value and value ~= self.ild_radio_last then
                 self.ild_radio_last = value
                 -- Applied as it is picked rather than on OK, so the change is audible at once.
@@ -194,16 +205,25 @@ local function install_video_tab()
     end
 end
 
+-- The stock "Fullscreen" checkbox cannot be reached or removed, and it rewrites rs_fullscreen every time
+-- Apply is pressed. The chosen mode is therefore re-asserted whenever the two disagree.
+function enforce_video_mode()
+    local mode = tonumber(setting("video_mode")) or 0
+    local current = get_console():get_string("rs_fullscreen")
+    local fullscreen = current == "on" or current == "1"
+    if fullscreen ~= (mode == 0) then
+        apply_video_mode(mode)
+    elseif mode == 1 then
+        get_console():execute("ild_update borderless_on")
+    end
+end
+
 function install_options()
     if options_installed then return end
     options_installed = true
     pcall(install_sound_tab)
     pcall(install_video_tab)
-    -- Restore the chosen screen mode once per session, so borderless survives a restart.
-    pcall(function()
-        local mode = tonumber(setting("video_mode"))
-        if mode and mode ~= 0 then apply_video_mode(mode) end
-    end)
+    pcall(enforce_video_mode)
 end
 
 function i(menu)
@@ -227,6 +247,7 @@ function u(menu)
     if menu.ild_update_visible or menu.ild_update_finished then return end
     -- Poll every tenth frame; the helper refreshes its file at most every 200 ms anyway.
     frame = frame + 1
+    if frame % 120 == 0 then pcall(enforce_video_mode) end
     if frame % 10 ~= 0 then return end
     local now = tonumber(read_field("clock")) or 0
     if now < next_poll then return end

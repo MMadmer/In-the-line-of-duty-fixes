@@ -223,7 +223,14 @@ local function fixture()
             return value
         end
     }}
-    env.sound_theme = {ph_snd_themes = {unchanged = {"sentinel"}}}
+    env.sound_theme = {ph_snd_themes = {
+        unchanged = {"sentinel"},
+        -- Classification is by the files a theme plays, so these stand in for the real tables.
+        melnica_radio = {[[music\trek_ruba]]},
+        kasseta_mysic_3 = {[[music\na_berlin]]},
+        radio_sikret4 = {[[radio\hunter_record_1]]},
+        bar_start_megafon = {[[characters_voice\scenario\bar\start_1]]}
+    }}
     env.bind_monster = {generic_object_binder = {
         death_callback = function(self, victim, who)
             assert(who and env.db.actor)
@@ -899,11 +906,13 @@ do
         return source.played_sound.volume
     end
 
-    -- Only world radio and music sources are scaled; speech and machinery keep the mod's own volume.
-    equal(play("melnica_radio"), 0.75, "a radio source follows the slider")
-    equal(play("kasseta_mysic_3"), 0.75, "a music source follows the slider")
+    -- Classification comes from the theme's own files, so a source the name list never mentioned still
+    -- follows the setting, while speech and machinery keep the mod's own volume.
+    equal(play("melnica_radio"), 0.75, "a music path is recognised")
+    equal(play("kasseta_mysic_3"), 0.75, "a music source follows the setting")
+    equal(play("radio_sikret4"), 0.75, "a named radio theme is recognised")
     equal(play("bar_start_megafon"), 1.0, "speech is left alone")
-    equal(calls.sound_updates, 3, "the original scheme update always runs")
+    equal(calls.sound_updates, 4, "the original scheme update always runs")
 
     -- The setting is re-read, but not on every frame.
     calls.settings.radio_volume = "0"

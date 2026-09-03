@@ -417,23 +417,41 @@ local function install_text_repairs()
     end
 end
 
--- Every world sound source that plays radio or music. The volume slider on the Sound tab scales these and
--- nothing else, so speech, machinery and ambience keep the volume the mod set for them.
-local radio_themes = {
+-- A world sound source counts as radio or music when its own theme plays files from a music, radio or
+-- soundtrack path. Reading the theme table at runtime covers every source the mod has, including any the
+-- name list below would have missed; the names are kept for themes whose paths do not say what they are.
+local radio_names = {
     bar_radio_letagina = true, esc_wolf_radio = true, esc_wolf_radio_1 = true,
-    melnica_radio = true, radio_gar_stalker_torgovec = true, radio_garaj_bar = true,
-    radio_garaj_bar_night = true, radio_sikret1 = true, radio_sikret1488 = true,
-    radio_sikret2 = true, radio_sikret3 = true, radio_sikret4 = true,
-    radio_sikret5 = true, radio_sikret8 = true, radio_yroveni0 = true,
-    radio_yroveni1 = true, radio_yroveni2 = true, radio_yroveni3 = true,
-    val_radio_kom_music = true, agro_music_nechisti = true, esc_angar_last_day_music = true,
-    esc_kd_soseda_music = true, kasset_music = true, kasseta_mysic_1 = true,
-    kasseta_mysic_2 = true, kasseta_mysic_3 = true, kasseta_mysic_4 = true,
-    kasseta_mysic_5 = true, kasseta_mysic_6 = true, kasseta_mysic_7 = true,
-    sidor_moi_music = true, val_chr_myzon = true
+    radio_gar_stalker_torgovec = true, radio_sikret1 = true, radio_sikret2 = true, radio_sikret3 = true,
+    radio_sikret4 = true, radio_sikret1488 = true, kasset_music = true
 }
+local radio_markers = {"music", "radio", "muz", "myz", "soundtrack", "pesn", "trek"}
+local radio_cache = {}
 local radio_factor = 0.75
 local radio_checked = 0
+
+local function is_radio_theme(theme)
+    if type(theme) ~= "string" then return false end
+    local cached = radio_cache[theme]
+    if cached ~= nil then return cached end
+    local result = radio_names[theme] == true
+    local themes = sound_theme and sound_theme.ph_snd_themes
+    local files = themes and themes[theme]
+    if not result and type(files) == "table" then
+        for _, path in pairs(files) do
+            local lower = string.lower(tostring(path))
+            for _, marker in ipairs(radio_markers) do
+                if string.find(lower, marker, 1, true) then
+                    result = true
+                    break
+                end
+            end
+            if result then break end
+        end
+    end
+    radio_cache[theme] = result
+    return result
+end
 
 local function refresh_radio_volume()
     local now = time_global()
@@ -449,10 +467,13 @@ local function install_radio_volume()
     local original_update = ph_sound.snd_source.update
     ph_sound.snd_source.update = function(self, delta)
         local result = original_update(self, delta)
-        if self.played_sound and radio_themes[self.st.theme] then
+        local sound = self.played_sound
+        if sound and self.st and is_radio_theme(self.st.theme) then
             refresh_radio_volume()
-            -- Zero is silence, which is what a recording needs; the scheme's own timing is untouched.
-            self.played_sound.volume = radio_factor
+            -- Guarded: if this build will not take a volume, the scheme must still run normally.
+            pcall(function() sound.volume = radio_factor end)
+            -- Zero has to be silent even if the property above did nothing at all.
+            if radio_factor <= 0 then pcall(function() sound:stop() end) end
         end
         return result
     end
