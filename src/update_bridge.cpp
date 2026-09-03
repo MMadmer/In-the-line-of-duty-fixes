@@ -132,21 +132,25 @@ public:
 #endif
     }
 
-    [[nodiscard]] int radio_volume()
+    [[nodiscard]] int setting(const std::string& key, int fallback)
     {
-        const auto found = settings_.find("radio_volume");
-        if (found == settings_.end()) return 75;
+        const auto found = settings_.find(key);
+        if (found == settings_.end()) return fallback;
         int value{};
         const auto parsed = std::from_chars(found->second.data(),
             found->second.data() + found->second.size(), value);
-        return parsed.ec == std::errc{} ? value : 75;
+        return parsed.ec == std::errc{} ? value : fallback;
     }
 
-    void set_radio_volume(int value)
+    void set_setting(const std::string& key, int value)
     {
-        settings_["radio_volume"] = std::to_string(value);
+        settings_[key] = std::to_string(value);
         save_settings();
     }
+
+    [[nodiscard]] int radio_volume() { return setting("radio_volume", 75); }
+
+    void set_radio_volume(int value) { set_setting("radio_volume", value); }
 
     void Execute(const char* arguments) override
     {
@@ -394,10 +398,14 @@ private:
 };
 }
 
-class RadioVolumeCommand final : public ConsoleCommand
+// One command per added setting, so each option control has an entry of its own and the engine's options
+// manager keeps them in the fix pack's own group instead of the tab's. Save() stays empty, so nothing about
+// them reaches the player's user.ltx.
+class SettingCommand : public ConsoleCommand
 {
 public:
-    RadioVolumeCommand() : ConsoleCommand("ild_radio_volume") {}
+    SettingCommand(const char* name, const char* key, int fallback)
+        : ConsoleCommand(name), key_(key), fallback_(fallback) {}
 
     void bind(UpdateCommand* owner) { owner_ = owner; }
 
@@ -407,22 +415,21 @@ public:
         int value{};
         const std::string_view text(arguments);
         const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
-        if (parsed.ec != std::errc{}) return;
-        owner_->set_radio_volume((std::max)(0, (std::min)(100, value)));
+        if (parsed.ec == std::errc{}) owner_->set_setting(key_, value);
     }
 
     void Status(char (&text)[256]) override
     {
-        const auto value = owner_ ? std::to_string(owner_->radio_volume()) : std::string("75");
+        const auto value = std::to_string(owner_ ? owner_->setting(key_, fallback_) : fallback_);
         const auto length = (std::min)(value.size(), std::size_t{255});
         std::memcpy(text, value.data(), length);
         text[length] = 0;
     }
 
-    void Info(char (&text)[256]) override { strcpy_s(text, "radio and music volume, 0-100"); }
-
 private:
     UpdateCommand* owner_{};
+    const char* key_;
+    int fallback_;
 };
 
 bool install_update_bridge(HMODULE engine, const std::filesystem::path& root)
@@ -435,9 +442,12 @@ bool install_update_bridge(HMODULE engine, const std::filesystem::path& root)
     static UpdateCommand command;
     command.configure(root);
     add(*console, &command);
-    static RadioVolumeCommand radio;
+    static SettingCommand radio("ild_radio_volume", "radio_volume", 75);
     radio.bind(&command);
     add(*console, &radio);
+    static SettingCommand video("ild_video_mode", "video_mode", 0);
+    video.bind(&command);
+    add(*console, &video);
     return true;
 }
 }

@@ -50,7 +50,7 @@ end
 -- fix pack's own XML and attached to the tab. Every step is guarded: a failure leaves the stock menu intact.
 -- Both use a combo box because the engine's track bar exposes no setter, so a slider could never be opened
 -- showing the value that is actually in force.
-local radio_steps = {0, 25, 50, 75, 100}
+local radio_steps = {0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100}
 local video_modes = {"\207\238\235\237\238\253\234\240\224\237\237\251\233", "\207\238\235\237\238\253\234\240\224\237\237\251\233 \226 \238\234\237\229", "\206\234\238\237\237\251\233"}
 local default_radio_volume = 75
 
@@ -74,26 +74,39 @@ function apply_video_mode(mode)
     if mode == 0 then
         console:execute("ild_update borderless_off")
         console:execute("rs_fullscreen on")
+        console:execute("vid_restart")
     elseif mode == 1 then
         console:execute("rs_fullscreen off")
+        console:execute("vid_restart")
+        -- The restart rebuilds the window, so the borderless style has to go on after it.
         console:execute("ild_update borderless_on")
     else
         console:execute("ild_update borderless_off")
         console:execute("rs_fullscreen off")
+        console:execute("vid_restart")
     end
 end
 
--- SetCurrentID is unreliable before the player picks something, so the value in force is added first and the
--- combo therefore shows it whether or not the setter took.
+-- Items are listed in their natural order. SetCurrentID is verified by reading the text back, and only if
+-- that fails does the list get rebuilt with the value in force first, so the closed box never lies.
 local function fill(combo, labels, current)
-    local order = {current}
-    for index = 1, #labels do
-        if index ~= current then order[#order + 1] = index end
+    for index, label in ipairs(labels) do
+        combo:AddItem(label, index - 1)
     end
-    for position, index in ipairs(order) do
-        combo:AddItem(labels[index], position - 1)
+    pcall(function() combo:SetCurrentID(current - 1) end)
+    local shown
+    pcall(function() shown = combo:GetText() end)
+    if shown ~= labels[current] then
+        pcall(function() combo:ClearList() end)
+        local order = {current}
+        for index = 1, #labels do
+            if index ~= current then order[#order + 1] = index end
+        end
+        for position, index in ipairs(order) do
+            combo:AddItem(labels[index], position - 1)
+        end
+        pcall(function() combo:SetCurrentID(0) end)
     end
-    pcall(function() combo:SetCurrentID(0) end)
 end
 
 local function selected(combo, labels)

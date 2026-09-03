@@ -3,14 +3,16 @@
     <radio_caption x="16" y="104" width="230" height="22">
         <text font="letterica16" r="216" g="186" b="140" align="l">Громкость радио</text>
     </radio_caption>
-    <radio_volume x="250" y="104" width="310" height="22">
-        <list_length>5</list_length>
+    <radio_volume x="194" y="104" width="250" height="22">
+        <list_length>6</list_length>
+        <options_item entry="ild_radio_volume" group="ild_options"/>
     </radio_volume>
 
     <video_caption x="16" y="224" width="230" height="22">
         <text font="letterica16" r="216" g="186" b="140" align="l">Режим экрана</text>
     </video_caption>
-    <video_mode x="250" y="224" width="310" height="22">
+    <video_mode x="221" y="224" width="275" height="22">
         <list_length>3</list_length>
+        <options_item entry="ild_video_mode" group="ild_options"/>
     </video_mode>
 </w>
