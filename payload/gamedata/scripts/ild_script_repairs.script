@@ -427,7 +427,7 @@ local radio_names = {
 }
 local radio_markers = {"music", "radio", "muz", "myz", "soundtrack", "pesn", "trek"}
 local radio_cache = {}
-local radio_factor = 0.75
+local radio_factor = 0.70
 local radio_checked = 0
 
 local function is_radio_theme(theme)
@@ -460,7 +460,7 @@ local function refresh_radio_volume()
     local console = get_console()
     console:execute("ild_update read setting_radio_volume")
     local percent = tonumber(console:get_string("ild_update"))
-    radio_factor = percent and percent / 100 or 0.75
+    radio_factor = percent and percent / 100 or 0.70
 end
 
 local function install_radio_volume()

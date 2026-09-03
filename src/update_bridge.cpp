@@ -148,7 +148,7 @@ public:
         save_settings();
     }
 
-    [[nodiscard]] int radio_volume() { return setting("radio_volume", 75); }
+    [[nodiscard]] int radio_volume() { return setting("radio_volume", 70); }
 
     void set_radio_volume(int value) { set_setting("radio_volume", value); }
 
@@ -409,14 +409,10 @@ public:
 
     void bind(UpdateCommand* owner) { owner_ = owner; }
 
-    void Execute(const char* arguments) override
-    {
-        if (!arguments || !owner_) return;
-        int value{};
-        const std::string_view text(arguments);
-        const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
-        if (parsed.ec == std::errc{}) owner_->set_setting(key_, value);
-    }
+    // Read-only to the engine. The options manager writes a control's own index here when the player presses
+    // Apply, which would overwrite the setting with something meaningless, so only the fix pack's own
+    // "ild_update setting" path may change it.
+    void Execute(const char*) override {}
 
     void Status(char (&text)[256]) override
     {
@@ -442,7 +438,7 @@ bool install_update_bridge(HMODULE engine, const std::filesystem::path& root)
     static UpdateCommand command;
     command.configure(root);
     add(*console, &command);
-    static SettingCommand radio("ild_radio_volume", "radio_volume", 75);
+    static SettingCommand radio("ild_radio_volume", "radio_volume", 70);
     radio.bind(&command);
     add(*console, &radio);
     static SettingCommand video("ild_video_mode", "video_mode", 0);

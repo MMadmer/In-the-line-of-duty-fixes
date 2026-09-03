@@ -51,8 +51,14 @@ end
 -- Both use a combo box because the engine's track bar exposes no setter, so a slider could never be opened
 -- showing the value that is actually in force.
 local radio_steps = {0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100}
+local radio_labels = {}
+for index, percent in ipairs(radio_steps) do radio_labels[index] = percent .. "%" end
 local video_modes = {"\207\238\235\237\238\253\234\240\224\237\237\251\233", "\207\238\235\237\238\253\234\240\224\237\237\251\233 \226 \238\234\237\229", "\206\234\238\237\237\251\233"}
-local default_radio_volume = 75
+local default_radio_volume = 70
+
+-- The tab windows' Update is not driven by the options dialog, so polling them there never saw a change and
+-- nothing was ever stored. The controls are kept here and read from the dialog's own Update instead.
+local radio_combo, radio_last, video_combo, video_last
 
 local function setting(key)
     local console = get_console()
@@ -133,45 +139,13 @@ local function install_sound_tab()
     tab.InitControls = function(self, ...)
         local result = original(self, ...)
         pcall(function()
-            self.ild_radio = build(self, "radio")
-            self.ild_radio_labels = labels
-            local value = radio_volume()
-            -- The default is 75 and the steps go in tens, so the value in force is inserted where it
-            -- belongs rather than rounded away; otherwise reopening the tab would show a different figure.
-            local steps, current = {}, nil
-            for _, percent in ipairs(radio_steps) do
-                if percent == value then current = #steps + 1 end
-                if current == nil and percent > value then
-                    steps[#steps + 1] = value
-                    current = #steps
-                end
-                steps[#steps + 1] = percent
+            radio_combo = build(self, "radio")
+            radio_last = radio_volume()
+            local current = 8
+            for index, percent in ipairs(radio_steps) do
+                if percent == radio_last then current = index end
             end
-            if current == nil then
-                steps[#steps + 1] = value
-                current = #steps
-            end
-            self.ild_radio_values = steps
-            local shown = {}
-            for index, percent in ipairs(steps) do shown[index] = percent .. "%" end
-            self.ild_radio_labels = shown
-            fill(self.ild_radio, shown, current)
-            self.ild_radio_last = value
-        end)
-        return result
-    end
-    local original_update = tab.Update
-    tab.Update = function(self, ...)
-        local result = original_update(self, ...)
-        pcall(function()
-            if not self.ild_radio then return end
-            local index = selected(self.ild_radio, self.ild_radio_labels)
-            local value = index and self.ild_radio_values[index]
-            if value and value ~= self.ild_radio_last then
-                self.ild_radio_last = value
-                -- Applied as it is picked rather than on OK, so the change is audible at once.
-                store("radio_volume", value)
-            end
+            fill(radio_combo, radio_labels, current)
         end)
         return result
     end
@@ -183,24 +157,39 @@ local function install_video_tab()
     tab.InitControls = function(self, ...)
         local result = original(self, ...)
         pcall(function()
-            self.ild_mode = build(self, "video")
-            self.ild_mode_last = tonumber(setting("video_mode")) or 0
-            fill(self.ild_mode, video_modes, self.ild_mode_last + 1)
+            video_combo = build(self, "video")
+            video_last = tonumber(setting("video_mode")) or 0
+            fill(video_combo, video_modes, video_last + 1)
         end)
         return result
     end
-    local original_update = tab.Update
-    tab.Update = function(self, ...)
-        local result = original_update(self, ...)
-        pcall(function()
-            if not self.ild_mode then return end
-            local index = selected(self.ild_mode, video_modes)
-            if index and index - 1 ~= self.ild_mode_last then
-                self.ild_mode_last = index - 1
-                store("video_mode", self.ild_mode_last)
-                apply_video_mode(self.ild_mode_last)
-            end
-        end)
+end
+
+local function poll_options()
+    if radio_combo then
+        local index = selected(radio_combo, radio_labels)
+        local value = index and radio_steps[index]
+        if value and value ~= radio_last then
+            radio_last = value
+            store("radio_volume", value)
+        end
+    end
+    if video_combo then
+        local index = selected(video_combo, video_modes)
+        if index and index - 1 ~= video_last then
+            video_last = index - 1
+            store("video_mode", video_last)
+            apply_video_mode(video_last)
+        end
+    end
+end
+
+local function install_options_dialog()
+    local dialog = ui_mm_opt_main.options_dialog
+    local original = dialog.Update
+    dialog.Update = function(self, ...)
+        local result = original(self, ...)
+        pcall(poll_options)
         return result
     end
 end
@@ -223,7 +212,14 @@ function install_options()
     options_installed = true
     pcall(install_sound_tab)
     pcall(install_video_tab)
-    pcall(enforce_video_mode)
+    pcall(install_options_dialog)
+    -- Only the window style is restored here. A device reset during menu initialisation hangs the game, so
+    -- rs_fullscreen is left to the engine, which persists it itself, and is only re-asserted from Update.
+    pcall(function()
+        if (tonumber(setting("video_mode")) or 0) == 1 then
+            get_console():execute("ild_update borderless_on")
+        end
+    end)
 end
 
 function i(menu)

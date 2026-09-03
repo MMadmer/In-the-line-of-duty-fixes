@@ -55,7 +55,7 @@ local function fixture()
         }
     end
     -- Stands in for the native bridge: "read setting_x" selects a key, get_string returns it.
-    calls.settings = {radio_volume = "75"}
+    calls.settings = {radio_volume = "70"}
     env.get_console = function()
         return {
             execute = function(_, line)
@@ -908,15 +908,15 @@ do
 
     -- Classification comes from the theme's own files, so a source the name list never mentioned still
     -- follows the setting, while speech and machinery keep the mod's own volume.
-    equal(play("melnica_radio"), 0.75, "a music path is recognised")
-    equal(play("kasseta_mysic_3"), 0.75, "a music source follows the setting")
-    equal(play("radio_sikret4"), 0.75, "a named radio theme is recognised")
+    equal(play("melnica_radio"), 0.7, "a music path is recognised")
+    equal(play("kasseta_mysic_3"), 0.7, "a music source follows the setting")
+    equal(play("radio_sikret4"), 0.7, "a named radio theme is recognised")
     equal(play("bar_start_megafon"), 1.0, "speech is left alone")
     equal(calls.sound_updates, 4, "the original scheme update always runs")
 
     -- The setting is re-read, but not on every frame.
     calls.settings.radio_volume = "0"
-    equal(play("melnica_radio"), 0.75, "the value is cached rather than read every update")
+    equal(play("melnica_radio"), 0.7, "the value is cached rather than read every update")
     env.clock_ms = env.clock_ms + 2000
     equal(play("melnica_radio"), 0, "zero mutes the source completely")
     calls.settings.radio_volume = "100"
@@ -924,7 +924,7 @@ do
     equal(play("radio_yroveni1"), 1, "full volume is restored")
     calls.settings.radio_volume = ""
     env.clock_ms = env.clock_ms + 2000
-    equal(play("melnica_radio"), 0.75, "an unset value falls back to the default")
+    equal(play("melnica_radio"), 0.7, "an unset value falls back to the default")
 
     -- A source that never started playing must not be touched.
     local silent = {st = {theme = "melnica_radio"}}
