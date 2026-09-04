@@ -46,6 +46,16 @@ presets, missing-bump fallbacks, model chunk boundaries, actor save data, dialog
 graphs, detector callbacks, food use and complete recipe preconditions.
 These fixes do not disable genuine engine diagnostics or overwrite original assets.
 
+Stalled quest NPCs are detected and unstuck. Scripted NPC logic in this engine
+waits on engine callbacks that have no timeout, so a route the engine cannot
+walk, or an animation it cannot reach, leaves an NPC standing or sitting for
+good - the fault behind an NPC that stops in a doorway, or reaches a stash and
+never reports back. The fix pack watches for those waits and re-runs what the
+game itself would have run; a wait that is meant to end on a signal or an info
+portion is never forced, so no scripted step is skipped. Each intervention is
+recorded in .ild-fixesuntime
+pc-watchdog.txt.
+
 Added options:
 Sound tab - "Radio volume", default 70%, in steps of 10. It scales every world
 radio and music source and nothing else, and it takes effect as soon as it is
@@ -63,7 +73,8 @@ If something did not take effect:
 Every launch writes .ild-fixes\runtime\loader-report.txt. It lists each file the
 pack checks with its expected and actual SHA-256, and whether each repair applied.
 Send that file when reporting a problem. A windowed screen mode also leaves
-.ild-fixesuntime\window-state.txt: a few lines naming the window the pack
+.ild-fixes
+untime\window-state.txt: a few lines naming the window the pack
 found and the style it applied. If the loader report is absent, the loader never
 ran: check that bin\dinput8.dll is present and that nothing else replaced it.
 

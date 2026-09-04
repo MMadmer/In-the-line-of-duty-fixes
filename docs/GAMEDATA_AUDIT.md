@@ -217,3 +217,61 @@ defect, which section 1 of the working rules forbids. They are recorded here ins
   means adding XML content, which no in-memory same-size patch can do.
 - **`remont.script`** references six sounds under the absent `remkit\` directory, but nothing in the mod
   references the module, so no player can reach it.
+
+## Third pass: NPC stalls that never time out — 2026-09-04
+
+The complaint is the well-known one: an NPC takes a few steps and stands in a doorway, or walks to a stash,
+sits down and never gets up, and the quest waits forever. It is not deterministic, it does not happen to
+everyone, and reloading the save clears it. That last detail is the diagnosis.
+
+Scripted NPC behaviour in this engine is entirely callback-driven, and none of the waits has a timeout:
+
+- `move_mgr` sets `self.state = state_moving` in `setup_movement_by_patrol_path` and leaves it **only** from
+  `waypoint_callback`, which the engine fires when the NPC reaches a patrol point. `move_mgr:update` does
+  nothing but pick a walk/run animation. If the engine cannot build or complete the path — a blocked
+  doorway, a corpse or a physics object on the only route, a vertex that is unreachable from where the NPC
+  actually stands — no callback ever arrives and the scheme waits for the rest of the game.
+- The wait that ends a section is armed by `state_mgr_animation`, which sets `callback.begin` only once
+  `states.current_state == states.target_state`. An animation the state manager cannot reach therefore means
+  `move_mgr:time_callback` is never called: the NPC arrives, adopts its idle or sitting state and stays in
+  it. This is the "sat down at the stash" report.
+- `move_mgr:sync_ok` clears a `syn` signal only for partners that died or went offline. A partner stalled by
+  either fault above stays alive and online, so the whole team waits on it.
+
+Reloading works because loading re-runs `reset_scheme`, which rebuilds the patrol from where the NPC now is.
+
+### What was added
+
+A watchdog in `ild_script_repairs.script`, hung on `xr_motivator.motivator_binder.update` and sampling each
+NPC once every two seconds. Every recovery it performs is a call the game itself makes on its own recovery
+paths, so no scripted step is ever skipped:
+
+| Signature | Recovery |
+| --- | --- |
+| `move_mgr.state == 1` and the NPC has not covered 0.5 m in 20 s | `move_mgr:reset` with the scheme's own arguments — what `time_callback` does when a wait ends away from its waypoint. The second attempt also clears `last_index` and `current_point_index`, so the patrol is re-picked from the nearest point |
+| The same after three attempts | Stand the NPC up, drop any animation holding it, and send it to the point it was walking to on a free level path - the engine's own `stalker_go_to_waypoint` idiom, planned from scratch and not bound to the patrol's edges. The scheme's patrol is restored the moment it arrives. This engine has no way to place a client NPC anywhere, so a detour is the only recovery available |
+| `callback.func` and `callback.timeout` set with `callback.begin` still `nil` after 30 s | Drop the animation that never finished, then `move_mgr:time_callback` - what the armed wait would have called |
+| `syn_signal` pending for 60 s | Issue the signal through `move_mgr:scheme_set_signal` |
+
+### Why it cannot break working content
+
+- A wait of `t=*` sets `pt_wait_time = nil`, which makes `state_manager:set_state` clear `callback.func`. The
+  watchdog's arming check therefore never sees it, and a section that is meant to end on an info portion or
+  a signal from elsewhere is never forced. That is the case where forcing would skip content, and it is
+  excluded by construction rather than by a heuristic.
+- Combat, danger, conversation, being wounded and a meet in progress (`meet_manager.state ~= nil`) all reset
+  the timers: standing still is correct in all of them.
+- The movement manager is only touched while it is running the active scheme's own path
+  (`move_mgr.path_walk == storage[active_scheme].path_walk`), so a stale manager left over from a previous
+  scheme is never acted on.
+- A section change resets every timer, and the whole check runs inside `pcall`, so a stall check can never
+  take the game down with it.
+
+### Evidence
+
+`tests/script_repairs_tests.lua` drives a fake binder, movement manager and state manager through each
+signature: the grace period is respected, a moving NPC is never touched, combat, conversation and meet are
+ignored, an armed wait and a `t=*` wait are left to the engine, and the escalation runs reset → reset →
+placement in order. Each intervention is recorded through `ild_update watchdog` into
+`.ild-fixes\runtime\npc-watchdog.txt`, capped at 200 lines a launch, which is also what a player sends when
+reporting that an NPC still stalled.

@@ -284,6 +284,9 @@ local function fixture()
         det_super = function() calls.detector[#calls.detector + 1] = "super" end,
         iteration_del_spot = function() calls.detector[#calls.detector + 1] = "clear" end
     }
+    env.xr_motivator = {motivator_binder = {
+        update = function(_, delta) calls.npc_update = delta end
+    }}
     env.bind_stalker = {actor_binder = {
         load = function(self, storage)
             self.st = storage
@@ -930,6 +933,181 @@ do
     local silent = {st = {theme = "melnica_radio"}}
     env.ph_sound.snd_source.update(silent, 10)
     equal(silent.played_sound, nil, "a source with no sound is left as it is")
+end
+
+
+-- The NPC stall watchdog. Every fault below leaves a scheme waiting on a callback the engine will never
+-- deliver, which is what strands an NPC mid-quest until the player reloads.
+do
+    local env, calls, _, module = fixture()
+    module.install()
+    env.game_object = {level_path = "level_path"}
+    env.move = {dodge = "dodge", walk = "walk", standing = "standing"}
+
+    -- Each scenario gets its own NPC: the watchdog remembers one record per id, as it does in the game.
+    local next_id = 6
+    local function make_world(overrides)
+        overrides = overrides or {}
+        next_id = next_id + 1
+        local npc_id = next_id
+        local mgr = {
+            state = 1,
+            path_walk = "walk_path",
+            path_walk_info = {},
+            path_look = "look_path",
+            path_look_info = {[0] = {}},
+            last_look_index = 0,
+            last_index = 0,
+            current_point_index = 0,
+            team = nil,
+            suggested_state = {},
+            resets = 0,
+            callbacks = 0,
+            signals = {},
+            patrol_walk = {
+                count = function() return 3 end,
+                point = function(_, index) return {x = 10 * index, y = 0, z = 0} end,
+                level_vertex_id = function(_, index) return 100 + index end
+            }
+        }
+        mgr.reset = function(self) self.resets = self.resets + 1 end
+        mgr.time_callback = function(self) self.callbacks = self.callbacks + 1 end
+        mgr.scheme_set_signal = function(self, name) self.signals[#self.signals + 1] = name end
+        local states = {callback = {func = function() end, timeout = 5000}}
+        local npc = {
+            x = 0,
+            id = function() return npc_id end,
+            name = function() return "esc_stalker" end,
+            alive = function() return true end,
+            position = function(self) return {x = self.x, y = 0, z = 0,
+                distance_to = function(point) return math.abs(point.x - self.x) end} end,
+            best_enemy = function() return overrides.enemy end,
+            best_danger = function() return nil end,
+            is_talking = function() return overrides.talking == true end,
+            get_current_point_index = function() return 1 end,
+            animation_count = function(self) return self.animations or 0 end,
+            clear_animations = function(self) self.animations = 0 end,
+            set_body_state = function(self, kind) self.body_state = kind end,
+            set_path_type = function(self, kind) self.path_type = kind end,
+            set_detail_path_type = function(self, kind) self.detail_type = kind end,
+            set_movement_type = function(self, kind) self.movement_type = kind end,
+            set_dest_level_vertex_id = function(self, vertex) self.dest_vertex = vertex end
+        }
+        env.db.storage[npc_id] = {
+            active_scheme = "walker",
+            move_mgr = mgr,
+            state_mgr = states,
+            walker = {section = "walker@guard", path_walk = "walk_path"}
+        }
+        return npc, mgr, states
+    end
+
+    local function tick(npc, seconds)
+        env.clock_ms = env.clock_ms + seconds * 1000
+        env.xr_motivator.motivator_binder.update({object = npc}, 10)
+    end
+
+    -- Movement that never happens: the patrol is rebuilt twice, and only then is the NPC placed on the
+    -- point it was walking to.
+    local npc, mgr = make_world()
+    tick(npc, 1)
+    tick(npc, 15)
+    equal(mgr.resets, 0, "a walking NPC is left alone before the grace period")
+    tick(npc, 10)
+    equal(mgr.resets, 1, "a stalled walk is rebuilt once the grace period passes")
+    tick(npc, 25)
+    equal(mgr.resets, 2, "a second rebuild follows if the first changed nothing")
+    equal(mgr.last_index, nil, "the second attempt forgets the remembered waypoint")
+    equal(mgr.current_point_index, nil, "and the remembered patrol index with it")
+    tick(npc, 25)
+    equal(npc.dest_vertex, 101, "a route that cannot be walked is replanned as a free level path")
+    equal(npc.path_type, "level_path", "and the NPC is taken off the patrol path to walk it")
+    equal(npc.movement_type, "walk", "on foot, so the detour looks like the walk it replaces")
+    equal(npc.body_state, "standing", "and it is stood up first, in case an animation is what pinned it")
+    check(calls.console and calls.console[#calls.console] == "ild_update watchdog rescue esc_stalker walker@guard",
+        "every intervention is recorded")
+
+    -- Reaching the point hands the scheme's own patrol straight back.
+    npc.x = 10
+    tick(npc, 5)
+    equal(mgr.resets, 3, "arriving at the point restores the scheme's own patrol")
+    check(calls.console[#calls.console] == "ild_update watchdog rejoined esc_stalker walker@guard",
+        "and the hand-back is recorded too")
+
+    -- Progress resets everything: an NPC that is actually walking is never touched.
+    npc, mgr = make_world()
+    for _ = 1, 20 do
+        npc.x = npc.x + 1
+        tick(npc, 5)
+    end
+    equal(mgr.resets, 0, "an NPC that keeps moving is never interfered with")
+
+    -- Combat, conversation and a meet in progress are legitimate reasons to stand still.
+    npc, mgr = make_world({enemy = {}})
+    for _ = 1, 10 do tick(npc, 5) end
+    equal(mgr.resets, 0, "an NPC holding position in combat is left alone")
+
+    npc, mgr = make_world({talking = true})
+    for _ = 1, 10 do tick(npc, 5) end
+    equal(mgr.resets, 0, "an NPC talking to the player is left alone")
+
+    npc, mgr = make_world()
+    env.db.storage[npc:id()].meet = {meet_manager = {state = "wait"}}
+    for _ = 1, 10 do tick(npc, 5) end
+    equal(mgr.resets, 0, "an NPC meeting the player is left alone")
+
+    -- A finite wait whose animation never arrived: the state manager never arms callback.begin, so the
+    -- wait that ends the section never starts. Re-running the wait is what the game itself would do.
+    local states
+    npc, mgr, states = make_world()
+    mgr.state = 2
+    tick(npc, 1)
+    tick(npc, 20)
+    equal(mgr.callbacks, 0, "a wait that has only just started is left to run")
+    npc.animations = 1
+    tick(npc, 35)
+    equal(mgr.callbacks, 1, "a wait whose animation never arrived is re-run")
+    equal(npc.animations, 0, "and the animation that pinned the NPC is dropped with it")
+
+    -- A wait that did arm is the engine's to finish, and so is a wait of "*", which carries no callback.
+    npc, mgr, states = make_world()
+    mgr.state = 2
+    states.callback.begin = env.clock_ms
+    for _ = 1, 10 do tick(npc, 5) end
+    equal(mgr.callbacks, 0, "an armed wait is left to the engine")
+
+    npc, mgr, states = make_world()
+    mgr.state = 2
+    states.callback.func = nil
+    for _ = 1, 10 do tick(npc, 5) end
+    equal(mgr.callbacks, 0, "a wait of '*' ends on a signal and is never forced")
+
+    -- A team signal whose partners never became ready holds the whole group forever.
+    npc, mgr = make_world()
+    mgr.state = 2
+    mgr.syn_signal = "sync_done"
+    tick(npc, 1)
+    tick(npc, 30)
+    equal(#mgr.signals, 0, "a team signal is given time to resolve on its own")
+    tick(npc, 70)
+    equal(mgr.signals[1], "sync_done", "a team signal that never resolved is issued")
+    equal(mgr.syn_signal, nil, "and is not issued twice")
+
+    -- A scheme the movement manager is not running must never be touched by it.
+    npc, mgr = make_world()
+    env.db.storage[npc:id()].walker.path_walk = "another_path"
+    for _ = 1, 10 do tick(npc, 5) end
+    equal(mgr.resets, 0, "a movement manager running someone else's path is left alone")
+
+    npc, mgr = make_world()
+    env.db.storage[npc:id()].active_scheme = nil
+    for _ = 1, 10 do tick(npc, 5) end
+    equal(mgr.resets, 0, "an NPC with no active scheme is left alone")
+
+    -- The original binder still runs.
+    npc = make_world()
+    tick(npc, 1)
+    equal(calls.npc_update, 10, "the engine's own binder update still runs")
 end
 
 print("script_repairs_tests: " .. tests .. " checks passed")

@@ -135,6 +135,17 @@ public:
             if (digit >= '0' && digit <= '2') set_display_mode(digit - '0');
             return;
         }
+        // The NPC watchdog's only trace. It is capped per launch, so a level that keeps tripping it can
+        // never turn the record into a log.
+        if (action.starts_with("watchdog "))
+        {
+            if (watchdog_lines_ < 200)
+            {
+                ++watchdog_lines_;
+                append_line(L"npc-watchdog.txt", std::string(action.substr(9, 160)) + "\r\n");
+            }
+            return;
+        }
         constexpr std::array allowed{"download", "apply", "dismiss", "dismiss_major", "disable_major", "open_major"};
         if (std::find(allowed.begin(), allowed.end(), action) != allowed.end())
         {
@@ -343,6 +354,7 @@ private:
     }
 
     std::filesystem::path runtime_, settings_path_;
+    int watchdog_lines_{};
     std::map<std::string, std::string> settings_;
     std::wstring status_name_, command_name_;
     std::map<std::string, std::string> fields_;

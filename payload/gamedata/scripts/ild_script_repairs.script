@@ -496,6 +496,203 @@ local function restore_input_timeout(binder)
     end
 end
 
+-- Scripted NPC behaviour runs entirely on engine callbacks: move_mgr leaves its walking state only through
+-- waypoint_callback, and the state manager arms the wait that ends a section only once the requested
+-- animation has actually been reached. Neither has a timeout, so a path the engine cannot build, or an
+-- animation it never reaches, leaves the NPC standing for good and the quest with it - which is exactly why
+-- reloading a save clears it. Each recovery below re-runs only what the game itself would have run, so no
+-- scripted step is ever skipped.
+local watch = {}
+local watch_period = 2000
+local move_grace = 20000
+local wait_grace = 30000
+local sync_grace = 60000
+local rescue_reach = 2
+local move_epsilon = 0.5
+
+local function watch_report(npc, section, action)
+    -- Rare by construction, and the only trace an intervention leaves. The console verb writes it beside
+    -- the loader report; a build without the native bridge simply has nowhere to write it.
+    pcall(function()
+        get_console():execute("ild_update watchdog " .. action .. " " .. npc:name() .. " " .. section)
+    end)
+end
+
+local function watch_distance(record, position)
+    local dx, dy, dz = position.x - record.x, position.y - record.y, position.z - record.z
+    return dx * dx + dy * dy + dz * dz
+end
+
+local function watch_mark(record, npc, now)
+    local position = npc:position()
+    record.x, record.y, record.z = position.x, position.y, position.z
+    record.moved, record.tries = now, 0
+end
+
+local function watch_reset(mgr)
+    mgr:reset(mgr.path_walk, mgr.path_walk_info, mgr.path_look, mgr.path_look_info, mgr.team,
+        mgr.suggested_state, mgr.move_cb_info, mgr.no_validation)
+end
+
+-- Two rebuilds mean the route itself cannot be walked. This engine has no way to place a client NPC
+-- anywhere, so the way out is its other movement mode: a free level path to the point the NPC was walking
+-- to, planned from scratch and not bound to the patrol's own edges. The point is the next one rather than
+-- the end of the path, and it is a valid AI node by construction, so nothing scripted is stepped over.
+local function watch_rescue(npc, mgr)
+    if not mgr.patrol_walk then return nil end
+    local count = mgr.patrol_walk:count()
+    local index = npc:get_current_point_index()
+    if not index or index < 0 or index >= count then
+        index = mgr.last_index and mgr.last_index + 1 or 0
+    end
+    if index >= count then index = count - 1 end
+    -- An animation the NPC cannot leave is one of the two ways it gets stuck here, and standing it up is
+    -- what the engine's own go-to-waypoint helper does before handing it a level path.
+    if npc:animation_count() > 0 then npc:clear_animations() end
+    npc:set_body_state(move.standing)
+    npc:set_path_type(game_object.level_path)
+    npc:set_detail_path_type(move.dodge)
+    npc:set_movement_type(move.walk)
+    npc:set_dest_level_vertex_id(mgr.patrol_walk:level_vertex_id(index))
+    return index
+end
+
+-- Standing still is normal in combat, under fire, while wounded, and while the player is being met.
+local function watch_busy(npc, storage)
+    if npc:best_enemy() or npc:best_danger() or npc:is_talking() then return true end
+    if xr_wounded and xr_wounded.is_wounded and xr_wounded.is_wounded(npc) then return true end
+    local meet = storage.meet
+    return meet ~= nil and meet.meet_manager ~= nil and tostring(meet.meet_manager.state) ~= "nil"
+end
+
+local function watch_npc(npc)
+    local id = npc:id()
+    local storage = db.storage[id]
+    if not storage or not storage.active_scheme or not npc:alive() then
+        watch[id] = nil
+        return
+    end
+    local now = time_global()
+    local state = storage[storage.active_scheme]
+    local section = state and state.section or storage.active_scheme
+    local record = watch[id]
+    if not record then
+        record = {tm = now, section = section}
+        watch_mark(record, npc, now)
+        watch[id] = record
+        return
+    end
+    if now - record.tm < watch_period then return end
+    record.tm = now
+
+    -- A new section is a new wait, so nothing carries over from the one before it.
+    if record.section ~= section or watch_busy(npc, storage) then
+        record.section, record.armed, record.synced = section, nil, nil
+        watch_mark(record, npc, now)
+        return
+    end
+
+    -- The movement manager is only ours to touch while it is running the active scheme's own path.
+    local mgr = storage.move_mgr
+    if not mgr or not state or not state.path_walk or mgr.path_walk ~= state.path_walk then
+        record.armed, record.synced = nil, nil
+        watch_mark(record, npc, now)
+        return
+    end
+
+    -- A rescue in progress: the patrol goes back the moment the NPC reaches the point it was sent to.
+    if record.rescue and mgr.patrol_walk then
+        if npc:position():distance_to(mgr.patrol_walk:point(record.rescue)) < rescue_reach then
+            record.rescue = nil
+            watch_reset(mgr)
+            watch_report(npc, section, "rejoined")
+            watch_mark(record, npc, now)
+            return
+        end
+    end
+
+    -- A team signal whose partners never became ready. sync_ok clears itself only for partners that died or
+    -- went offline, so one partner stalled by any of the faults below holds the whole group indefinitely.
+    if mgr.syn_signal then
+        record.synced = record.synced or now
+        if now - record.synced > sync_grace then
+            local signal = mgr.syn_signal
+            record.synced, mgr.syn_signal = nil, nil
+            mgr:scheme_set_signal(signal)
+            watch_report(npc, section, "sync")
+        end
+    else
+        record.synced = nil
+    end
+
+    -- A finite wait that never armed: the state manager sets callback.begin only once the requested
+    -- animation has been reached, so an animation it cannot reach means the wait that ends the section
+    -- never starts. A wait of "*" carries no callback at all and is left alone - that one ends on a signal,
+    -- and forcing it would step over whatever the section is waiting for.
+    local states = storage.state_mgr
+    local callback = states and states.callback
+    if callback and callback.func and callback.timeout and not callback.begin then
+        record.armed = record.armed or now
+        if now - record.armed > wait_grace then
+            record.armed = now
+            if npc:animation_count() > 0 then npc:clear_animations() end
+            if mgr.path_look_info and mgr.last_look_index and mgr.path_look_info[mgr.last_look_index] then
+                mgr:time_callback()
+            else
+                watch_reset(mgr)
+            end
+            watch_report(npc, section, "wait")
+        end
+    else
+        record.armed = nil
+    end
+
+    -- Movement that is not happening. state 1 is move_mgr walking, which it leaves only on a waypoint, so
+    -- an NPC that has not covered half a metre in twenty seconds is not walking anywhere.
+    if mgr.state ~= 1 then
+        watch_mark(record, npc, now)
+        return
+    end
+    local position = npc:position()
+    if watch_distance(record, position) > move_epsilon * move_epsilon then
+        watch_mark(record, npc, now)
+        return
+    end
+    if now - record.moved < move_grace then return end
+    record.moved = now
+    -- A rescue that is not moving either gets re-planned rather than restarting the ladder, or the reset
+    -- below would cancel it half way.
+    if record.rescue then
+        record.rescue = watch_rescue(npc, mgr)
+        watch_report(npc, section, "rescue")
+        return
+    end
+    record.tries = record.tries + 1
+    if record.tries < 3 then
+        -- What move_mgr itself does when a wait ends away from its waypoint: rebuild the patrol from where
+        -- the NPC actually stands. The second attempt drops the remembered index with it.
+        if record.tries == 2 then
+            mgr.current_point_index, mgr.last_index = nil, nil
+        end
+        watch_reset(mgr)
+        watch_report(npc, section, "reset")
+    else
+        record.rescue = watch_rescue(npc, mgr)
+        if record.rescue then watch_report(npc, section, "rescue") end
+    end
+end
+
+local function install_ai_watchdog()
+    local binder = xr_motivator.motivator_binder
+    local original = binder.update
+    binder.update = function(self, ...)
+        local result = original(self, ...)
+        -- A stall check must never be able to take the game down with it.
+        pcall(watch_npc, self.object)
+        return result
+    end
+end
+
 function install()
     if installed then return end
     if not new_life.new_gg_2 then new_life.new_gg_2 = moa_agro.new_gg_2 end
@@ -535,6 +732,7 @@ function install()
     install_sound_repairs()
     install_radio_volume()
     install_npc_repairs()
+    install_ai_watchdog()
     install_hud_repairs()
     install_workbench_repairs()
     install_text_repairs()
