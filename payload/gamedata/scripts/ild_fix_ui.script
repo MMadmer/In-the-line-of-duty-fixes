@@ -59,6 +59,9 @@ local default_radio_volume = 70
 -- The tab windows' Update is not driven by the options dialog, so polling them there never saw a change and
 -- nothing was ever stored. The controls are kept here and read from the dialog's own Update instead.
 local radio_combo, radio_last, video_combo, video_last
+-- The screen mode costs a device restart, so it waits for Apply. Set while a choice is pending, cleared
+-- once it has been carried out.
+local video_pending, video_on_apply
 
 local function setting(key)
     local console = get_console()
@@ -171,9 +174,19 @@ local function poll_options()
         if index and index - 1 ~= video_last then
             video_last = index - 1
             store("video_mode", video_last)
-            apply_video_mode(video_last)
+            -- Without a handler to hang the commit on, applying at once still beats never applying.
+            if video_on_apply then video_pending = true else apply_video_mode(video_last) end
         end
     end
+end
+
+-- The screen mode is committed here so nothing changes until Apply is pressed. The handler is found by
+-- name rather than assumed: only the dialog's own methods are looked at, so no inherited engine method is
+-- ever fetched, and the commit runs after the stock one, which rewrites rs_fullscreen from its checkbox.
+local function commit_video_mode()
+    if not video_pending then return end
+    video_pending = nil
+    apply_video_mode(video_last)
 end
 
 local function install_options_dialog()
@@ -184,18 +197,29 @@ local function install_options_dialog()
         pcall(poll_options)
         return result
     end
+    for name, method in pairs(dialog) do
+        if type(method) == "function" and (string.find(name, "ccept") or string.find(name, "pply")) then
+            video_on_apply = true
+            dialog[name] = function(self, ...)
+                local result = method(self, ...)
+                pcall(commit_video_mode)
+                return result
+            end
+        end
+    end
 end
 
 -- The stock "Fullscreen" checkbox cannot be reached or removed, and it rewrites rs_fullscreen every time
--- Apply is pressed. The chosen mode is therefore re-asserted whenever the two disagree.
+-- Apply is pressed. The device is created windowed by the loader either way, so the flag is only kept in
+-- step with the chosen mode - no restart, or every disagreement would rebuild the device on its own.
 function enforce_video_mode()
     local mode = tonumber(setting("video_mode")) or 0
-    local current = get_console():get_string("rs_fullscreen")
+    local console = get_console()
+    local current = console:get_string("rs_fullscreen")
     local fullscreen = current == "on" or current == "1"
     if fullscreen ~= (mode == 0) then
-        apply_video_mode(mode)
-    elseif mode == 1 then
-        get_console():execute("ild_update borderless_on")
+        console:execute("ild_update display_mode " .. mode)
+        console:execute(mode == 0 and "rs_fullscreen on" or "rs_fullscreen off")
     end
 end
 

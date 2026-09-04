@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <string>
 #include <string_view>
 
 namespace ild
@@ -27,6 +28,7 @@ constexpr std::size_t input_create_device_slot = 3;  // IDirectInput8::CreateDev
 constexpr std::size_t cooperative_level_slot = 13;   // IDirectInputDevice8::SetCooperativeLevel
 
 using Direct3DCreate9Fn = IDirect3D9*(WINAPI*)(UINT);
+using GetProcAddressFn = FARPROC(WINAPI*)(HMODULE, LPCSTR);
 using CreateDeviceFn = HRESULT(STDMETHODCALLTYPE*)(IDirect3D9*, UINT, D3DDEVTYPE, HWND, DWORD,
     D3DPRESENT_PARAMETERS*, IDirect3DDevice9**);
 using ResetFn = HRESULT(STDMETHODCALLTYPE*)(IDirect3DDevice9*, D3DPRESENT_PARAMETERS*);
@@ -36,6 +38,7 @@ using InputCreateDeviceFn = HRESULT(STDMETHODCALLTYPE*)(void*, const GUID&, void
 using CooperativeLevelFn = HRESULT(STDMETHODCALLTYPE*)(void*, HWND, DWORD);
 
 Direct3DCreate9Fn real_create{};
+GetProcAddressFn real_get_proc_address{};
 CreateDeviceFn real_create_device{};
 ResetFn real_reset{};
 PresentFn real_present{};
@@ -46,6 +49,7 @@ HWND keyboard_window{};
 DWORD keyboard_flags{};
 std::atomic<int> mode{};
 HWND game_window{};
+std::atomic<bool> settings_loaded{};
 UINT back_width{};
 UINT back_height{};
 
@@ -58,6 +62,21 @@ bool patch_slot(void** table, std::size_t slot, void* replacement, void** previo
     DWORD restored{};
     VirtualProtect(table + slot, sizeof(void*), protection, &restored);
     return true;
+}
+
+// The device can be created before the loader has resolved anything, so the stored mode is read on first
+// use, from the executable's own location.
+void ensure_settings_loaded()
+{
+    if (settings_loaded.load(std::memory_order_acquire)) return;
+    wchar_t buffer[MAX_PATH]{};
+    const auto length = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
+    if (!length || length >= MAX_PATH)
+    {
+        settings_loaded.store(true, std::memory_order_release);
+        return;
+    }
+    load_display_mode(std::filesystem::path(buffer).parent_path().parent_path());
 }
 
 void apply_window_style(HWND window, UINT width, UINT height)
@@ -113,7 +132,8 @@ void apply_window_style(HWND window, UINT width, UINT height)
 void maintain_window_state()
 {
     const auto current = mode.load(std::memory_order_acquire);
-    if (!game_window || current == 0) return;
+    // Re-applying the style would undo a minimise or a maximise, so those are left to the player.
+    if (!game_window || current == 0 || IsIconic(game_window) || IsZoomed(game_window)) return;
     const auto style = static_cast<LONG_PTR>(current == 2
         ? WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPSIBLINGS
         : WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS);
@@ -146,6 +166,7 @@ void maintain_window_state()
 void configure(D3DPRESENT_PARAMETERS* parameters)
 {
     if (!parameters) return;
+    ensure_settings_loaded();
     if (mode.load(std::memory_order_acquire) == 0)
     {
         parameters->Windowed = FALSE;
@@ -261,6 +282,7 @@ HRESULT STDMETHODCALLTYPE hooked_input_create_device(void* self, const GUID& id,
 
 void load_display_mode(const std::filesystem::path& root)
 {
+    settings_loaded.store(true, std::memory_order_release);
     // The keyboard is acquired long before the renderer exists, so the mode has to be known by then.
     static bool loaded{};
     if (loaded) return;
@@ -277,19 +299,45 @@ void hook_direct_input(void* instance)
         reinterpret_cast<void**>(&real_input_create_device)));
 }
 
-bool install_display_mode(const std::filesystem::path& root)
+namespace
+{
+// The engine loads d3d9.dll by hand and resolves Direct3DCreate9 through GetProcAddress - that is how it
+// can swap in the null renderer - so there is no d3d9 import to replace. The name lookup is caught instead.
+FARPROC WINAPI hooked_get_proc_address(HMODULE module, LPCSTR name)
+{
+    // Ordinal lookups pass a small integer rather than a pointer, so the name is only read when it is one.
+    if (reinterpret_cast<ULONG_PTR>(name) > 0xFFFF && lstrcmpA(name, "Direct3DCreate9") == 0)
+    {
+        const auto original = real_get_proc_address(module, name);
+        if (original)
+        {
+            real_create = reinterpret_cast<Direct3DCreate9Fn>(original);
+            return reinterpret_cast<FARPROC>(&hooked_create);
+        }
+    }
+    return real_get_proc_address(module, name);
+}
+}
+
+// The import table is in place from the moment the process starts, so this can and must run before the
+// device is created.
+bool install_display_mode_early()
 {
     static bool installed{};
     if (installed) return true;
-    const auto renderer = GetModuleHandleW(L"xrRender_R2.dll");
-    if (!renderer) return false;
-    load_display_mode(root);
-    const auto previous = replace_iat_import(renderer, "d3d9.dll", "Direct3DCreate9",
-        reinterpret_cast<void*>(&hooked_create));
+    const auto previous = replace_iat_import(GetModuleHandleW(nullptr), "KERNEL32.dll", "GetProcAddress",
+        reinterpret_cast<void*>(&hooked_get_proc_address));
     if (!previous) return false;
-    real_create = reinterpret_cast<Direct3DCreate9Fn>(previous);
+    real_get_proc_address = reinterpret_cast<GetProcAddressFn>(previous);
     installed = true;
     return true;
+}
+
+
+bool install_display_mode(const std::filesystem::path& root)
+{
+    load_display_mode(root);
+    return install_display_mode_early();
 }
 
 void set_display_mode(int value)

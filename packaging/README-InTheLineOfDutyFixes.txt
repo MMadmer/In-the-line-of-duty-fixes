@@ -47,10 +47,15 @@ graphs, detector callbacks, food use and complete recipe preconditions.
 These fixes do not disable genuine engine diagnostics or overwrite original assets.
 
 Added options:
-Sound tab - "Radio volume", default 75%. It scales every world radio and music
-source and nothing else; 0% is complete silence, which is what a recording needs.
-The console command ild_radio_volume accepts any value from 0 to 100 for finer
-control. Video tab - "Screen mode": fullscreen, borderless window, or windowed.
+Sound tab - "Radio volume", default 70%, in steps of 10. It scales every world
+radio and music source and nothing else, and it takes effect as soon as it is
+picked; 0% is complete silence, which is what a recording needs. The console
+command "ild_update setting radio_volume <0..100>" takes any value in between,
+and ild_radio_volume reports the one in force.
+Video tab - "Screen mode": fullscreen, borderless window, or windowed. It is
+applied when Apply is pressed, and the game rebuilds its render device itself.
+A windowed mode is a real window: Alt+Tab and the Windows key work, and the
+game no longer holds the display exclusively.
 Both are stored in .ild-fixes\settings.txt, not in user.ltx, so removing the addon
 leaves the game's own settings exactly as they were.
 

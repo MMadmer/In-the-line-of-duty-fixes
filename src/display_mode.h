@@ -12,6 +12,10 @@ namespace ild
 // parameters are set at device creation and at every reset instead, which is what actually decides it.
 [[nodiscard]] bool install_display_mode(const std::filesystem::path& root);
 
+// The device is created before the loader's own entry point runs on some start-ups, so the import is
+// replaced from DllMain, where only the executable's import table is touched.
+[[nodiscard]] bool install_display_mode_early();
+
 // Called with the IDirectInput8 the engine receives, so a windowed mode can stop the keyboard being held
 // exclusively and stop DISCL_NOWINKEY blocking the Windows key.
 void load_display_mode(const std::filesystem::path& root);

@@ -100,7 +100,6 @@ int __cdecl read_hook(int file, void* buffer, unsigned int size)
 {
     static_cast<void>(ild::install_inventory_hooks(game_root));
     static_cast<void>(ild::install_texture_aliases(game_root));
-    static_cast<void>(ild::install_display_mode(game_root));
     const auto read = real_read(file, buffer, size);
     if (read > 0 && buffer)
         static_cast<void>(ild::repair_config_buffer(std::span(static_cast<std::byte*>(buffer), static_cast<std::size_t>(read))));
@@ -366,6 +365,7 @@ BOOL CALLBACK install_fixes(PINIT_ONCE, PVOID, PVOID*)
     const auto presets = ild::install_preset_compatibility(GetModuleHandleW(nullptr));
     record("graphics presets", presets);
     if (!presets) report_unsupported(L"The validated stock graphics presets could not be adapted.");
+    record("screen mode", ild::install_display_mode(root));
     const auto audio = ild::install_audio_metadata_fix(root);
     record("sound metadata", audio);
     if (!audio) report_unsupported(L"The validated audio metadata adapter could not be installed.");
@@ -461,6 +461,9 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID)
     if (reason == DLL_PROCESS_ATTACH)
     {
         DisableThreadLibraryCalls(instance);
+        // Only the executable's import table is rewritten here, so this is safe under the loader lock, and
+        // it is the one place guaranteed to run before the render device exists.
+        static_cast<void>(ild::install_display_mode_early());
     }
 
     return TRUE;
