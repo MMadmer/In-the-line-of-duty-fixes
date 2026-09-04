@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <atomic>
 #include <string>
+#include <utility>
 #include <string_view>
 
 namespace ild
@@ -48,7 +49,9 @@ void* keyboard_device{};
 HWND keyboard_window{};
 DWORD keyboard_flags{};
 std::atomic<int> mode{};
-HWND game_window{};
+std::atomic<HWND> game_window{};
+std::wstring state_file;
+std::atomic<long> state_lines{};
 std::atomic<bool> settings_loaded{};
 UINT back_width{};
 UINT back_height{};
@@ -66,6 +69,32 @@ bool patch_slot(void** table, std::size_t slot, void* replacement, void** previo
 
 // The device can be created before the loader has resolved anything, so the stored mode is read on first
 // use, from the executable's own location.
+// Support diagnostic: a handful of lines per launch saying which hooks fired and what was done to the
+// window. Bounded, so it can never grow into a log.
+void record_state(const char* tag, HWND window)
+{
+    const auto line = InterlockedIncrement(&reinterpret_cast<volatile long&>(state_lines));
+    if (line > 24 || state_file.empty()) return;
+    char name[64]{};
+    RECT box{};
+    if (window)
+    {
+        GetClassNameA(window, name, sizeof(name) - 1);
+        GetWindowRect(window, &box);
+    }
+    char text[256]{};
+    wsprintfA(text, "%s hwnd=%p class=%s size=%dx%d style=%08X ex=%08X\r\n", tag, window, name,
+        static_cast<int>(box.right - box.left), static_cast<int>(box.bottom - box.top),
+        window ? static_cast<unsigned>(GetWindowLongW(window, GWL_STYLE)) : 0u,
+        window ? static_cast<unsigned>(GetWindowLongW(window, GWL_EXSTYLE)) : 0u);
+    const auto file = CreateFileW(state_file.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
+        line == 1 ? CREATE_ALWAYS : OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    DWORD count{};
+    WriteFile(file, text, lstrlenA(text), &count, nullptr);
+    CloseHandle(file);
+}
+
 void ensure_settings_loaded()
 {
     if (settings_loaded.load(std::memory_order_acquire)) return;
@@ -77,6 +106,32 @@ void ensure_settings_loaded()
         return;
     }
     load_display_mode(std::filesystem::path(buffer).parent_path().parent_path());
+}
+
+BOOL CALLBACK consider_window(HWND window, LPARAM parameter)
+{
+    DWORD owner{};
+    GetWindowThreadProcessId(window, &owner);
+    if (owner != GetCurrentProcessId() || !IsWindowVisible(window) || GetParent(window)) return TRUE;
+    // The engine's own class, so the splash and the message dialogs are never mistaken for the game.
+    char name[32]{};
+    GetClassNameA(window, name, sizeof(name) - 1);
+    if (std::string_view(name).substr(0, 6) != "_XRAY_") return TRUE;
+    RECT rectangle{};
+    if (!GetWindowRect(window, &rectangle)) return TRUE;
+    const auto area = static_cast<long long>(rectangle.right - rectangle.left) *
+        (rectangle.bottom - rectangle.top);
+    auto& best = *reinterpret_cast<std::pair<HWND, long long>*>(parameter);
+    if (area > best.second) best = {window, area};
+    return TRUE;
+}
+
+// The engine's main window: the largest visible top-level window this process owns.
+[[nodiscard]] HWND find_game_window()
+{
+    std::pair<HWND, long long> best{nullptr, 0};
+    EnumWindows(&consider_window, reinterpret_cast<LPARAM>(&best));
+    return best.first;
 }
 
 void apply_window_style(HWND window, UINT width, UINT height)
@@ -132,8 +187,18 @@ void apply_window_style(HWND window, UINT width, UINT height)
 void maintain_window_state()
 {
     const auto current = mode.load(std::memory_order_acquire);
+    const auto window = game_window.load(std::memory_order_acquire);
     // Re-applying the style would undo a minimise or a maximise, so those are left to the player.
-    if (!game_window || current == 0 || IsIconic(game_window) || IsZoomed(game_window)) return;
+    if (!window || current == 0 || IsIconic(window) || IsZoomed(window)) return;
+    // Without a device of our own the backbuffer size is unknown, so the window's own client area - which
+    // is what the engine sized it to - stands in for it, taken once before anything is moved.
+    if (!back_width || !back_height)
+    {
+        RECT client{};
+        if (!GetClientRect(window, &client) || client.right <= 0 || client.bottom <= 0) return;
+        back_width = static_cast<UINT>(client.right);
+        back_height = static_cast<UINT>(client.bottom);
+    }
     const auto style = static_cast<LONG_PTR>(current == 2
         ? WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPSIBLINGS
         : WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS);
@@ -141,26 +206,58 @@ void maintain_window_state()
         ? WS_EX_APPWINDOW | WS_EX_WINDOWEDGE
         : WS_EX_APPWINDOW);
     // The topmost bit is owned by the z-order rule below, so it is not part of the style comparison.
-    const auto actual = GetWindowLongPtrW(game_window, GWL_EXSTYLE) & ~static_cast<LONG_PTR>(WS_EX_TOPMOST);
-    if (GetWindowLongPtrW(game_window, GWL_STYLE) != style || actual != extended)
-        apply_window_style(game_window, back_width, back_height);
+    const auto actual = GetWindowLongPtrW(window, GWL_EXSTYLE) & ~static_cast<LONG_PTR>(WS_EX_TOPMOST);
+    if (GetWindowLongPtrW(window, GWL_STYLE) != style || actual != extended)
+    {
+        record_state("before", window);
+        apply_window_style(window, back_width, back_height);
+        record_state("after", window);
+    }
     if (current != 1) return;
 
     // The taskbar is a topmost window, so a borderless window that is merely non-topmost is drawn under it.
     // It goes topmost while it holds focus and drops back the moment focus leaves, which is what keeps
     // Alt+Tab showing the other program instead of a frozen frame.
     const auto foreground = GetForegroundWindow();
-    const auto topmost = (GetWindowLongPtrW(game_window, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
-    if (foreground == game_window)
+    const auto topmost = (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+    if (foreground == window)
     {
         if (!topmost)
-            SetWindowPos(game_window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            SetWindowPos(window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         return;
     }
     if (topmost)
-        SetWindowPos(game_window, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-    if (foreground && window_is_above(game_window, foreground))
-        SetWindowPos(game_window, foreground, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        SetWindowPos(window, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    if (foreground && window_is_above(window, foreground))
+        SetWindowPos(window, foreground, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
+DWORD WINAPI maintenance_loop(LPVOID)
+{
+    // The engine restyles its window well after the device is up, and on some builds it presents through a
+    // swap chain rather than the device, so the window state is held here instead of from a render hook.
+    for (;;)
+    {
+        Sleep(150);
+        if (mode.load(std::memory_order_acquire) == 0) continue;
+        auto window = game_window.load(std::memory_order_acquire);
+        if (!window || !IsWindow(window))
+        {
+            window = find_game_window();
+            if (!window) continue;
+            game_window.store(window, std::memory_order_release);
+            record_state("found", window);
+        }
+        maintain_window_state();
+    }
+}
+
+void start_maintenance()
+{
+    static std::atomic<bool> started{};
+    if (started.exchange(true, std::memory_order_acq_rel)) return;
+    const auto thread = CreateThread(nullptr, 0, &maintenance_loop, nullptr, 0, nullptr);
+    if (thread) CloseHandle(thread);
 }
 
 void configure(D3DPRESENT_PARAMETERS* parameters)
@@ -182,7 +279,8 @@ void configure(D3DPRESENT_PARAMETERS* parameters)
 HRESULT STDMETHODCALLTYPE hooked_present(IDirect3DDevice9* device, const RECT* source,
     const RECT* destination, HWND window, const RGNDATA* dirty)
 {
-    maintain_window_state();
+    static std::atomic<bool> noted{};
+    if (!noted.exchange(true, std::memory_order_acq_rel)) record_state("present", window);
     return real_present(device, source, destination, window, dirty);
 }
 
@@ -194,7 +292,7 @@ HRESULT STDMETHODCALLTYPE hooked_reset(IDirect3DDevice9* device, D3DPRESENT_PARA
     {
         back_width = parameters->BackBufferWidth;
         back_height = parameters->BackBufferHeight;
-        apply_window_style(game_window, back_width, back_height);
+        apply_window_style(game_window.load(std::memory_order_acquire), back_width, back_height);
     }
     return result;
 }
@@ -205,7 +303,9 @@ HRESULT STDMETHODCALLTYPE hooked_create_device(IDirect3D9* self, UINT adapter, D
     configure(parameters);
     const auto result = real_create_device(self, adapter, type, focus, flags, parameters, device);
     if (FAILED(result) || !device || !*device) return result;
-    game_window = parameters && parameters->hDeviceWindow ? parameters->hDeviceWindow : focus;
+    const auto window = parameters && parameters->hDeviceWindow ? parameters->hDeviceWindow : focus;
+    game_window.store(window, std::memory_order_release);
+    record_state("device", window);
     const auto table = *reinterpret_cast<void***>(*device);
     if (!real_reset)
         static_cast<void>(patch_slot(table, reset_slot, reinterpret_cast<void*>(&hooked_reset),
@@ -225,6 +325,7 @@ HRESULT STDMETHODCALLTYPE hooked_create_device(IDirect3D9* self, UINT adapter, D
 IDirect3D9* WINAPI hooked_create(UINT version)
 {
     const auto instance = real_create(version);
+    record_state("create9", nullptr);
     if (instance && !real_create_device)
     {
         const auto table = *reinterpret_cast<void***>(instance);
@@ -283,6 +384,8 @@ HRESULT STDMETHODCALLTYPE hooked_input_create_device(void* self, const GUID& id,
 void load_display_mode(const std::filesystem::path& root)
 {
     settings_loaded.store(true, std::memory_order_release);
+    state_file = (root / ".ild-fixes" / "runtime" / "window-state.txt").wstring();
+    start_maintenance();
     // The keyboard is acquired long before the renderer exists, so the mode has to be known by then.
     static bool loaded{};
     if (loaded) return;

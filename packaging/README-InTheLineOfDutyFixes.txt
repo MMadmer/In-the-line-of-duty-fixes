@@ -62,7 +62,9 @@ leaves the game's own settings exactly as they were.
 If something did not take effect:
 Every launch writes .ild-fixes\runtime\loader-report.txt. It lists each file the
 pack checks with its expected and actual SHA-256, and whether each repair applied.
-Send that file when reporting a problem. If the file is absent, the loader never
+Send that file when reporting a problem. A windowed screen mode also leaves
+.ild-fixesuntime\window-state.txt: a few lines naming the window the pack
+found and the style it applied. If the loader report is absent, the loader never
 ran: check that bin\dinput8.dll is present and that nothing else replaced it.
 
 Removal:
