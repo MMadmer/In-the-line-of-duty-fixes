@@ -11,6 +11,11 @@ namespace ild
 // with the engine's own parameters, so Alt+Tab and the Windows key stay captured. The presentation
 // parameters are set at device creation and at every reset instead, which is what actually decides it.
 [[nodiscard]] bool install_display_mode(const std::filesystem::path& root);
+
+// Called with the IDirectInput8 the engine receives, so a windowed mode can stop the keyboard being held
+// exclusively and stop DISCL_NOWINKEY blocking the Windows key.
+void load_display_mode(const std::filesystem::path& root);
+void hook_direct_input(void* instance);
 void set_display_mode(int mode);
 [[nodiscard]] int display_mode();
 }

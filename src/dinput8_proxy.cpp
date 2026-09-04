@@ -342,6 +342,7 @@ BOOL CALLBACK install_fixes(PINIT_ONCE, PVOID, PVOID*)
     const auto bin = engine.parent_path();
     const auto root = bin.parent_path();
     game_root = root;
+    ild::load_display_mode(root);
     const auto core = bin / L"xrCore.dll";
     target_script = root / L"gamedata" / L"scripts" / L"_g.script";
     target_actor = root / L"gamedata" / L"scripts" / L"bind_stalker.script";
@@ -449,7 +450,10 @@ extern "C" HRESULT WINAPI DirectInput8Create(
     }
 
     InitOnceExecuteOnce(&install_once, install_fixes, nullptr, nullptr);
-    return real(instance, version, interface_id, output, outer);
+    const auto result = real(instance, version, interface_id, output, outer);
+    // Both the ANSI and Unicode interfaces share this layout, so the slot patch works for either.
+    if (SUCCEEDED(result) && output) ild::hook_direct_input(*output);
+    return result;
 }
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID)
