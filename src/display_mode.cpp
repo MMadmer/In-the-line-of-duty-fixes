@@ -120,12 +120,26 @@ void maintain_window_state()
     const auto extended = static_cast<LONG_PTR>(current == 2
         ? WS_EX_APPWINDOW | WS_EX_WINDOWEDGE
         : WS_EX_APPWINDOW);
-    if (GetWindowLongPtrW(game_window, GWL_STYLE) != style ||
-        GetWindowLongPtrW(game_window, GWL_EXSTYLE) != extended)
+    // The topmost bit is owned by the z-order rule below, so it is not part of the style comparison.
+    const auto actual = GetWindowLongPtrW(game_window, GWL_EXSTYLE) & ~static_cast<LONG_PTR>(WS_EX_TOPMOST);
+    if (GetWindowLongPtrW(game_window, GWL_STYLE) != style || actual != extended)
         apply_window_style(game_window, back_width, back_height);
+    if (current != 1) return;
 
+    // The taskbar is a topmost window, so a borderless window that is merely non-topmost is drawn under it.
+    // It goes topmost while it holds focus and drops back the moment focus leaves, which is what keeps
+    // Alt+Tab showing the other program instead of a frozen frame.
     const auto foreground = GetForegroundWindow();
-    if (current == 1 && foreground && foreground != game_window && window_is_above(game_window, foreground))
+    const auto topmost = (GetWindowLongPtrW(game_window, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+    if (foreground == game_window)
+    {
+        if (!topmost)
+            SetWindowPos(game_window, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        return;
+    }
+    if (topmost)
+        SetWindowPos(game_window, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    if (foreground && window_is_above(game_window, foreground))
         SetWindowPos(game_window, foreground, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 }
 
