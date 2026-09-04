@@ -2,14 +2,15 @@
 
 ## Тема
 
-Фикс-пак теперь работает на любых бинарниках движка
+Свои настройки экрана и радио, и NPC, которые больше не застревают
 
 ## Изменения
 
-* Раньше одного несовпавшего файла движка хватало, чтобы отключить фикс-пак целиком. Теперь каждая правка отвечает только за себя: исправления скриптов, конфигов, диалогов и все квестовые правки работают на любой сборке 1.0006, а нативные мелочи, которые пишут по фиксированным адресам, пропускают только себя.
-* Из-за этого у части игроков не пропадал поток красных ошибок в консоли и оставалось устаревшее предупреждение у ножей — теперь это чинится и у них.
-* Каждый запуск пишет `.ild-fixes\runtime\loader-report.txt`: какие файлы проверены, их ожидаемые и настоящие хеши и что именно применилось. Этот файл можно приложить к сообщению о проблеме.
-* Добавлены две служебные консольные команды, по умолчанию выключенные: `ild_update diag_spam_on` печатает строку в лог примерно дважды в секунду, чтобы проверить набор текста в консоли под нагрузкой, и `ild_update diag_knife` выдаёт нож.
+* NPC, застрявшие на квестовой задаче, теперь распознаются и возвращаются к делу сами. Тот, кто прошёл пару шагов и встал в проходе, или дошёл до точки, уселся и больше не двигается, раньше стоял так до перезагрузки сохранения — теперь этого ждать не нужно. Задания, которые ждут сигнала от игрока или инфопоршня, не затрагиваются.
+* Во вкладке «Звук» появилась громкость радио: она приглушает только мировые радио и музыку, применяется сразу, а на нуле даёт полную тишину.
+* Во вкладке «Видео» вместо галочки полноэкранного режима теперь выбор режима экрана: полноэкранный, полноэкранный в окне и оконный. В оконных режимах игра больше не держит экран монопольно — работают Alt+Tab, клавиша Windows и скриншоты, а у оконного есть обычная рамка окна.
+* Раньше одного несовпавшего файла движка хватало, чтобы отключить фикс-пак целиком: у части игроков из-за этого не пропадал поток красных ошибок в консоли и оставалось устаревшее предупреждение у ножей. Теперь каждая правка отвечает только за себя и работает на любой сборке 1.0006.
+* Каждый запуск пишет `.ild-fixes\runtime\loader-report.txt` — что проверено и что применилось, а вмешательства в застрявших NPC попадают в `.ild-fixes\runtime\npc-watchdog.txt`. Эти файлы можно приложить к сообщению о проблеме.
 
 ## Установка
 
@@ -21,14 +22,15 @@
 
 ## Theme
 
-The fix pack now works on any build of the engine
+Screen and radio settings of its own, and NPCs that no longer get stuck
 
 ## Changes
 
-* One unfamiliar engine file used to disable the whole fix pack. Each repair now stands on its own: script, config, dialog and quest repairs work on any 1.0006 build, and the native tweaks that write to fixed addresses skip only themselves.
-* That is why some players still saw the flood of red console errors and the obsolete knife warning; both are now repaired for them too.
-* Every launch writes `.ild-fixes\runtime\loader-report.txt`: which files were checked, their expected and actual hashes, and what applied. Attach it when reporting a problem.
-* Two support console commands were added, both off by default: `ild_update diag_spam_on` prints a log line about twice a second so console typing can be tested under load, and `ild_update diag_knife` gives a knife.
+* NPCs stalled on a quest task are now detected and put back to work on their own. The one that takes a few steps and stops in a doorway, or reaches its point, sits down and never moves again, used to stay that way until the save was reloaded. Sections that are meant to wait for the player or for an info portion are left alone.
+* The Sound tab has a radio volume: it scales world radio and music only, applies as soon as it is picked, and gives complete silence at zero.
+* The Video tab now offers a screen mode instead of the fullscreen checkbox: fullscreen, borderless window and window. A windowed mode no longer holds the display exclusively — Alt+Tab, the Windows key and screenshots all work, and the windowed mode has an ordinary window frame.
+* One unfamiliar engine file used to disable the whole fix pack, which is why some players still saw the flood of red console errors and the obsolete knife warning. Each repair now stands on its own and works on any 1.0006 build.
+* Every launch writes `.ild-fixes\runtime\loader-report.txt` — what was checked and what applied — and any intervention on a stalled NPC goes to `.ild-fixes\runtime\npc-watchdog.txt`. Attach them when reporting a problem.
 
 ## Installation
 
