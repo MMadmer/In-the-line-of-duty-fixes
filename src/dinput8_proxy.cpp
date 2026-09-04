@@ -9,6 +9,7 @@
 #include "config_repairs.h"
 #include "texture_aliases.h"
 #include "script_patch.h"
+#include "display_mode.h"
 #include "sha256.h"
 
 #include <Windows.h>
@@ -99,6 +100,7 @@ int __cdecl read_hook(int file, void* buffer, unsigned int size)
 {
     static_cast<void>(ild::install_inventory_hooks(game_root));
     static_cast<void>(ild::install_texture_aliases(game_root));
+    static_cast<void>(ild::install_display_mode(game_root));
     const auto read = real_read(file, buffer, size);
     if (read > 0 && buffer)
         static_cast<void>(ild::repair_config_buffer(std::span(static_cast<std::byte*>(buffer), static_cast<std::size_t>(read))));

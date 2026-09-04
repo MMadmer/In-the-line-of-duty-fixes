@@ -2,6 +2,7 @@
 #include "command_line.h"
 #include "inventory_hooks.h"
 #include "texture_aliases.h"
+#include "display_mode.h"
 
 #include <algorithm>
 #include <array>
@@ -44,56 +45,6 @@ private:
     bool empty_arguments_{true};
 };
 static_assert(sizeof(ConsoleCommand) == 12);
-
-// Borderless is not an engine mode: the game runs windowed and the window is restyled to cover the monitor.
-// Nothing here depends on the executable's build, so it works wherever the fix pack loads.
-struct WindowSearch { DWORD process; HWND window; };
-
-BOOL CALLBACK pick_main_window(HWND window, LPARAM parameter)
-{
-    auto& search = *reinterpret_cast<WindowSearch*>(parameter);
-    DWORD owner{};
-    GetWindowThreadProcessId(window, &owner);
-    if (owner != search.process || !IsWindowVisible(window) || GetWindow(window, GW_OWNER)) return TRUE;
-    search.window = window;
-    return FALSE;
-}
-
-[[nodiscard]] HWND main_window()
-{
-    WindowSearch search{GetCurrentProcessId(), nullptr};
-    EnumWindows(pick_main_window, reinterpret_cast<LPARAM>(&search));
-    return search.window;
-}
-
-void apply_borderless(bool enabled)
-{
-    static LONG saved_style{};
-    static RECT saved_rect{};
-    const auto window = main_window();
-    if (!window) return;
-    if (enabled)
-    {
-        if (!saved_style)
-        {
-            saved_style = GetWindowLongW(window, GWL_STYLE);
-            GetWindowRect(window, &saved_rect);
-        }
-        MONITORINFO monitor{sizeof(monitor)};
-        if (!GetMonitorInfoW(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST), &monitor)) return;
-        SetWindowLongW(window, GWL_STYLE, WS_POPUP | WS_VISIBLE);
-        SetWindowPos(window, HWND_TOP, monitor.rcMonitor.left, monitor.rcMonitor.top,
-            monitor.rcMonitor.right - monitor.rcMonitor.left, monitor.rcMonitor.bottom - monitor.rcMonitor.top,
-            SWP_FRAMECHANGED | SWP_SHOWWINDOW);
-    }
-    else if (saved_style)
-    {
-        SetWindowLongW(window, GWL_STYLE, saved_style);
-        SetWindowPos(window, HWND_TOP, saved_rect.left, saved_rect.top, saved_rect.right - saved_rect.left,
-            saved_rect.bottom - saved_rect.top, SWP_FRAMECHANGED | SWP_SHOWWINDOW);
-        saved_style = 0;
-    }
-}
 
 std::string unescape(std::string_view value)
 {
@@ -176,8 +127,14 @@ public:
             }
             return;
         }
-        if (action == "borderless_on") { apply_borderless(true); return; }
-        if (action == "borderless_off") { apply_borderless(false); return; }
+        // The screen mode is decided by the device's presentation parameters, so it only needs recording
+        // here; the engine's own vid_restart then rebuilds the device through the hook.
+        if (action.starts_with("display_mode "))
+        {
+            const auto digit = action[13];
+            if (digit >= '0' && digit <= '2') set_display_mode(digit - '0');
+            return;
+        }
         constexpr std::array allowed{"download", "apply", "dismiss", "dismiss_major", "disable_major", "open_major"};
         if (std::find(allowed.begin(), allowed.end(), action) != allowed.end())
         {

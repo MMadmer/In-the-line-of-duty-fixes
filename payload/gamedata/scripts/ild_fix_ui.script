@@ -77,20 +77,12 @@ end
 
 function apply_video_mode(mode)
     local console = get_console()
-    if mode == 0 then
-        console:execute("ild_update borderless_off")
-        console:execute("rs_fullscreen on")
-        console:execute("vid_restart")
-    elseif mode == 1 then
-        console:execute("rs_fullscreen off")
-        console:execute("vid_restart")
-        -- The restart rebuilds the window, so the borderless style has to go on after it.
-        console:execute("ild_update borderless_on")
-    else
-        console:execute("ild_update borderless_off")
-        console:execute("rs_fullscreen off")
-        console:execute("vid_restart")
-    end
+    -- The mode is applied through the device's presentation parameters, so it is recorded first and the
+    -- engine's own restart then rebuilds the device with it. rs_fullscreen is kept in step so the stock
+    -- checkbox shows the truth.
+    console:execute("ild_update display_mode " .. mode)
+    console:execute(mode == 0 and "rs_fullscreen on" or "rs_fullscreen off")
+    console:execute("vid_restart")
 end
 
 -- Items are listed in their natural order. SetCurrentID is verified by reading the text back, and only if
@@ -215,10 +207,10 @@ function install_options()
     pcall(install_options_dialog)
     -- Only the window style is restored here. A device reset during menu initialisation hangs the game, so
     -- rs_fullscreen is left to the engine, which persists it itself, and is only re-asserted from Update.
+    -- The device is already up by now, so the mode is only recorded; it takes hold at the next restart,
+    -- and the loader has applied it at creation time from the stored setting anyway.
     pcall(function()
-        if (tonumber(setting("video_mode")) or 0) == 1 then
-            get_console():execute("ild_update borderless_on")
-        end
+        get_console():execute("ild_update display_mode " .. (tonumber(setting("video_mode")) or 0))
     end)
 end
 

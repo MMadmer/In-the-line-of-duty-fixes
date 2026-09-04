@@ -34,6 +34,7 @@ add_library(dinput8 SHARED
     src/console_hooks.cpp
     src/x86_detour.cpp
     src/dinput8_proxy.cpp
+    src/display_mode.cpp
     src/iat_hook.cpp
     src/iat_hook.h
     src/sha256.cpp
@@ -52,7 +53,7 @@ add_library(dinput8_console_qa SHARED EXCLUDE_FROM_ALL
     src/inventory_hooks.cpp
     tests/runtime_capture.cpp
     src/update_bridge.cpp
-    src/dinput8_proxy.cpp src/console_hooks.cpp src/x86_detour.cpp src/iat_hook.cpp src/sha256.cpp
+    src/dinput8_proxy.cpp src/display_mode.cpp src/console_hooks.cpp src/x86_detour.cpp src/iat_hook.cpp src/sha256.cpp
     src/dinput8_proxy.def
 )
 target_compile_definitions(dinput8_console_qa PRIVATE ILD_CONSOLE_QA=1 ILD_VERSION="${PROJECT_VERSION}")
