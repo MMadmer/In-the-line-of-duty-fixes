@@ -242,6 +242,57 @@ local function install_dialog_repairs()
     end
 end
 
+local function logic_config(object)
+    local ini = object and object:spawn_ini()
+    if not ini or not ini:section_exist("logic") or not ini:line_exist("logic", "cfg") then return nil end
+    return string.lower(ini:r_string("logic", "cfg"))
+end
+
+-- The mod seals some of its treasure boxes with its own "never" idiom: on_use waits for an info portion that
+-- exists only to kill the player, so nobody can ever hold it. Sidorovich sells one of those boxes, and a direct
+-- grant fills it and marks it on the map, but the box keeps asking for a key that does not exist. Once its
+-- treasure has been granted, a sealed box gets what the vanilla treasure box has: the native search.
+local sealed_box_config = [[scripts\tainiki\esc_orig_tainik_zakrut.ltx]]
+local search_tip = "st_search_treasure"
+
+local function treasure_granted(story_id)
+    if not story_id or story_id < 0 then return false end
+    local manager = treasure_manager.get_treasure_manager()
+    local key = manager.treasure_by_target and manager.treasure_by_target[story_id]
+    local entry = key and manager.treasure_info[key]
+    return entry ~= nil and entry.done == true
+end
+
+local function unseal_box(object, state)
+    state.nonscript_usable = true
+    state.tips = search_tip
+    object:set_nonscript_usable(true)
+    object:set_tip_text(search_tip)
+end
+
+-- A box that is already online was sealed when its scheme started; open it now rather than on the next load.
+local function unseal_online_box(story_id)
+    local server = alife():story_object(story_id)
+    local object = server and level.object_by_id(server.id)
+    local storage = object and db.storage[object:id()]
+    local state = storage and storage.ph_idle
+    if state and logic_config(object) == sealed_box_config then unseal_box(object, state) end
+end
+
+local function install_stash_repairs()
+    local original_scheme = ph_idle.set_scheme
+    ph_idle.set_scheme = function(npc, ini, scheme, section, gulag_name)
+        local result = original_scheme(npc, ini, scheme, section, gulag_name)
+        if logic_config(npc) == sealed_box_config then
+            local server = alife():object(npc:id())
+            local storage = db.storage[npc:id()]
+            local state = storage and storage[scheme]
+            if server and state and treasure_granted(server.m_story_id) then unseal_box(npc, state) end
+        end
+        return result
+    end
+end
+
 local function install_world_repairs()
     -- Fvector is exported with a default constructor only; vector(99) raises before the item is spawned,
     -- which aborts the remaining nineteen decoration actions of the Agroprom-underground info portion.
@@ -263,7 +314,9 @@ local function install_world_repairs()
     treasure_manager.CTreasure.give_treasure = function(self, key)
         local entry = self.treasure_info[key]
         if not entry or entry.done then return end
-        return original_give(self, key)
+        local result = original_give(self, key)
+        if entry.done then unseal_online_box(entry.target) end
+        return result
     end
 
     -- "target" is read with utils.cfg_get_number under a string default, so a section without it yields ""
@@ -510,12 +563,14 @@ local sync_grace = 60000
 local rescue_reach = 2
 local move_epsilon = 0.5
 
-local function watch_report(npc, section, action)
+local function report_line(text)
     -- Rare by construction, and the only trace an intervention leaves. The console verb writes it beside
     -- the loader report; a build without the native bridge simply has nowhere to write it.
-    pcall(function()
-        get_console():execute("ild_update watchdog " .. action .. " " .. npc:name() .. " " .. section)
-    end)
+    pcall(function() get_console():execute("ild_update watchdog " .. text) end)
+end
+
+local function watch_report(npc, section, action)
+    report_line(action .. " " .. npc:name() .. " " .. section)
 end
 
 local function watch_distance(record, position)
@@ -693,6 +748,182 @@ local function install_ai_watchdog()
     end
 end
 
+-- The mod's burglar skill is checked but never granted: its two journals post their "+1" and nothing declares,
+-- let alone hands out, the level-1 portion the locks wait for. Level 1 therefore means both journals, which is
+-- exactly how the mod's other skills reach their first level.
+local burglar_journals = "{+esc_jyrnal2_s_navuk +val_jyrnal_vzlom2}"
+local tikhon_door_config = [[scripts\kordon\dveri_tixona_podsobka.ltx]]
+local tikhon_door_condition = "{+navuk_vzlom_lvl1}ph_door@locked"
+local autopark_safe_config = [[scripts\barr\avtpark_seif.ltx]]
+
+local function burglar_condition(npc, section, field, source)
+    return field == "on_info" and section == "ph_door@locked0" and type(source) == "string" and
+        string.gsub(source, "%s+", "") == tikhon_door_condition and logic_config(npc) == tikhon_door_config
+end
+
+local function install_burglar_repairs()
+    local original_door = ph_door.set_scheme
+    ph_door.set_scheme = function(npc, ini, scheme, section, gulag_name)
+        local result = original_door(npc, ini, scheme, section, gulag_name)
+        local storage = db.storage[npc:id()]
+        local state = storage and storage[scheme]
+        -- The autopark safe's only way out of its locked state is commented out in the mod, so its "needs the
+        -- burglar skill" tip was a promise nothing kept. This is that line, gated on the skill it names.
+        if state and section == "ph_door@locked" and not state.on_use and
+            logic_config(npc) == autopark_safe_config then
+            state.on_use = {name = "on_use", condlist = xr_logic.parse_condlist(npc, section, "on_use",
+                burglar_journals .. " %+bar_avtoparka_seif_otkrulsa% ph_door@open")}
+        end
+        return result
+    end
+end
+
+-- A scripted mob's death hands out the info portions of its [death] section through the engine's death
+-- callback, and nothing else ever will. A mob that dies out of sight - killed offline, or lost through the
+-- level geometry from a spawn point it shared with four others - never runs that callback, and the quest
+-- waiting for those portions waits for good. Such mobs are tracked from the moment they spawn, and a death the
+-- callback missed still delivers exactly what the section promised. A removal by script is not a death and is
+-- told apart from one below.
+local death_watch = {}
+local death_checked = 0
+local death_period = 3000
+
+local function death_info_fields(ini, section)
+    local fields = {}
+    local field, index = "on_info", 1
+    while ini:line_exist(section, field) do
+        fields[#fields + 1] = ini:r_string(section, field)
+        index = index + 1
+        field = "on_info" .. index
+    end
+    return fields
+end
+
+-- Only clauses without a condition. A portion given only for the actor's own kill, or under any other check,
+-- is that section's decision and is left to it.
+local function unconditional_portions(line, portions)
+    for clause in string.gmatch(line, "%s*([^,]+)%s*") do
+        local _, _, check = string.find(clause, "{(.-)}")
+        if not check or not string.find(check, "%S") then
+            local _, _, set = string.find(clause, "%%(.-)%%")
+            for portion in string.gmatch(set or "", "%+([%w_]+)") do portions[#portions + 1] = portion end
+        end
+    end
+end
+
+local function death_portions(storage)
+    local ini, section = storage and storage.ini, storage and storage.section_logic
+    if not ini or not section or not ini:section_exist(section) or not ini:line_exist(section, "on_death") then
+        return nil
+    end
+    local death_section = ini:r_string(section, "on_death")
+    if not ini:section_exist(death_section) then return nil end
+    local portions = {}
+    for _, line in ipairs(death_info_fields(ini, death_section)) do unconditional_portions(line, portions) end
+    return #portions > 0 and portions or nil
+end
+
+local function watch_death(binder)
+    local portions = death_portions(binder.st)
+    if not portions then return end
+    for _, portion in ipairs(portions) do
+        if not has_alife_info(portion) then
+            death_watch[binder.object:id()] = {portions = portions, name = binder.object:name()}
+            return
+        end
+    end
+end
+
+-- A release ordered by script unregisters the server object before the client copy is destroyed; an offline
+-- switch keeps it. That is the difference between "deleted" and "went out of sight".
+local function forget_scripted_release(id)
+    if death_watch[id] and not alife():object(id) then death_watch[id] = nil end
+end
+
+local function deliver_death(id, record)
+    death_watch[id] = nil
+    for _, portion in ipairs(record.portions) do
+        if not has_alife_info(portion) then
+            db.actor:give_info_portion(portion)
+            report_line("death " .. record.name .. " " .. portion)
+        end
+    end
+end
+
+local function check_death_watch(now)
+    if now - death_checked < death_period then return end
+    death_checked = now
+    local simulator = alife()
+    if not simulator or not db.actor then return end
+    for id, record in pairs(death_watch) do
+        local server = simulator:object(id)
+        local dead = server == nil
+        if server then
+            local known, alive = pcall(server.alive, server)
+            dead = known and alive == false
+        end
+        if dead then deliver_death(id, record) end
+    end
+end
+
+-- The mod removes scenery and NPCs by script all over the place. A watched object that disappears while one of
+-- those removal functions runs was deleted, not killed.
+local function guard_scripted_release(module, name)
+    local original = module and module[name]
+    if type(original) ~= "function" then return end
+    module[name] = function(...)
+        local simulator = alife()
+        local present = {}
+        if simulator then for id in pairs(death_watch) do present[id] = simulator:object(id) ~= nil end end
+        local results = {original(...)}
+        if simulator then
+            for id, was in pairs(present) do
+                if was and not simulator:object(id) then death_watch[id] = nil end
+            end
+        end
+        return unpack(results)
+    end
+end
+
+local function install_death_repairs()
+    for _, binder in ipairs({bind_monster.generic_object_binder, xr_motivator.motivator_binder}) do
+        local original_spawn = binder.net_spawn
+        binder.net_spawn = function(self, ...)
+            local result = original_spawn(self, ...)
+            if result then pcall(watch_death, self) end
+            return result
+        end
+        local original_destroy = binder.net_destroy
+        binder.net_destroy = function(self, ...)
+            pcall(forget_scripted_release, self.object:id())
+            return original_destroy(self, ...)
+        end
+    end
+    for name in pairs(delete) do guard_scripted_release(delete, name) end
+    for _, name in ipairs({"remove_object", "remove_obj_id", "delme", "delme2"}) do
+        guard_scripted_release(xr_effects, name)
+    end
+    guard_scripted_release(dead_city, "exterminate_nacsamlet")
+    guard_scripted_release(ogsm_mutants, "safely_destroy_creature")
+    guard_scripted_release(ogsm_mutants.MutantManager, "update")
+end
+
+local function install_mob_death_repair()
+    local death_class = mob_death.mob_death
+    local original = death_class.death_callback
+    death_class.death_callback = function(self, victim, who)
+        if who then return original(self, victim, who) end
+        -- The unknown-killer branch writes to a local that only the known-killer branch declares, so a death
+        -- with no killer aborted before the section's own portions were handed out.
+        local storage = db.storage[victim:id()]
+        if storage then
+            storage.death = storage.death or {}
+            storage.death.killer, storage.death.killer_name = -1, nil
+        end
+        xr_logic.try_switch_to_another_section(victim, self.st, db.actor)
+    end
+end
+
 function install()
     if installed then return end
     if not new_life.new_gg_2 then new_life.new_gg_2 = moa_agro.new_gg_2 end
@@ -715,6 +946,7 @@ function install()
             npc:name() == "labx_psevdogiant" and npc:section() == "gigant_strong" then
             source = string.gsub(source, "mob_walker@6", "mob_walker@5", 1)
         end
+        if burglar_condition(npc, section, field, source) then source = burglar_journals .. " ph_door@locked" end
         return original_parse(npc, section, field, source)
     end
     local menu = ui_main_menu.main_menu
@@ -738,6 +970,10 @@ function install()
     install_text_repairs()
     install_zone_update(se_zones.se_zone_anom, cse_anomalous_zone)
     install_zone_update(se_zones.se_zone_visual, cse_zone_visual)
+    install_stash_repairs()
+    install_burglar_repairs()
+    install_death_repairs()
+    install_mob_death_repair()
 
     local binder = bind_stalker.actor_binder
     local original_load = binder.load
@@ -773,6 +1009,7 @@ function install()
         end
         -- Several zones can respawn in one simulation batch; reconcile only once here.
         if db.actor and artefacts_dirty and reconcile_artefacts() then artefacts_dirty = false end
+        pcall(check_death_watch, time_global())
     end
     installed = true
 end

@@ -56,6 +56,43 @@ int main(int argc, char** argv)
         mutants.find("f1_explode_") == std::string::npos) return 15;
     std::string once = "local insect_sound = sound_object([[anomaly\\flies]])\r\n";
     if (ild::repair_config_text(once, ConfigRepair::mutant_sounds)) return 16;
+    // The ransom dialog gains its money gate and charge; the block's own indentation pays for every byte.
+    const std::string prince_part = "<dialog id=\"esc_princ_persii_start\"><phrase id=\"1\">A</phrase>"
+        "<phrase id=\"2\">B</phrase><phrase id=\"1\">A</phrase><phrase id=\"2\">B</phrase></dialog>\r\n";
+    const std::string indent(60, ' ');
+    std::string ransom = prince_part + "<dialog id=\"esc_dengi_rebe\">\r\n<has_info>esc_tixon_atp_final</has_info>\r\n"
+        "<dont_has_info>esc_dengi_rebe</dont_has_info>\r\n" + indent + "<phrase_list>\r\n" + indent +
+        "<phrase id=\"4\">\r\n" + indent + "<text>esc_dengi_rebe_4</text> \r\n"
+        "<action>new_life.sidor_mne_keis_s_artami</action>\r\n\t<give_info>esc_dengi_rebe</give_info>   \r\n" +
+        indent + "</phrase>\r\n" + indent + "</phrase_list>\r\n </dialog>\r\n";
+    const auto ransom_size = ransom.size();
+    if (!ild::repair_config_text(ransom, ConfigRepair::prince_dialog) || ransom.size() != ransom_size ||
+        ransom.find("<dont_has_info>esc_dengi_rebe</dont_has_info>"
+            "<precondition>new_life.don_reba_denga_za_artu_esti</precondition>") == std::string::npos ||
+        ransom.find("<action>new_life.ia_otdaq_rebe_dengy_250000</action>"
+            "<action>new_life.sidor_mne_keis_s_artami</action>") == std::string::npos ||
+        ransom.find(" <text>esc_dengi_rebe_4</text> \r\n") == std::string::npos ||
+        ransom.find("\t<give_info>esc_dengi_rebe</give_info>   \r\n") == std::string::npos ||
+        ransom.find("\r\n <phrase_list>") == std::string::npos) return 17;
+    unchanged = ransom;
+    if (ild::repair_config_text(ransom, ConfigRepair::prince_dialog) || ransom != unchanged) return 18;
+    std::string cramped = prince_part + "<dialog id=\"esc_dengi_rebe\">\r\n<dont_has_info>esc_dengi_rebe</dont_has_info>\r\n"
+        "<action>new_life.sidor_mne_keis_s_artami</action>\r\n</dialog>\r\n";
+    unchanged = cramped;
+    if (ild::repair_config_text(cramped, ConfigRepair::prince_dialog) || cramped != unchanged) return 19;
+    // Both objectives of the vodka task are reworded in place, in CP1251 and at their exact length.
+    const std::string old_first = "<text>\xEE\xF2\xFB\xF1\xEA\xE0\xF2\xFC 15 \xE1\xF3\xF2\xFB\xEB\xEE\xEA \xE2\xEE\xE4\xEA\xE8</text>";
+    const std::string old_second = "<text>\xCF\xF0\xE8\xED\xE5\xF1\xF2\xE8 \xE2\xEE\xE4\xEA\xF3 \xF1\xF2\xE0\xF0\xF8\xE8\xED\xE5</text>";
+    std::string vodka = "<string id=\"esc_kom_vodka_0\">\r\n        " + old_first + "\r\n    </string>\r\n"
+        "    <string id=\"esc_kom_vodka_1\">\r\n        " + old_second + "\r\n    </string>\r\n";
+    const auto vodka_size = vodka.size();
+    if (!ild::repair_config_text(vodka, ConfigRepair::vodka_task) || vodka.size() != vodka_size ||
+        vodka.find("<text>\xD1\xEA\xEE\xEF\xE8\xF2\xFC 20 000 \xED\xE0 \xEF\xF0\xEE\xEF\xF3\xF1\xEA</text>") == std::string::npos ||
+        vodka.find("<text>\xCE\xF2\xE4\xE0\xF2\xFC \xE4\xE5\xED\xFC\xE3\xE8 \xF1\xE5\xF0\xE6\xE0\xED\xF2\xF3.</text>") == std::string::npos ||
+        vodka.find("15 ") != std::string::npos) return 20;
+    std::string twice = old_first + old_first + old_second;
+    unchanged = twice;
+    if (ild::repair_config_text(twice, ConfigRepair::vodka_task) || twice != unchanged) return 21;
 
     if (argc == 3)
     {

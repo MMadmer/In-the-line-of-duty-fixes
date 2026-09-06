@@ -29,7 +29,9 @@ constexpr std::array sources{
     ConfigRepairSource{L"gamedata/config/gameplay/dialogs_bar.xml", 344431,
         "A1A1BCDAA2060B1B1223B8DE6BB780F56C9D985F88B16C61696339E645E2BDD6", ConfigRepair::skat_upgrade},
     ConfigRepairSource{L"gamedata/scripts/ogsm_mutants.script", 40094,
-        "F00377127ACB3AA6EE474CA51F6FC59139BB71AD74B50968600FC51A6F24A2A3", ConfigRepair::mutant_sounds}
+        "F00377127ACB3AA6EE474CA51F6FC59139BB71AD74B50968600FC51A6F24A2A3", ConfigRepair::mutant_sounds},
+    ConfigRepairSource{L"gamedata/config/text/rus/string_table_tasks_escape.xml", 10767,
+        "09B37C8A18C3183C5B2B87583BBA804162824B5AD65DF01660E78F4DE3F77810", ConfigRepair::vodka_task}
 };
 
 // Replace a unique expression with an equal-length one, padding the remainder with spaces.
@@ -76,6 +78,60 @@ bool remove_absent_action(std::string& text, std::string_view dialog, std::strin
         ++count;
     }
     return count == expected;
+}
+
+// Pay for inserted bytes with the block's own indentation. Whitespace between elements carries no meaning in
+// this XML, so only the leading blanks of lines that start an element are shortened; one blank stays so
+// neighbouring lines never fuse, and a line that carries text is never touched.
+bool borrow_indentation(std::string& contents, std::size_t excess)
+{
+    std::string rebuilt;
+    rebuilt.reserve(contents.size());
+    std::size_t line{};
+    while (line < contents.size())
+    {
+        auto end = contents.find('\n', line);
+        end = end == contents.npos ? contents.size() : end + 1;
+        auto text = std::string_view(contents).substr(line, end - line);
+        const auto blanks = text.find_first_not_of(" \t");
+        if (excess && blanks != text.npos && blanks >= 2 && text[blanks] == '<')
+        {
+            const auto removed = (std::min)(excess, blanks - 1);
+            text.remove_prefix(removed);
+            excess -= removed;
+        }
+        rebuilt.append(text);
+        line = end;
+    }
+    if (excess) return false;
+    contents = std::move(rebuilt);
+    return true;
+}
+
+// The ransom dialog hands over the artefact case without the 250 000 roubles that its own lines, its task and
+// the mod's check and charge functions all describe; those two functions are simply never referenced. The
+// gate goes on the dialog, the charge on the phrase that hands the case over, both at the file's exact size.
+bool add_ransom_check(std::string& text)
+{
+    // A source without the dialog has nothing to gate; only a dialog that is present and unpatched is changed.
+    const auto owner = block(text, "dialog", "esc_dengi_rebe");
+    if (!owner) return true;
+    auto contents = text.substr(owner->begin, owner->end - owner->begin);
+    const auto size = contents.size();
+    constexpr std::string_view gate = "<dont_has_info>esc_dengi_rebe</dont_has_info>";
+    constexpr std::string_view precondition = "<precondition>new_life.don_reba_denga_za_artu_esti</precondition>";
+    constexpr std::string_view handover = "<action>new_life.sidor_mne_keis_s_artami</action>";
+    constexpr std::string_view charge = "<action>new_life.ia_otdaq_rebe_dengy_250000</action>";
+    if (contents.find("don_reba_denga_za_artu_esti") != contents.npos) return false;
+    auto at = contents.find(gate);
+    if (at == contents.npos || contents.find(gate, at + gate.size()) != contents.npos) return false;
+    contents.insert(at + gate.size(), precondition);
+    at = contents.find(handover);
+    if (at == contents.npos || contents.find(handover, at + handover.size()) != contents.npos) return false;
+    contents.insert(at, charge);
+    if (!borrow_indentation(contents, contents.size() - size) || contents.size() != size) return false;
+    text.replace(owner->begin, size, contents);
+    return true;
 }
 }
 
@@ -128,6 +184,20 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
         const auto action = patched.find(reward, phrase);
         if (action == patched.npos || action - phrase > 200) return false;
         patched[action + reward.size() - 1] = '5';
+    }
+    else if (repair == ConfigRepair::vodka_task)
+    {
+        // The task still describes the vodka errand the quest once was; the quest itself completes on the
+        // 20 000 roubles the sergeant asks for, and nothing in the mod ever counts bottles. Both objectives
+        // are reworded to what the game actually checks, at their exact length: "save up 20 000 for the pass"
+        // and "hand the money to the sergeant", in the mod's own CP1251.
+        if (!replace_one(patched,
+                "<text>\xEE\xF2\xFB\xF1\xEA\xE0\xF2\xFC 15 \xE1\xF3\xF2\xFB\xEB\xEE\xEA \xE2\xEE\xE4\xEA\xE8</text>",
+                "<text>\xD1\xEA\xEE\xEF\xE8\xF2\xFC 20 000 \xED\xE0 \xEF\xF0\xEE\xEF\xF3\xF1\xEA</text>") ||
+            !replace_one(patched,
+                "<text>\xCF\xF0\xE8\xED\xE5\xF1\xF2\xE8 \xE2\xEE\xE4\xEA\xF3 \xF1\xF2\xE0\xF0\xF8\xE8\xED\xE5</text>",
+                "<text>\xCE\xF2\xE4\xE0\xF2\xFC \xE4\xE5\xED\xFC\xE3\xE8 \xF1\xE5\xF0\xE6\xE0\xED\xF2\xF3.</text>"))
+            return false;
     }
     else if (repair == ConfigRepair::car_text)
     {
@@ -191,7 +261,8 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
         {
             // Retain every implemented reward and state transition; remove only absent legacy action references.
             if (!remove_absent_action(patched, "esc_sidor_artu_dolgy_ne_dal", "new_life.sidor_nagrada_1_6", 2) ||
-                !remove_absent_action(patched, "esc_post_pianka", "new_life.give_albom", 1)) return false;
+                !remove_absent_action(patched, "esc_post_pianka", "new_life.give_albom", 1) ||
+                !add_ransom_check(patched)) return false;
         }
     }
     if (patched.size() != text.size()) return false;

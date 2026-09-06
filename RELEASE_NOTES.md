@@ -2,19 +2,20 @@
 
 ## Тема
 
-Свои настройки экрана и радио, и NPC, которые больше не застревают
+Квесты, которые обещали одно, а проверяли другое
 
 ## Изменения
 
-* NPC, застрявшие на квестовой задаче, теперь распознаются и возвращаются к делу сами. Тот, кто прошёл пару шагов и встал в проходе, или дошёл до точки, уселся и больше не двигается, раньше стоял так до перезагрузки сохранения — теперь этого ждать не нужно. Задания, которые ждут сигнала от игрока или инфопоршня, не затрагиваются.
-* Во вкладке «Звук» появилась громкость радио: она приглушает только мировые радио и музыку, применяется сразу, а на нуле даёт полную тишину.
-* Во вкладке «Видео» вместо галочки полноэкранного режима теперь выбор режима экрана: полноэкранный, полноэкранный в окне и оконный. В оконных режимах игра больше не держит экран монопольно — работают Alt+Tab, клавиша Windows и скриншоты, а у оконного есть обычная рамка окна.
-* Раньше одного несовпавшего файла движка хватало, чтобы отключить фикс-пак целиком: у части игроков из-за этого не пропадал поток красных ошибок в консоли и оставалось устаревшее предупреждение у ножей. Теперь каждая правка отвечает только за себя и работает на любой сборке 1.0006.
-* Каждый запуск пишет `.ild-fixes\runtime\loader-report.txt` — что проверено и что применилось, а вмешательства в застрявших NPC попадают в `.ild-fixes\runtime\npc-watchdog.txt`. Эти файлы можно приложить к сообщению о проблеме.
+* Выкуп артефактов у Дона Рэбы теперь стоит те самые 250 000: без денег разговор не начнётся, а при сделке они уходят Рэбе. Раньше ящик отдавали бесплатно, хотя задание требовало накопить четверть миллиона.
+* Задание «Алкогольные войны» говорит то, что игра проверяет на самом деле: накопить 20 000 и отдать их сержанту. Строки про 15 бутылок водки остались от старой версии квеста — бутылки никто никогда не считал.
+* Тайник, который Сидорович продаёт на Кордоне за 12 000, открывается. Раньше он навсегда просил ключ, которого в моде нет. Так же ведёт себя любой другой запечатанный ящик, наводку на который игрок получил.
+* Навык «Взломщик» заработал: оба журнала взломщика дают первый уровень, и подсобка Тихона с сейфом автопарка в Баре открываются, как обещают их подсказки. Раньше уровень не выдавался ничем, а у сейфа не было и самой возможности открыться.
+* Квестовый мутант, погибший вне поля зрения — в оффлайне или провалившись под карту, — теперь всё равно отдаёт инфопоршень своей смерти, и квест, который его ждал, продолжается. Удалённый скриптом мод объект за смерть не считается.
+* Смерть мутанта без известного убийцы — в аномалии или от падения — больше не обрывает выдачу его квестовых инфопоршней ошибкой в схеме смерти.
 
 ## Установка
 
-Распакуйте архив в корень игры. Ни один оригинальный файл игры или мода не заменяется, сохранения остаются рабочими. Аддон можно удалить в любой момент по списку `.ild-fixes/managed-files.txt`, и мод продолжит работать как прежде.
+Распакуйте архив в корень игры. Ни один оригинальный файл игры или мода не заменяется, сохранения остаются рабочими. Аддон можно удалить в любой момент по списку `.ild-fixes/managed-files.txt`, и мод продолжит работать как прежде. Если опубликован и патч-архив, то это альтернатива полному: встроенный обновлятор выбирает патч сам.
 
 ---
 
@@ -22,16 +23,17 @@
 
 ## Theme
 
-Screen and radio settings of its own, and NPCs that no longer get stuck
+Quests that promised one thing and checked another
 
 ## Changes
 
-* NPCs stalled on a quest task are now detected and put back to work on their own. The one that takes a few steps and stops in a doorway, or reaches its point, sits down and never moves again, used to stay that way until the save was reloaded. Sections that are meant to wait for the player or for an info portion are left alone.
-* The Sound tab has a radio volume: it scales world radio and music only, applies as soon as it is picked, and gives complete silence at zero.
-* The Video tab now offers a screen mode instead of the fullscreen checkbox: fullscreen, borderless window and window. A windowed mode no longer holds the display exclusively — Alt+Tab, the Windows key and screenshots all work, and the windowed mode has an ordinary window frame.
-* One unfamiliar engine file used to disable the whole fix pack, which is why some players still saw the flood of red console errors and the obsolete knife warning. Each repair now stands on its own and works on any 1.0006 build.
-* Every launch writes `.ild-fixes\runtime\loader-report.txt` — what was checked and what applied — and any intervention on a stalled NPC goes to `.ild-fixes\runtime\npc-watchdog.txt`. Attach them when reporting a problem.
+* Buying the artefacts back from Don Reba now costs the 250 000 it says: the conversation does not open without the money, and the deal takes it. The case used to be handed over for free while the task asked for a quarter of a million.
+* The "Alcohol Wars" task now says what the game actually checks: save up 20 000 and hand it to the sergeant. The lines about 15 bottles of vodka were left over from an earlier version of the quest; nothing ever counted bottles.
+* The stash Sidorovich sells on Cordon for 12 000 can be opened. It used to ask forever for a key that does not exist in the mod. Any other sealed box the player has been pointed at behaves the same way.
+* The Burglar skill works: both burglar journals grant its first level, and Tikhon's storeroom and the autopark safe in the Bar open as their tips promise. Nothing used to grant the level, and the safe had no way to open at all.
+* A quest mutant that dies out of sight - offline, or fallen through the level - still delivers the info portion of its death, and the quest waiting for it carries on. An object the mod removes by script is not counted as a death.
+* A mutant killed with no known killer - by an anomaly or a fall - no longer breaks the handout of its quest info portions with an error in its death scheme.
 
 ## Installation
 
-Extract the archive into the game root. No original game or mod file is replaced and existing saves keep working. The addon can be removed at any time using `.ild-fixes/managed-files.txt`, and the mod keeps running as before.
+Extract the archive into the game root. No original game or mod file is replaced and existing saves keep working. The addon can be removed at any time using `.ild-fixes/managed-files.txt`, and the mod keeps running as before. When a patch archive is published as well, the two are alternatives: the in-game updater picks the patch by itself.

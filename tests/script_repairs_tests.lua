@@ -37,6 +37,7 @@ local function fixture()
                 calls.object_queries = calls.object_queries + 1
                 return objects[id]
             end,
+            story_object = function(_, story) return calls.story and calls.story[story] end,
             release = function(_, object, online)
                 calls.released[#calls.released + 1] = {object = object, online = online}
                 objects[object.id] = nil
@@ -306,6 +307,44 @@ local function fixture()
         end,
         net_destroy = function() calls.destroyed = (calls.destroyed or 0) + 1 return "destroyed" end
     }}
+    -- Sealed stash boxes, the burglar skill, deaths out of sight and the killer-less death branch.
+    calls.online, calls.given_infos, calls.switches = {}, {}, {}
+    env.treasure_manager.manager = {treasure_by_target = {}, treasure_info = {}}
+    env.treasure_manager.get_treasure_manager = function() return env.treasure_manager.manager end
+    env.ph_idle = {set_scheme = function(npc, ini, scheme, section)
+        env.db.storage[npc:id()] = env.db.storage[npc:id()] or {}
+        env.db.storage[npc:id()][scheme] = {nonscript_usable = false, tips = "sealed", section = section}
+        npc:set_tip_text("sealed")
+        return "idle set"
+    end}
+    env.ph_door = {set_scheme = function(npc, ini, scheme, section)
+        env.db.storage[npc:id()] = env.db.storage[npc:id()] or {}
+        env.db.storage[npc:id()][scheme] = {section = section, on_use = npc.existing_use}
+        return "door set"
+    end}
+    env.mob_death = {mob_death = {death_callback = function(self, victim, who)
+        assert(who, "unpatched nil killer")
+        calls.mob_deaths = (calls.mob_deaths or 0) + 1
+        return "mob death"
+    end}}
+    env.xr_logic.try_switch_to_another_section = function(victim, storage, actor)
+        calls.switches[#calls.switches + 1] = {victim = victim, storage = storage, actor = actor}
+    end
+    env.level.object_by_id = function(id) return calls.online[id] end
+    env.bind_monster.generic_object_binder.net_spawn = function(self)
+        calls.monster_spawns = (calls.monster_spawns or 0) + 1
+        return self.spawn_result ~= false
+    end
+    env.bind_monster.generic_object_binder.net_destroy = function() return "destroyed" end
+    env.xr_motivator.motivator_binder.net_spawn = function(self) return self.spawn_result ~= false end
+    env.xr_motivator.motivator_binder.net_destroy = function() return "destroyed" end
+    env.delete.remove_by_script = function(id)
+        objects[id] = nil
+        return "removed"
+    end
+    env.xr_effects.remove_object = function(_, object) objects[object:id()] = nil end
+    env.dead_city = {exterminate_nacsamlet = function() end}
+    env.ogsm_mutants = {safely_destroy_creature = function() end, MutantManager = {update = function() end}}
     local module = setmetatable({}, {__index = env})
     local chunk = assert(loadfile(source_path))
     setfenv(chunk, module)
@@ -321,7 +360,12 @@ local function fixture()
                 calls.food[#calls.food + 1] = item
             end,
             set_fastcall = function(self, callback) self.fastcall = callback end,
-            position = function() return {sub = function() return "direction" end} end
+            position = function() return {sub = function() return "direction" end} end,
+            id = function() return 0 end,
+            give_info_portion = function(_, name)
+                calls.infos[name] = true
+                calls.given_infos[#calls.given_infos + 1] = name
+            end
         }
     end
     return env, calls, objects, module, actor
@@ -392,7 +436,8 @@ do
     env.delete.esc_ydalaem_bbbbbbbbbbbbbtttttttttttrrrrr = existing
     module.install()
     equal(env.new_life.new_gg_2, existing, "existing story callback is not replaced by an alias")
-    equal(env.delete.esc_ydalaem_bbbbbbbbbbbbbtttttttttttrrrrr, existing,
+    -- The removal guard wraps every delete.* function, so the existing callback is reached through it.
+    equal(env.delete.esc_ydalaem_bbbbbbbbbbbbbtttttttttttrrrrr("btr"), "addon",
         "existing BTR callback is not replaced by an alias")
 end
 
@@ -1108,6 +1153,255 @@ do
     npc = make_world()
     tick(npc, 1)
     equal(calls.npc_update, 10, "the engine's own binder update still runs")
+end
+
+local function make_ini(sections)
+    return {
+        section_exist = function(_, section) return sections[section] ~= nil end,
+        line_exist = function(_, section, key) return sections[section] ~= nil and sections[section][key] ~= nil end,
+        r_string = function(_, section, key) return sections[section][key] end
+    }
+end
+
+local function make_physic(id, cfg, extra)
+    local object = {
+        id = function() return id end,
+        name = function() return "object" .. id end,
+        spawn_ini = function() return make_ini({logic = {cfg = cfg}}) end,
+        set_nonscript_usable = function(self, value) self.usable = value end,
+        set_tip_text = function(self, text) self.tip = text end
+    }
+    for key, value in pairs(extra or {}) do object[key] = value end
+    return object
+end
+
+-- Sealed treasure boxes: the box Sidorovich sells, and any other box sealed with the mod's "never" idiom, is
+-- searchable once its treasure has been granted, and stays exactly as the mod left it before that.
+do
+    local env, calls, objects, module, actor = fixture()
+    module.install()
+    env.db.actor = actor()
+    local manager = env.treasure_manager.manager
+    manager.treasure_by_target[5018] = "esc_secret_truck_goods"
+    manager.treasure_info.esc_secret_truck_goods = {target = 5018, done = false}
+    objects[300] = {id = 300, m_story_id = 5018}
+    local sealed = make_physic(300, [[scripts\tainiki\esc_orig_tainik_zakrut.ltx]])
+    equal(env.ph_idle.set_scheme(sealed, "ini", "ph_idle", "ph_idle"), "idle set", "the idle scheme result is retained")
+    equal(sealed.usable, nil, "a sealed box whose treasure was never granted stays sealed")
+    equal(sealed.tip, "sealed", "and keeps the mod's own tip")
+    manager.treasure_info.esc_secret_truck_goods.done = true
+    env.ph_idle.set_scheme(sealed, "ini", "ph_idle", "ph_idle")
+    equal(sealed.usable, true, "a granted sealed box becomes searchable when its scheme starts")
+    equal(sealed.tip, "st_search_treasure", "with the treasure box's own tip")
+    equal(env.db.storage[300].ph_idle.nonscript_usable, true, "the scheme state agrees, so a reset keeps it open")
+    equal(env.db.storage[300].ph_idle.tips, "st_search_treasure", "and keeps the tip through a reset")
+    objects[301] = {id = 301, m_story_id = 5018}
+    local plain = make_physic(301, [[scripts\treasure_inventory_box.ltx]])
+    env.ph_idle.set_scheme(plain, "ini", "ph_idle", "ph_idle")
+    equal(plain.usable, nil, "an ordinary box is left to its own configuration")
+    objects[302] = {id = 302, m_story_id = 5011}
+    local decoy = make_physic(302, [[scripts\tainiki\esc_orig_tainik_zakrut.ltx]])
+    env.ph_idle.set_scheme(decoy, "ini", "ph_idle", "ph_idle")
+    equal(decoy.usable, nil, "a sealed box nobody was pointed at stays sealed")
+    objects[303] = {id = 303, m_story_id = -1}
+    local unnamed = make_physic(303, [[scripts\tainiki\esc_orig_tainik_zakrut.ltx]])
+    env.ph_idle.set_scheme(unnamed, "ini", "ph_idle", "ph_idle")
+    equal(unnamed.usable, nil, "a box without a story id is not looked up")
+end
+
+-- A box that is already online when its treasure is granted opens right away, not on the next load.
+do
+    local env, calls, objects, module, actor = fixture()
+    module.install()
+    env.db.actor = actor()
+    objects[310] = {id = 310, m_story_id = 5018}
+    calls.story = {[5018] = objects[310]}
+    local sealed = make_physic(310, [[scripts\tainiki\esc_orig_tainik_zakrut.ltx]])
+    env.ph_idle.set_scheme(sealed, "ini", "ph_idle", "ph_idle")
+    calls.online[310] = sealed
+    local manager = {treasure_info = {esc_secret_truck_goods = {target = 5018, done = false}}}
+    equal(env.treasure_manager.CTreasure.give_treasure(manager, "esc_secret_truck_goods"), "granted",
+        "the grant result is retained")
+    equal(sealed.usable, true, "the box the player just paid for opens at once")
+    equal(sealed.tip, "st_search_treasure", "and shows the search tip")
+    calls.online[310] = nil
+    sealed.usable = nil
+    manager.treasure_info.esc_secret_truck_goods.done = false
+    env.treasure_manager.CTreasure.give_treasure(manager, "esc_secret_truck_goods")
+    equal(sealed.usable, nil, "an offline box waits for its scheme to start")
+    objects[311] = {id = 311, m_story_id = 5044}
+    calls.story[5044] = objects[311]
+    local ordinary = make_physic(311, [[scripts\treasure_inventory_box.ltx]])
+    env.ph_idle.set_scheme(ordinary, "ini", "ph_idle", "ph_idle")
+    calls.online[311] = ordinary
+    manager.treasure_info.gar_secret_toilet = {target = 5044, done = false}
+    env.treasure_manager.CTreasure.give_treasure(manager, "gar_secret_toilet")
+    equal(ordinary.usable, nil, "an ordinary granted box is not touched")
+end
+
+-- The burglar skill: both journals stand in for the level-1 portion that nothing ever grants.
+do
+    local env, _, _, module = fixture()
+    module.install()
+    local tikhon = make_physic(600, [[scripts\kordon\dveri_tixona_podsobka.ltx]])
+    local both = "{+esc_jyrnal2_s_navuk +val_jyrnal_vzlom2} ph_door@locked"
+    local parsed = env.xr_logic.parse_condlist(tikhon, "ph_door@locked0", "on_info", "{+navuk_vzlom_lvl1} ph_door@locked")
+    equal(parsed.source, both, "Tikhon's storeroom waits for both burglar journals")
+    equal(parsed.npc, tikhon, "the door object is retained")
+    equal(parsed.field, "on_info", "the field is retained")
+    equal(env.xr_logic.parse_condlist(tikhon, "ph_door@locked0", "on_info", " {+navuk_vzlom_lvl1}  ph_door@locked ").source,
+        both, "insignificant whitespace does not hide the condition")
+    equal(env.xr_logic.parse_condlist(tikhon, "ph_door@locked", "on_use", "{+navuk_vzlom_lvl1} ph_door@locked").source,
+        "{+navuk_vzlom_lvl1} ph_door@locked", "other fields of the door are unchanged")
+    local other = make_physic(601, [[scripts\kordon\dveri_v_derevne1.ltx]])
+    equal(env.xr_logic.parse_condlist(other, "ph_door@locked0", "on_info", "{+navuk_vzlom_lvl1} ph_door@locked").source,
+        "{+navuk_vzlom_lvl1} ph_door@locked", "other doors are unchanged")
+    equal(env.xr_logic.parse_condlist(nil, "ph_door@locked0", "on_info", "{+navuk_vzlom_lvl1} ph_door@locked").source,
+        "{+navuk_vzlom_lvl1} ph_door@locked", "nil-object parsing is forwarded unchanged")
+
+    local safe = make_physic(602, [[scripts\barr\avtpark_seif.ltx]])
+    equal(env.ph_door.set_scheme(safe, "ini", "ph_door", "ph_door@locked"), "door set", "the door scheme result is retained")
+    local state = env.db.storage[602].ph_door
+    equal(state.on_use.name, "on_use", "the autopark safe gains the use it was missing")
+    equal(state.on_use.condlist.source,
+        "{+esc_jyrnal2_s_navuk +val_jyrnal_vzlom2} %+bar_avtoparka_seif_otkrulsa% ph_door@open",
+        "which opens it on the skill and records that it opened")
+    equal(state.on_use.condlist.section, "ph_door@locked", "parsed for the locked section")
+    equal(state.on_use.condlist.npc, safe, "parsed for the safe itself")
+    env.ph_door.set_scheme(safe, "ini", "ph_door", "ph_door@open")
+    equal(env.db.storage[602].ph_door.on_use, nil, "the safe's other sections keep their own configuration")
+    local kept = make_physic(603, [[scripts\barr\avtpark_seif.ltx]], {existing_use = "existing"})
+    env.ph_door.set_scheme(kept, "ini", "ph_door", "ph_door@locked")
+    equal(env.db.storage[603].ph_door.on_use, "existing", "a use the configuration already has is never replaced")
+    local door = make_physic(604, [[scripts\kordon\dveri_tixona_podsobka.ltx]])
+    env.ph_door.set_scheme(door, "ini", "ph_door", "ph_door@locked")
+    equal(env.db.storage[604].ph_door.on_use, nil, "other locked doors are unchanged")
+end
+
+-- Deaths the quest logic never heard about: a scripted mob's [death] portions are delivered once the mob is
+-- found dead or gone, unless a script removed it.
+do
+    local env, calls, objects, module, actor = fixture()
+    module.install()
+    env.db.actor = actor()
+    local monster = env.bind_monster.generic_object_binder
+    local stalker = env.xr_motivator.motivator_binder
+    local function make_mob(id, name, sections)
+        objects[id] = {id = id, alive = function() return true end}
+        return {object = {id = function() return id end, name = function() return name end},
+            st = {ini = make_ini(sections), section_logic = "logic"}}
+    end
+    local function death(line, second)
+        return {logic = {active = "mob_home", on_death = "death"}, death = {on_info = line, on_info2 = second}}
+    end
+    local binder = {object = env.db.actor, first_update = false}
+    local function pass(seconds)
+        env.clock_ms = env.clock_ms + seconds * 1000
+        env.bind_stalker.actor_binder.update(binder, 1)
+    end
+
+    local boar = make_mob(400, "esc_kaban_na_tainik11", death("%+esc_kaban_tainika1_dead1%"))
+    equal(monster.net_spawn(boar), true, "the mod's spawn result is retained")
+    equal(calls.monster_spawns, 1, "the mod's own spawn still runs")
+    pass(4)
+    equal(#calls.given_infos, 0, "a living mob hands out nothing")
+    objects[400].alive = function() return false end
+    pass(4)
+    equal(calls.given_infos[1], "esc_kaban_tainika1_dead1", "a mob found dead delivers its death portion")
+    equal(#calls.given_infos, 1, "exactly once")
+    pass(4)
+    equal(#calls.given_infos, 1, "and is then forgotten")
+
+    local dog = make_mob(401, "esc_tonnel_psevdodog1",
+        death("%+esc_tonnel_psidog1_death =play_snd(monsters\\dog)%", "{+killed_by_actor} %+conditional_portion%"))
+    monster.net_spawn(dog)
+    objects[401] = nil
+    pass(4)
+    equal(calls.given_infos[2], "esc_tonnel_psidog1_death", "a mob that vanished out of sight delivers too")
+    equal(calls.infos.conditional_portion, nil, "a conditional clause is never forced")
+
+    calls.infos.escp_dead_tyshkan89 = true
+    local rat = make_mob(402, "esc_tyshkan89", death("%+escp_dead_tyshkan89%"))
+    monster.net_spawn(rat)
+    objects[402] = nil
+    pass(4)
+    equal(#calls.given_infos, 2, "a portion the player already holds is not given again")
+
+    local white = make_mob(403, "gar_myt_v_lesy3", death("%+gar_dopq_myt3_podox +gar_dopq_myt1_podox%"))
+    calls.infos.gar_dopq_myt1_podox = true
+    monster.net_spawn(white)
+    objects[403].alive = function() return false end
+    pass(4)
+    equal(calls.given_infos[3], "gar_dopq_myt3_podox", "only the portions still missing are delivered")
+    equal(#calls.given_infos, 3, "the one already held is skipped")
+
+    local guard = make_mob(404, "esc_last_day_oxr1", death("%+guard_dead%"))
+    equal(stalker.net_spawn(guard), true, "the stalker binder is watched the same way")
+    equal(env.delete.remove_by_script(404), "removed", "the mod's removal result is retained")
+    pass(4)
+    equal(calls.infos.guard_dead, nil, "an NPC removed by the mod's own script is not reported dead")
+
+    local released = make_mob(405, "released", death("%+released_dead%"))
+    monster.net_spawn(released)
+    objects[405] = nil
+    equal(monster.net_destroy(released), "destroyed", "the mod's net_destroy result is retained")
+    pass(4)
+    equal(calls.infos.released_dead, nil, "a release seen at net_destroy is not a death")
+
+    local offline = make_mob(406, "offline", death("%+offline_dead%"))
+    monster.net_spawn(offline)
+    monster.net_destroy(offline)
+    pass(4)
+    equal(calls.infos.offline_dead, nil, "an offline switch is not a death")
+    objects[406].alive = function() return false end
+    pass(4)
+    equal(calls.infos.offline_dead, true, "a death after the offline switch is delivered")
+
+    local effect = make_mob(407, "effect", death("%+effect_dead%"))
+    monster.net_spawn(effect)
+    env.xr_effects.remove_object("actor", effect.object)
+    pass(4)
+    equal(calls.infos.effect_dead, nil, "an object removed through remove_object is not a death")
+
+    local late = make_mob(408, "late", death("%+late_dead%"))
+    monster.net_spawn(late)
+    objects[408] = nil
+    pass(1)
+    equal(calls.infos.late_dead, nil, "the check runs at most once per period")
+    pass(3)
+    equal(calls.infos.late_dead, true, "and the next period delivers")
+
+    local plain = make_mob(409, "plain", {logic = {active = "mob_home"}})
+    equal(monster.net_spawn(plain), true, "a mob without a death section spawns as before")
+    objects[409] = nil
+    pass(4)
+    equal(#calls.given_infos, 5, "and is never reported")
+    local failed = make_mob(410, "failed", death("%+failed_dead%"))
+    failed.spawn_result = false
+    equal(monster.net_spawn(failed), false, "a failed spawn is returned unchanged")
+    objects[410] = nil
+    pass(4)
+    equal(calls.infos.failed_dead, nil, "and is not watched")
+end
+
+-- The killer-less death branch of mob_death writes to a local only the other branch declares.
+do
+    local env, calls, _, module, actor = fixture()
+    module.install()
+    env.db.actor = actor()
+    local victim = {id = function() return 500 end, name = function() return "victim" end}
+    env.db.storage[500] = {}
+    local instance = {object = victim, st = {section = "death"}}
+    equal(env.mob_death.mob_death.death_callback(instance, victim, {id = function() return 1 end}), "mob death",
+        "a known killer keeps the mod's callback")
+    equal(calls.mob_deaths, 1, "which ran once")
+    equal(env.mob_death.mob_death.death_callback(instance, victim, nil), nil, "an unknown killer no longer raises")
+    equal(env.db.storage[500].death.killer, -1, "and is recorded the way the scheme intends")
+    equal(env.db.storage[500].death.killer_name, nil, "with no killer name")
+    equal(calls.switches[1].victim, victim, "the death section still runs its transitions")
+    equal(calls.switches[1].storage, instance.st, "for the scheme's own storage")
+    equal(calls.switches[1].actor, env.db.actor, "with the actor")
+    equal(calls.mob_deaths, 1, "without going through the broken branch")
 end
 
 print("script_repairs_tests: " .. tests .. " checks passed")

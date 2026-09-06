@@ -53,8 +53,16 @@ good - the fault behind an NPC that stops in a doorway, or reaches a stash and
 never reports back. The fix pack watches for those waits and re-runs what the
 game itself would have run; a wait that is meant to end on a signal or an info
 portion is never forced, so no scripted step is skipped. Each intervention is
-recorded in .ild-fixesuntime
-pc-watchdog.txt.
+recorded in .ild-fixes\runtime\npc-watchdog.txt.
+
+Quest repairs, each in memory only: the Don Reba ransom checks and takes the
+250 000 its dialog, task and check functions describe; the "Alcohol Wars" task
+text names the 20 000 the sergeant actually asks for; the stash Sidorovich sells
+on Cordon, and any other sealed box the player is pointed at, becomes searchable;
+the Burglar skill's first level is both of its journals, so Tikhon's storeroom
+and the Bar autopark safe open as their tips promise; a scripted mutant that dies
+out of sight still delivers the info portions of its death section, unless a mod
+script removed it; and a killer-less mutant death no longer aborts its scheme.
 
 Added options:
 Sound tab - "Radio volume", default 70%, in steps of 10. It scales every world

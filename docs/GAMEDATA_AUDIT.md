@@ -275,3 +275,24 @@ ignored, an armed wait and a `t=*` wait are left to the engine, and the escalati
 placement in order. Each intervention is recorded through `ild_update watchdog` into
 `.ild-fixes\runtime\npc-watchdog.txt`, capped at 200 lines a launch, which is also what a player sends when
 reporting that an NPC still stalled.
+
+## Fourth pass: quests that promised one thing and checked another — 2026-09-06
+
+Sources: the 23 pages of the mod's forum thread, the mod's own dialog, task, info-portion and logic files, and
+`all.spawn`. Each item below was traced to the exact line that decides it before anything was changed.
+
+| Defect | Consequence | Repair |
+| --- | --- | --- |
+| `dialogs_escape.xml` dialog `esc_dengi_rebe` ("Вот деньги.") has no precondition and no charge, while its own lines, the task «ДОБРО НЫНЧЕ ДОРОГОЕ» and `new_life.don_reba_denga_za_artu_esti` / `ia_otdaq_rebe_dengy_250000` all describe 250 000 roubles; neither function is referenced anywhere | The artefact case is handed over for free | In-memory, same-size patch: the check becomes the dialog's `<precondition>`, the charge an `<action>` before the handover; the block's own indentation pays for the 116 inserted bytes (`config_repairs.cpp`, `add_ransom_check`) |
+| `string_table_tasks_escape.xml` objectives `esc_kom_vodka_0/1` say "отыскать 15 бутылок водки / Принести водку старшине", but task `esc_dengi_jme` completes on `kom_door_open`, granted only by the 20 000-rouble `norm_vodka` dialog; the mod contains no check on any vodka count | The task tells the player to do something the game never checks | Same-size CP1251 rewording of both objectives to the money the sergeant asks for |
+| `esc_orig_tainik_zakrut.ltx` guards its box with `on_use = {+aiaiaiai}` — the mod's "never" idiom (the portion is granted only by `new_life.smerti`, which kills the actor); Sidorovich's 12 000-rouble cache `esc_secret_truck_goods` (story 5018) is one of twelve boxes using it | The player pays and the box says "closed with a key" forever; a player in the thread confirmed it | Once a sealed box's treasure entry is `done`, `ph_idle.set_scheme` gives it the vanilla treasure box's `nonscript_usable`/`st_search_treasure`; a grant to an online box applies it at once. Boxes nobody was pointed at stay sealed |
+| `dveri_tixona_podsobka.ltx` waits for `navuk_vzlom_lvl1`, which no file declares or grants; `avtpark_seif.ltx` has its only `on_use` commented out while its tip demands "Взломщик №1" | Two locks that can never open, both advertising a skill | Both burglar journals (`esc_jyrnal2_s_navuk`, `val_jyrnal_vzlom2`) stand in for level 1, as every other skill's level 1 is its journals: the door condition is rewritten in `parse_condlist`, the safe receives the commented line gated on the same condition |
+| A scripted mob's `[death] on_info` portions are delivered only by the engine's death callback | A boar, psy-dog or tushkan that dies offline or falls out of the level never reports, and Yura, the Garbage forest quest or Sidorovich's rat count waits for good | Mobs whose logic promises unconditional death portions are registered at `net_spawn`; a server object found dead, or gone, delivers the portions still missing. A removal by any `delete.*` function, `xr_effects.remove_object`/`remove_obj_id`/`delme`/`delme2`, `dead_city.exterminate_nacsamlet` or `ogsm_mutants` is recognised as a removal, as is a server object already gone at `net_destroy` |
+| Vanilla `mob_death:death_callback` writes `death.killer = -1` to a local declared only in the known-killer branch | A killer-less death raises inside the callback before the section's portions are given | The branch is replaced with one that records the unknown killer in the scheme storage and runs the section's transitions |
+
+Examined and left alone: `abort()` in `_g.script` ends with `printf("%s")`, which is the vanilla engine's own
+way of turning a scripted abort into a fatal error — the visible `_g.script:23 bad argument #2 to 'format'` is
+the symptom, and the cause is the `ERROR:` line the log prints just before it. Yura's `walker5` fallback timer
+is commented out by the author and is a design decision, not a defect; the physical stalls it would have masked
+are the watchdog's job. The 20 000-rouble exit charge is wired and reachable in the shipped files; the forum's
+"the money is not taken" is not reproducible from the data.
