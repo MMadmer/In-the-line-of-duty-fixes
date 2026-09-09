@@ -355,6 +355,11 @@ local absent_sounds = {
 local absent_sound_prefix = [[soundtrack\]]
 local silent_sound
 
+-- The Cordon gold-fish stash asks for device\pda_news; the file is device\pda\pda_news, which is how every
+-- other caller in the mod spells it. A sound_object built on a name that exists nowhere is an engine fatal,
+-- so the stash killed the game the moment it was opened.
+local sound_aliases = {[ [[device\pda_news]] ] = [[device\pda\pda_news]]}
+
 local function make_silent_sound()
     local function ignore() end
     return {
@@ -375,10 +380,11 @@ local function install_sound_repairs()
     silent_sound = silent_sound or make_silent_sound()
     local original_get = xr_sound.get_safe_sound_object
     xr_sound.get_safe_sound_object = function(path)
+        local named = type(path) == "string" and sound_aliases[string.lower(path)] or path
         -- The mod's own call sites test the result, but the fatal happens inside the constructor, before the
         -- test. A silent stub keeps every caller working, guarded or not.
-        if sound_is_absent(path) then return silent_sound end
-        return original_get(path)
+        if sound_is_absent(named) then return silent_sound end
+        return original_get(named)
     end
 end
 
@@ -573,6 +579,48 @@ local function watch_report(npc, section, action)
     report_line(action .. " " .. npc:name() .. " " .. section)
 end
 
+-- A story object that is gone is not a configuration error. The mod's two Garbage deserters arrive on Cordon
+-- and are meant to walk into the restrictor that removes them, and the player may shoot them instead; either
+-- way the object the restrictor names by story id stops existing. cfg_get_npc_and_zone aborted on that
+-- instead of on a real mistake, so every later arrival on Cordon was fatal. An object that does not exist can
+-- never be inside a zone, so the condition is kept and simply never fires - exactly what the section does
+-- while the object is merely somewhere else. The "not in zone" form is neutralised the same way rather than
+-- firing on an object nobody can find. 65535 is the engine's own "no object" id, so the lookup that follows
+-- returns nothing without ever seeing a bad argument.
+local absent_object_id = 65535
+
+local function install_story_object_repair()
+    local original = xr_logic.cfg_get_npc_and_zone
+    xr_logic.cfg_get_npc_and_zone = function(ini, section, field, npc)
+        local simulator = alife()
+        local condition = simulator and xr_logic.cfg_get_two_strings_and_condlist(ini, section, field, npc)
+        if not condition or simulator:story_object(tonumber(condition.v1)) then
+            return original(ini, section, field, npc)
+        end
+        condition.npc_id = absent_object_id
+        condition.name = string.gsub(condition.name, "^on_npc_not_in_zone", "on_npc_in_zone")
+        report_line("story " .. npc:name() .. " " .. section .. " " .. field .. " " .. tostring(condition.v1))
+        return condition
+    end
+end
+
+-- on_death indexes both the dying object and its smart terrain without a check, while unregister_npc right
+-- below it guards the second one. A death callback that runs after the server object is already released -
+-- which the mod does by script all over the place - raised inside the callback instead.
+local function install_smart_terrain_repair()
+    local original = smart_terrain.on_death
+    smart_terrain.on_death = function(object_id)
+        local simulator = alife()
+        local server = simulator and simulator:object(object_id)
+        if not server then return end
+        if server:smart_terrain_id() ~= absent_object_id then
+            local owner = simulator:object(server:smart_terrain_id())
+            if not owner or not owner.gulag then return end
+        end
+        return original(object_id)
+    end
+end
+
 local function watch_distance(record, position)
     local dx, dy, dz = position.x - record.x, position.y - record.y, position.z - record.z
     return dx * dx + dy * dy + dz * dz
@@ -761,6 +809,43 @@ local function burglar_condition(npc, section, field, source)
         string.gsub(source, "%s+", "") == tikhon_door_condition and logic_config(npc) == tikhon_door_config
 end
 
+-- The X18 terminal that carries the "enter the password" tip is meant to fall silent once the door code is
+-- entered, and its own file holds the empty ph_idle2 for exactly that. The transition names sr_idle2 instead,
+-- which no section on that object declares, and activate_by_section aborts on a section that does not exist -
+-- so keying in the code killed the game on the spot.
+local lab_terminal = "lab_psihoz113"
+local lab_terminal_transition = "{+lab_minys_psiz}sr_idle2"
+local lab_terminal_repaired = "{+lab_minys_psiz} ph_idle2"
+
+local function lab_terminal_condition(npc, section, field, source)
+    return field == "on_info" and section == "ph_idle" and type(source) == "string" and
+        string.gsub(source, "%s+", "") == lab_terminal_transition and npc and npc:name() == lab_terminal
+end
+
+-- The ghost house's window restrictor is meant to fall silent once the scripted zombie has granted
+-- esc_dom_prizraka_kiknem: every one of its own sections switches to nil on exactly that portion. Its active
+-- line, though, offers only sr_idle behind the negated portion and no unconditional else, so once the portion
+-- is set determine_section_to_activate picks nothing and aborts - on every later entry to Cordon, right as
+-- the loading screen ends. Vanilla writes the same guard with the fallback the mod dropped.
+local ghost_window_config = [[scripts\kordon_new\space_okno_prizrakdoma.ltx]]
+local ghost_window_active = "{-esc_dom_prizraka_kiknem}sr_idle"
+local ghost_window_repaired = "{-esc_dom_prizraka_kiknem} sr_idle, nil"
+
+local function ghost_window_condition(npc, section, field, source)
+    return field == "active" and section == "logic" and type(source) == "string" and
+        string.gsub(source, "%s+", "") == ghost_window_active and logic_config(npc) == ghost_window_config
+end
+
+-- The mod renamed Lis's camper sections and left this one transition pointing at the old name. Nothing
+-- reaches the section today, but a target that does not exist is a fatal the moment something does.
+local fox_transition = "{+escape_stalker_done!_used}camper@esc_stalker_fox"
+local fox_repaired = "{+escape_stalker_done !_used} camper@esc_stalker_foxik"
+
+local function fox_condition(section, field, source)
+    return field == "on_info" and section == "remark@esc_stalker_fox" and type(source) == "string" and
+        string.gsub(source, "%s+", "") == fox_transition
+end
+
 local function install_burglar_repairs()
     local original_door = ph_door.set_scheme
     ph_door.set_scheme = function(npc, ini, scheme, section, gulag_name)
@@ -850,11 +935,196 @@ local function deliver_death(id, record)
     end
 end
 
+-- The dossier the actor is meant to take off the nationalist terrorist on Agroprom carries its own PDA article,
+-- but the mod only names it in a [known_info] section of his logic file, and xr_info reads that section from a
+-- spawn ini, never from a logic one. Nothing ever granted it, so Karabin's nineteen-phrase reveal could not
+-- open. The death portion of the same NPC is the event that stands for taking the dossier off him, and pairing
+-- the two also repairs a save where he is already dead.
+local paired_portions = {aro_pidr1_strelki_death = "agro_vzial_infy_s_terista_naca"}
+
+-- The dialog in which the actor reports both of Reba's spies dead is itself called esc_reba_proverky_proshel,
+-- and its closing phrase hands out esc_reba_proverky_ne_proshel - the fail portion of its own task - while the
+-- completion portion the task names has no producer anywhere in the mod. So the job the player just finished
+-- was stamped failed. The reward of that one phrase runs nowhere else, which is what tells the report apart
+-- from the two dialogs that legitimately fail the job. The fail portion is left in place: it also starts the
+-- artefact task and spawns the pit artefact, and Volk and Sidorovich both have a dialog waiting for it.
+local spy_task = "esc_proverka_na_killerstvo"
+local spy_task_objectives = {0, 3}
+local spy_task_reported = false
+
+-- Two of the mod's condlists run an effect from a timer with no target section. switch_to_section takes no
+-- section, so the timer never re-arms and xr_logic re-applies the effect on every update instead of once:
+-- Reba's spy at the antennas re-declares war on the actor every frame from the moment he comes online, and
+-- the psi device stacks a fresh post-process effector every frame through its blackout, because
+-- run_postprocess draws a new random id per call. Both now do exactly what one call would have done.
+local postprocess_repeat = 500
+local postprocess_last = {}
+
+local function install_repeat_effect_repairs()
+    local original_enemy = xr_effects.actor_enemy
+    xr_effects.actor_enemy = function(actor, npc, ...)
+        -- Guarded: an object this build will not answer for must still get the mod's own declaration.
+        local known, current = pcall(function() return npc:relation(actor) end)
+        if known and current == game_object.enemy then return end
+        return original_enemy(actor, npc, ...)
+    end
+    local original_postprocess = xr_effects.run_postprocess
+    xr_effects.run_postprocess = function(actor, npc, p)
+        local name = p and p[1]
+        if type(name) == "string" then
+            local now, last = time_global(), postprocess_last[name]
+            if last and now - last < postprocess_repeat then return end
+            postprocess_last[name] = now
+        end
+        return original_postprocess(actor, npc, p)
+    end
+end
+
+local function install_spy_task_repair()
+    local original_reward = new_life.mne_nagrada_ot_rebu_za_shpionov
+    if type(original_reward) ~= "function" then return end
+    new_life.mne_nagrada_ot_rebu_za_shpionov = function(...)
+        local result = original_reward(...)
+        if db.actor and not has_alife_info("esc_reba_proverky_proshel") then
+            db.actor:give_info_portion("esc_reba_proverky_proshel")
+            spy_task_reported = true
+            report_line("paired esc_reba_proverky_proshel")
+        end
+        return result
+    end
+end
+
+local function settle_spy_task()
+    if not spy_task_reported then return end
+    spy_task_reported = false
+    -- Both portions are known by now, so the outcome must not depend on which of the two the engine tests
+    -- first. These are the two objectives that name them.
+    for _, objective in ipairs(spy_task_objectives) do
+        pcall(function() level_tasks.set_task_state(task.completed, spy_task, objective) end)
+    end
+end
+
+local function deliver_paired_portions()
+    for trigger, portion in pairs(paired_portions) do
+        if has_alife_info(trigger) and not has_alife_info(portion) then
+            db.actor:give_info_portion(portion)
+            report_line("paired " .. portion)
+        end
+    end
+end
+
+-- The ATP scene is a ping-pong of remark sections between the spetsnaz leader (story 41) and Tikhon (42):
+-- each waits for its own sound to end or for the portion the other hands over, and the leader's last section
+-- is the only place in the whole mod that grants esc_atp_ydalai_ysex_k_xyiam_end - the portion Tikhon's
+-- closing dialog waits for. Nothing in the chain has a timeout, so one interruption strands it with the
+-- helicopter already gone and Tikhon offering nothing but a greeting. Every recovery below re-runs only what
+-- the scene itself would have run next.
+local atp_leader, atp_tikhon = 41, 42
+local atp_end_portion = "esc_atp_ydalai_ysex_k_xyiam_end"
+local atp_freeze = 90000
+local atp_gone_grace = 5000
+local atp_gone_since = {}
+local atp_section_since = {}
+
+local function story_server(story_id)
+    local simulator = alife()
+    return simulator and simulator:story_object(story_id) or nil
+end
+
+-- nil when the object is released, false while it is a corpse, true while it can still run its logic.
+local function story_alive(story_id)
+    local server = story_server(story_id)
+    if not server then return nil end
+    local known, alive = pcall(server.alive, server)
+    return not known or alive ~= false
+end
+
+-- A release seen one tick before the portion it comes with is not a stranded scene.
+local function atp_gone_for_good(key, now)
+    atp_gone_since[key] = atp_gone_since[key] or now
+    return now - atp_gone_since[key] >= atp_gone_grace
+end
+
+local function story_online(story_id)
+    local server = story_server(story_id)
+    local object = server and level.object_by_id(server.id)
+    local storage = object and db.storage[object:id()]
+    return storage and storage.active_scheme and object or nil, storage
+end
+
+-- The section waits for a sound that is no longer playing: this is the assignment the remark scheme failed to
+-- make, and nothing else in the section can end it.
+local function atp_sound_ended(npc, state)
+    if npc:active_sound_count() ~= 0 then return false end
+    for _, condition in pairs(state.logic or {}) do
+        if condition.name and string.find(condition.name, "^on_signal%d*$") and condition.v1 == "sound_end" then
+            return true
+        end
+    end
+    return false
+end
+
+local function atp_unfreeze(story_id, now)
+    local npc, storage = story_online(story_id)
+    if not npc then return false end
+    local state = storage[storage.active_scheme]
+    local section = state and state.section
+    if not section then return false end
+    local record = atp_section_since[story_id]
+    if not record or record.section ~= section then
+        atp_section_since[story_id] = {section = section, since = now}
+        return false
+    end
+    if now - record.since < atp_freeze then return false end
+    record.since = now
+    -- A hit from the actor disables combat_ignore for good, and only a full reconfigure turns it back on.
+    if storage.combat_ignore then storage.combat_ignore.enabled = true end
+    if atp_sound_ended(npc, state) then
+        state.signals = state.signals or {}
+        state.signals["sound_end"] = true
+    end
+    xr_logic.try_switch_to_another_section(npc, state, db.actor)
+    watch_report(npc, section, "scene")
+    return true
+end
+
+local function check_atp_scene(now)
+    if has_alife_info(atp_end_portion) or not has_alife_info("atp_sdelka_t_fraza1") then return end
+    local leader = story_alive(atp_leader)
+    -- A dead or released leader never runs his logic again: net_spawn returns before the schemes are set up,
+    -- so no reload recovers him and no section of his can reach the helicopter he was looking at.
+    if leader ~= true then
+        if atp_gone_for_good("leader", now) then
+            db.actor:give_info_portion(atp_end_portion)
+            report_line("scene " .. atp_end_portion)
+        end
+        return
+    end
+    atp_gone_since.leader = nil
+    -- Tikhon is the only source of fraza7. With him gone the leader can still play the rest of the scene out
+    -- himself and grant the closing portion through the mod's own condlist.
+    if story_alive(atp_tikhon) ~= true then
+        if has_alife_info("atp_sdelka_t_fraza6") and not has_alife_info("atp_sdelka_t_fraza7") and
+            atp_gone_for_good("tikhon", now) then
+            db.actor:give_info_portion("atp_sdelka_t_fraza7")
+            report_line("scene atp_sdelka_t_fraza7")
+        end
+        return
+    end
+    atp_gone_since.tikhon = nil
+    -- Either of them can be the frozen one while the other is legitimately waiting on it, so both are checked.
+    atp_unfreeze(atp_leader, now)
+    atp_unfreeze(atp_tikhon, now)
+end
+
 local function check_death_watch(now)
     if now - death_checked < death_period then return end
     death_checked = now
     local simulator = alife()
     if not simulator or not db.actor then return end
+    deliver_paired_portions()
+    settle_spy_task()
+    pcall(check_atp_scene, now)
     for id, record in pairs(death_watch) do
         local server = simulator:object(id)
         local dead = server == nil
@@ -947,6 +1217,9 @@ function install()
             source = string.gsub(source, "mob_walker@6", "mob_walker@5", 1)
         end
         if burglar_condition(npc, section, field, source) then source = burglar_journals .. " ph_door@locked" end
+        if lab_terminal_condition(npc, section, field, source) then source = lab_terminal_repaired end
+        if ghost_window_condition(npc, section, field, source) then source = ghost_window_repaired end
+        if fox_condition(section, field, source) then source = fox_repaired end
         return original_parse(npc, section, field, source)
     end
     local menu = ui_main_menu.main_menu
@@ -974,6 +1247,10 @@ function install()
     install_burglar_repairs()
     install_death_repairs()
     install_mob_death_repair()
+    install_story_object_repair()
+    install_smart_terrain_repair()
+    install_spy_task_repair()
+    install_repeat_effect_repairs()
 
     local binder = bind_stalker.actor_binder
     local original_load = binder.load

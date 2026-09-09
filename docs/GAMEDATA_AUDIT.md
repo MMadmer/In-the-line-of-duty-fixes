@@ -292,7 +292,69 @@ Sources: the 23 pages of the mod's forum thread, the mod's own dialog, task, inf
 
 Examined and left alone: `abort()` in `_g.script` ends with `printf("%s")`, which is the vanilla engine's own
 way of turning a scripted abort into a fatal error — the visible `_g.script:23 bad argument #2 to 'format'` is
-the symptom, and the cause is the `ERROR:` line the log prints just before it. Yura's `walker5` fallback timer
+the symptom, and the cause is the `ERROR:` line the log prints just before it. (The fifth pass reversed this:
+the message is what players actually send, so the tail now names the reason.) Yura's `walker5` fallback timer
 is commented out by the author and is a design decision, not a defect; the physical stalls it would have masked
 are the watchdog's job. The 20 000-rouble exit charge is wired and reachable in the shipped files; the forum's
 "the money is not taken" is not reproducible from the data.
+
+## Fifth pass: crashes on entering a level, and scenes that never played out — 2026-09-10
+
+Sources: two player reports on the mod's forum with the mod author replying, the reported crash text with the
+`ERROR:` line a third player recovered from a full log, and mechanical sweeps of the effective script and
+config set (mod overrides plus the vanilla tree the archives supply, plus the inline `custom_data` logic in
+`all.spawn`). Each item was traced to the line that decides it before anything was changed.
+
+### The masked crash message
+
+`abort()` in `_g.script` ends with `printf("%s")` — a deliberately malformed format that turns a scripted
+abort into a fatal. The fourth pass left it alone as vanilla behaviour. That was the wrong call in one
+respect: it is also the reason every player report of this class is unusable, because the crash box shows
+`_g.script:23: bad argument #2 to 'format'` and never the reason. The abort tail is now rewritten in memory,
+same length and same line breaks, to `log("ERROR: " .. reason)` followed by `error("ERROR: "..reason,2)`. The
+fatal is unchanged; the message names the object and the section. The reason is no longer put through a
+second `string.format`, so a reason containing a `%` reaches the log intact.
+
+### Repairs
+
+| Defect | Consequence | Repair |
+| --- | --- | --- |
+| `space_okno_prizrakdoma.ltx:3` — `active = {-esc_dom_prizraka_kiknem} sr_idle` with no unconditional else, while every section of that same file switches to `nil` on exactly that portion | Once the ghost-house zombie has granted the portion, `determine_section_to_activate` picks nothing and aborts, on every later entry to Cordon, the moment the loading screen ends | `parse_condlist` rewrites that one `active` line to `{-esc_dom_prizraka_kiknem} sr_idle, nil`, the fallback vanilla writes for the same idiom |
+| `cfg_get_npc_and_zone` aborts when the story object a restrictor watches no longer resolves. Six Cordon restrictors watch objects the mod itself releases: the two Garbage deserters (`038`), the BTR (`044`), the helicopter (`014`), the caged bandit (`043`), ATP Tikhon (`042`), the prison pair (`024`) | `ERROR: object 'esc_gar_dezertiru_sqda_zone': section 'sr_idle': field 'on_npc_in_zone': there is no object with story_id '038'` — a fatal on arrival at Cordon, reported by players and reproduced from the mod's own removal actions | The condition is kept so the numbered variants after it are still read, and given the engine's "no object" id, which the following lookup resolves to nothing. The `not in zone` form is neutralised the same way instead of firing on an object nobody can find. Every occurrence is written to the watchdog report |
+| `smart_terrain.on_death` indexes the dying server object and its smart terrain with no check, while `unregister_npc` directly below it guards the second | A death callback that runs after a script already released the object raises inside the callback: `smart_terrain.script:1137: attempt to index local 'obj' (a nil value)`, reported for the Agroprom sniper after the toy-maker's conversation | The mod's own function is called only when both objects are there; otherwise the callback returns, as it would for an object that belongs to no smart terrain |
+| `lab_psihoz113`, the X18 terminal carrying the "enter the password" tip, switches to `sr_idle2`; its own file declares the empty `ph_idle2` and nothing else | `activate_by_section` aborts on a section that does not exist, so entering the door code killed the game on the spot | The transition is rewritten to `ph_idle2`, the section the object declares for exactly that purpose |
+| `tainik_s_gold_fish.ltx:6` plays `device\pda_news`; the file is `device\pda\pda_news`, which is how every other caller spells it | A `sound_object` on a name that exists nowhere is an engine fatal, so opening the Gold Fish stash killed the game | The mistyped name is aliased to the file it means, so the sound is heard rather than merely survived |
+| The ATP scene is a ping-pong of remark sections between the spetsnaz leader (story 41) and Tikhon (42); the leader's last section is the only producer of `esc_atp_ydalai_ysex_k_xyiam_end`, and nothing in the chain has a timeout | An interrupted scene leaves the helicopter gone and Tikhon offering only a greeting: his closing dialog waits for a portion that will never come, and the whole line to Reba, Sidorovich and Agroprom stops there | A leader who is dead or released can never run his logic again, so the closing portion is delivered for him. A dead Tikhon hands the leader `atp_sdelka_t_fraza7`, the cue only Tikhon produces, and the leader plays the rest out through the mod's own condlists. With both alive and a section unchanged for 90 s, `combat_ignore` is re-enabled as a reload would, a wait for a sound that is no longer playing is released, and the section is asked to make its own transition |
+| The dialog in which the actor reports both of Reba's spies dead is itself `esc_reba_proverky_proshel`, and its closing phrase grants `esc_reba_proverky_ne_proshel` — the fail portion of its own task. The completion portion the task names has no producer anywhere | «УБИЙЦА МЕСЯЦА» is stamped failed at the moment it is finished | The reward function of that one phrase runs nowhere else and tells the report apart from the two dialogs that legitimately fail the job; the completion portion is granted and both objectives that name it are settled. The fail portion stays: it starts the artefact task, spawns the pit artefact, and Volk and Sidorovich each have a dialog waiting for it |
+| `absolqtno_drygoi_mamkin_shpion.ltx:15` and `psi_ystroistvo.ltx:72` run an effect from a timer with no target section, so the section never switches and the effect is re-applied on every update | Reba's spy re-declares war every frame from the moment he comes online; the psi device stacks a fresh post-process effector every frame through its blackout, because `run_postprocess` draws a new random id per call | `actor_enemy` is a no-op once the relation already says enemy, and an identical post-process is not re-added within half a second. Both do exactly what one call would have done |
+| The dossier the actor takes off the Agroprom nationalist terrorist is declared with its own PDA article but named only in a `[known_info]` section of his logic file, which `xr_info` reads from a spawn ini and never from a logic one | Karabin's nineteen-phrase reveal about the shootout could never open | The portion follows the death portion of the same NPC, which also repairs a save in which he is already dead |
+| `gulag_escape.ltx:2133` still targets `camper@esc_stalker_fox` after the mod renamed that section | Latent: nothing reaches `remark@esc_stalker_fox` today, but a target that does not exist is a fatal the moment something does | The transition is rewritten to `camper@esc_stalker_foxik` |
+
+### Swept and clean
+
+Every `active` condlist in the mod — 864 loose ltx, the merged gulag inis and the inline `all.spawn` logic —
+was checked for a missing unconditional clause: the ghost-house window is the only one that can pick nothing.
+Every scheme transition was checked against the sections its own file declares; apart from the X18 terminal
+and the Lis camper above, the remaining hits are in files no spawn or script references. Every `=function`
+and `{=function}` in every condlist was checked against the mod's `xr_effects` and `xr_conditions`: the only
+misses are the Dead City hunt files, which nothing wires up. Every sound theme, and every file named by a
+theme, by `snd =` or by `play_snd(...)`, was checked against the loose tree and all fourteen archives: the
+only miss is the Gold Fish stash above. The eleven `arena_*` themes the mod dropped when it rewrote
+`sound_theme.script` are reachable only through `bar_arena_start`, which nothing grants. The
+`esc_atp_sdelka_*` themes and every file behind them are present, so the ATP stall is not a missing-sound
+stall.
+
+### Not changed, and why
+
+The ransom branch of `esc_l_d_reba_start` is also the spy job's fail flag by construction: the portion it
+grants carries the «ДОБРО НЫНЧЕ ДОРОГОЕ» task and the pit artefact, and two further dialogs wait for it. That
+branch not granting `esc_l_d_reba_start` leaves Reba's opening dialog re-openable, so a player who refuses and
+later accepts is handed a job that is already failed. Repairing that means deciding whether the two branches
+were meant to be exclusive, which the shipped files do not say, so it is recorded rather than guessed at.
+
+The logless crash on approaching the psi installation with the spy job active is not closed. The
+discriminator is proven — `esc_absolqtno_drygoi_mamkin_shpion` is created 163 m from Reba, beyond the 150 m
+switch distance, so its offline-to-online transition happens exactly on that approach — and every asset,
+section, profile, visual, patrol path and graph vertex on that path was verified present and consistent, but
+the engine fault itself was not identified. The per-frame `actor_enemy` storm that object produced is
+repaired above; it is the one mechanism on that path that could be reached from script.

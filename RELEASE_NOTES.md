@@ -2,16 +2,19 @@
 
 ## Тема
 
-Квесты, которые обещали одно, а проверяли другое
+Вылеты на входе в локацию и сцены, которые не доигрывались до конца
 
 ## Изменения
 
-* Выкуп артефактов у Дона Рэбы теперь стоит те самые 250 000: без денег разговор не начнётся, а при сделке они уходят Рэбе. Раньше ящик отдавали бесплатно, хотя задание требовало накопить четверть миллиона.
-* Задание «Алкогольные войны» говорит то, что игра проверяет на самом деле: накопить 20 000 и отдать их сержанту. Строки про 15 бутылок водки остались от старой версии квеста — бутылки никто никогда не считал.
-* Тайник, который Сидорович продаёт на Кордоне за 12 000, открывается. Раньше он навсегда просил ключ, которого в моде нет. Так же ведёт себя любой другой запечатанный ящик, наводку на который игрок получил.
-* Навык «Взломщик» заработал: оба журнала взломщика дают первый уровень, и подсобка Тихона с сейфом автопарка в Баре открываются, как обещают их подсказки. Раньше уровень не выдавался ничем, а у сейфа не было и самой возможности открыться.
-* Квестовый мутант, погибший вне поля зрения — в оффлайне или провалившись под карту, — теперь всё равно отдаёт инфопоршень своей смерти, и квест, который его ждал, продолжается. Удалённый скриптом мод объект за смерть не считается.
-* Смерть мутанта без известного убийцы — в аномалии или от падения — больше не обрывает выдачу его квестовых инфопоршней ошибкой в схеме смерти.
+* Возвращение на Кордон больше не вылетает. Причин было две: окно дома с призраком, у которого после появления зомби не оставалось ни одной подходящей ветки логики, и зоны-триггеры, следившие за персонажами, которых мод к этому моменту уже удалил, — дезертиры со Свалки, БТР, вертушка, бандит в клетке, Тихоныч на АТП.
+* Смерть NPC, которого скрипт уже успел убрать из мира, больше не роняет игру. Так вылетал отстрел снайпера на Агропроме после разговора с игрушечником.
+* Ввод кода на двери в Х18 больше не вылетает: терминал с подсказкой «ввести пароль» уходил в несуществующую секцию.
+* Тайник с «золотой рыбкой» на Кордоне открывается: он просил звук по неверному пути, а отсутствующий звук для движка — фатальная ошибка.
+* Квест Тихоныча «Подключение» больше не встаёт после сцены на АТП. Если сцена оборвалась, она доигрывается сама, и финальный диалог у Тихона появляется.
+* Задание Рэбы «УБИЙЦА МЕСЯЦА» больше не проваливается в тот самый момент, когда вы отчитываетесь об убитых шпионах. Награда, выкуп артефактов и тайник в яме остаются на месте.
+* Разговор с Карабином о националистах на Агропроме теперь доступен: досье, снятое с террориста, игроку не выдавалось никогда.
+* У пси-установки Тихоныча больше не копится по новому экранному эффекту на каждый кадр во время затемнения, а шпион у антенн не объявляет войну игроку по десять раз в секунду.
+* Вылет по вине скрипта показывает настоящую причину вместо «bad argument #2 to 'format'». Теперь по сообщению об ошибке видно, какой объект и какая секция её вызвали.
 
 ## Установка
 
@@ -23,16 +26,19 @@
 
 ## Theme
 
-Quests that promised one thing and checked another
+Crashes on the way into a level, and scenes that never played out
 
 ## Changes
 
-* Buying the artefacts back from Don Reba now costs the 250 000 it says: the conversation does not open without the money, and the deal takes it. The case used to be handed over for free while the task asked for a quarter of a million.
-* The "Alcohol Wars" task now says what the game actually checks: save up 20 000 and hand it to the sergeant. The lines about 15 bottles of vodka were left over from an earlier version of the quest; nothing ever counted bottles.
-* The stash Sidorovich sells on Cordon for 12 000 can be opened. It used to ask forever for a key that does not exist in the mod. Any other sealed box the player has been pointed at behaves the same way.
-* The Burglar skill works: both burglar journals grant its first level, and Tikhon's storeroom and the autopark safe in the Bar open as their tips promise. Nothing used to grant the level, and the safe had no way to open at all.
-* A quest mutant that dies out of sight - offline, or fallen through the level - still delivers the info portion of its death, and the quest waiting for it carries on. An object the mod removes by script is not counted as a death.
-* A mutant killed with no known killer - by an anomaly or a fall - no longer breaks the handout of its quest info portions with an error in its death scheme.
+* Coming back to Cordon no longer crashes. There were two causes: the ghost house's window, which had no branch of its logic left to run once the scripted zombie had appeared, and trigger zones watching characters the mod had already removed — the Garbage deserters, the BTR, the helicopter, the caged bandit, Tikhon at the ATP.
+* The death of an NPC a script had already removed from the world no longer takes the game down. That is what crashed when shooting the sniper at Agroprom after the toy-maker's conversation.
+* Entering the door code in X18 no longer crashes: the terminal with the "enter the password" tip switched to a section that does not exist.
+* The gold-fish stash on Cordon can be opened: it asked for a sound by the wrong path, and a missing sound is fatal to the engine.
+* Tikhon's "Connection" quest no longer stalls after the ATP scene. An interrupted scene now plays itself out, and his closing dialog appears.
+* Reba's "Killer of the Month" job no longer fails at the very moment you report both spies dead. The reward, the artefact ransom and the stash in the pit all stay as they were.
+* The conversation with Karabin about the nationalists at Agroprom is now available: the dossier taken from the terrorist was never handed to the player.
+* Tikhon's psi installation no longer piles up a fresh screen effect every frame during the blackout, and the spy by the antennas no longer declares war on the player ten times a second.
+* A crash caused by a script now shows the real reason instead of "bad argument #2 to 'format'", so the error message names the object and the section that caused it.
 
 ## Installation
 

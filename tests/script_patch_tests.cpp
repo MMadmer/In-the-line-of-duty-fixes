@@ -81,5 +81,26 @@ int main()
         repaired.find("\t\tpacket:w_u8(0)     \r\n\t\t" + std::string(49, ' ') + "\r\n") == std::string::npos ||
         repaired.find("stored_input_time == 1    then") == std::string::npos) return 11;
 
+    const std::string abort_source =
+        "function abort(fmt, ...)\r\n"
+        "\tlocal reason = string.format(fmt, ...)\r\n"
+        "\tassert(\"ERROR: \" .. reason)\r\n"
+        "\tprintf(\"ERROR: \" .. reason)\r\n"
+        "\tprintf(\"%s\")\r\n"
+        "end\r\n";
+    auto abort_bytes = bytes_of(abort_source);
+    const auto abort_size = abort_bytes.size();
+    if (!ild::script_patch::reveal_abort_reason(abort_bytes) || abort_bytes.size() != abort_size) return 12;
+    const auto revealed = string_of(abort_bytes);
+    // The reason must reach the log without a second format pass, and the fatal must still be raised.
+    if (revealed.find("printf") != std::string::npos || revealed.find("assert") != std::string::npos ||
+        revealed.find("\tlog(\"ERROR: \" .. reason)   \r\n") == std::string::npos ||
+        revealed.find("\terror(\"ERROR: \"..reason,2) \r\n") == std::string::npos ||
+        std::count(revealed.begin(), revealed.end(), '\n') !=
+            std::count(abort_source.begin(), abort_source.end(), '\n')) return 13;
+    if (ild::script_patch::reveal_abort_reason(abort_bytes)) return 14;
+    auto ambiguous_abort = bytes_of(abort_source + abort_source);
+    if (ild::script_patch::reveal_abort_reason(ambiguous_abort)) return 15;
+
     return 0;
 }

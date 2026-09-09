@@ -14,7 +14,7 @@ local function fixture()
     local calls = {tutorials = {}, events = {}, spots = {}, food = {}, spawned = {}, removed = {}, detector = {},
         released = {}, init_btn = {}, on_info = {}, menu_toggles = {}, given = {}, taken = {}, news = {},
         amk_spawns = {}, treasure = {}, looks = {}, infos = {}, sounds = {}, statics = {}, tips = {},
-        created = {}, object_queries = 0}
+        created = {}, task_states = {}, object_queries = 0}
     local objects = {}
     local clock = 100
     local env = setmetatable({}, {__index = _G})
@@ -114,7 +114,11 @@ local function fixture()
         chibi_dost_za_vse_kassetu = banner('chibi_dost_za_vse_kassetu'),
         stalkerok_mexanik_navuk_lvl1 = banner('chibi_mex_navuk_lvl1'),
         stalkerok_mexanik_navuk_lvl2 = banner('chibi_mex_navuk_lvl2'),
-        stalkerok_navuk_poisk_lvl1 = banner('chibi_poisk_navuk_lvl1')
+        stalkerok_navuk_poisk_lvl1 = banner('chibi_poisk_navuk_lvl1'),
+        mne_nagrada_ot_rebu_za_shpionov = function(first, second)
+            calls.rewards = (calls.rewards or 0) + 1
+            return 'desert eagle'
+        end
     }
     local function bench(floor)
         local class_table = {}
@@ -128,8 +132,23 @@ local function fixture()
         return class_table
     end
     env.stanok = {baliaaa = bench(0.75), pochinka2 = bench(0.85)}
-    env.xr_effects = {esc_direction_fire = function(actor)
-        calls.tips[#calls.tips + 1] = 'esc_direction_fire'
+    env.xr_effects = {
+        esc_direction_fire = function(actor)
+            calls.tips[#calls.tips + 1] = 'esc_direction_fire'
+        end,
+        -- Both of these sit behind a timer with no target section, so the mod re-runs them every update.
+        actor_enemy = function(actor, npc)
+            calls.declared = (calls.declared or 0) + 1
+            npc.enemy = true
+        end,
+        run_postprocess = function(actor, npc, p)
+            calls.effectors = (calls.effectors or 0) + 1
+        end
+    }
+    env.task = {completed = "completed", fail = "fail", in_progress = "in_progress"}
+    env.game_object = {level_path = "level_path", enemy = "enemy"}
+    env.level_tasks = {set_task_state = function(state, id, objective)
+        calls.task_states[#calls.task_states + 1] = {state = state, id = id, objective = objective}
     end}
     env.level = {
         vertex_id = function(position) return 'lvid:' .. position.x end,
@@ -329,6 +348,22 @@ local function fixture()
     end}}
     env.xr_logic.try_switch_to_another_section = function(victim, storage, actor)
         calls.switches[#calls.switches + 1] = {victim = victim, storage = storage, actor = actor}
+    end
+    -- Story-id conditions: the mod takes the game down when the object a restrictor names is gone.
+    calls.conditions = {}
+    env.xr_logic.cfg_get_two_strings_and_condlist = function(ini, section, field, npc)
+        local row = calls.conditions[field]
+        if not row then return nil end
+        return {name = field, v1 = row[1], v2 = row[2],
+            condlist = env.xr_logic.parse_condlist(npc, section, field, row[3])}
+    end
+    env.xr_logic.cfg_get_npc_and_zone = function(ini, section, field, npc)
+        local condition = env.xr_logic.cfg_get_two_strings_and_condlist(ini, section, field, npc)
+        if not condition then return nil end
+        local server = env.alife():story_object(tonumber(condition.v1))
+        if not server then error("there is no object with story_id '" .. condition.v1 .. "'") end
+        condition.npc_id = server.id
+        return condition
     end
     env.level.object_by_id = function(id) return calls.online[id] end
     env.bind_monster.generic_object_binder.net_spawn = function(self)
@@ -643,13 +678,15 @@ do
 end
 
 do
-    local env, calls, _, module, actor = fixture()
+    local env, calls, objects, module, actor = fixture()
     module.install()
     local victim = {id = function() return 47 end, position = function() return {} end,
         hit = function(self, value) calls.impulse = value end}
     local binder = {object = victim, st = {mob_death = {}, active_section = "active", active_scheme = "scheme",
         scheme = {}}}
     env.db.actor = actor()
+    -- 65535 is the engine's "belongs to no smart terrain" id, which is what the mod's own function checks.
+    objects[47] = {id = 47, smart_terrain_id = function() return 65535 end}
     env.bind_monster.generic_object_binder.death_callback(binder, victim, nil)
     equal(calls.terrain, 47, "nil-killer deaths still notify smart terrain")
     equal(#calls.events, 2, "nil-killer deaths keep both scheme events")
@@ -849,6 +886,9 @@ do
     equal(calls.sounds[1], [[ambient\da_beep]], "present sounds still reach the engine")
     real:play_no_feedback()
     equal(real.played, true, "a real sound object is returned unchanged")
+    -- A name the mod mistyped is corrected to the file it meant, so the player still hears it.
+    env.xr_sound.get_safe_sound_object([[device\pda_news]])
+    equal(calls.sounds[2], [[device\pda\pda_news]], "the gold-fish stash reaches the PDA sound it names")
 end
 
 do
@@ -986,7 +1026,7 @@ end
 do
     local env, calls, _, module = fixture()
     module.install()
-    env.game_object = {level_path = "level_path"}
+    env.game_object = {level_path = "level_path", enemy = "enemy"}
     env.move = {dodge = "dodge", walk = "walk", standing = "standing"}
 
     -- Each scenario gets its own NPC: the watchdog remembers one record per id, as it does in the game.
@@ -1273,6 +1313,52 @@ do
     local kept = make_physic(603, [[scripts\barr\avtpark_seif.ltx]], {existing_use = "existing"})
     env.ph_door.set_scheme(kept, "ini", "ph_door", "ph_door@locked")
     equal(env.db.storage[603].ph_door.on_use, "existing", "a use the configuration already has is never replaced")
+end
+
+-- The X18 terminal's transition names a section that does not exist, which aborts on the door code.
+do
+    local env, _, _, module = fixture()
+    module.install()
+    local terminal = {name = function() return "lab_psihoz113" end}
+    local broken = "{+lab_minys_psiz} sr_idle2"
+    local fixed = "{+lab_minys_psiz} ph_idle2"
+    equal(env.xr_logic.parse_condlist(terminal, "ph_idle", "on_info", broken).source, fixed,
+        "the terminal falls silent through the empty section its own file declares")
+    equal(env.xr_logic.parse_condlist(terminal, "ph_idle", "on_info", "  {+lab_minys_psiz}sr_idle2 ").source, fixed,
+        "however the ini spaced it")
+    equal(env.xr_logic.parse_condlist(terminal, "ph_idle2", "on_info", broken).source, broken,
+        "the object's other sections are untouched")
+    equal(env.xr_logic.parse_condlist(terminal, "ph_idle", "on_use", broken).source, broken,
+        "and its other fields are untouched")
+    local other = {name = function() return "lab_psihoz112" end}
+    equal(env.xr_logic.parse_condlist(other, "ph_idle", "on_info", broken).source, broken,
+        "another object with the same section keeps its own line")
+    equal(env.xr_logic.parse_condlist(nil, "ph_idle", "on_info", broken).source, broken,
+        "nil-object parsing is forwarded unchanged")
+end
+
+-- The ghost-house window restrictor has no unconditional else, so it aborts on every later entry to Cordon.
+do
+    local env, _, _, module = fixture()
+    module.install()
+    local window = make_physic(700, [[scripts\kordon_new\space_okno_prizrakdoma.ltx]])
+    local broken = "{-esc_dom_prizraka_kiknem} sr_idle"
+    local fixed = "{-esc_dom_prizraka_kiknem} sr_idle, nil"
+    equal(env.xr_logic.parse_condlist(window, "logic", "active", broken).source, fixed,
+        "the restrictor falls silent through the same nil its own sections switch to")
+    equal(env.xr_logic.parse_condlist(window, "logic", "active", " {-esc_dom_prizraka_kiknem}sr_idle ").source,
+        fixed, "however the ini spaced it")
+    equal(env.xr_logic.parse_condlist(window, "sr_idle", "on_info", broken).source, broken,
+        "its other sections are untouched")
+    local other = make_physic(701, [[scripts\kordon_new\dom_prizrak_pechka.ltx]])
+    equal(env.xr_logic.parse_condlist(other, "logic", "active", broken).source, broken,
+        "another restrictor keeps its own line")
+    -- Lis's camper section was renamed and one transition kept pointing at the old name.
+    local fox = "{+escape_stalker_done !_used} camper@esc_stalker_fox"
+    equal(env.xr_logic.parse_condlist(nil, "remark@esc_stalker_fox", "on_info", fox).source,
+        "{+escape_stalker_done !_used} camper@esc_stalker_foxik", "and the dangling camper target is repaired")
+    equal(env.xr_logic.parse_condlist(nil, "camper@esc_stalker_fox1", "on_info", fox).source, fox,
+        "only in the section that carries it")
     local door = make_physic(604, [[scripts\kordon\dveri_tixona_podsobka.ltx]])
     env.ph_door.set_scheme(door, "ini", "ph_door", "ph_door@locked")
     equal(env.db.storage[604].ph_door.on_use, nil, "other locked doors are unchanged")
@@ -1382,6 +1468,187 @@ do
     objects[410] = nil
     pass(4)
     equal(calls.infos.failed_dead, nil, "and is not watched")
+end
+
+-- The Agroprom dossier: nothing ever granted it, so it follows the death portion of the NPC it belongs to.
+do
+    local env, calls, _, module, actor = fixture()
+    module.install()
+    env.db.actor = actor()
+    local binder = {object = env.db.actor, first_update = false}
+    local function pass(seconds)
+        env.clock_ms = env.clock_ms + seconds * 1000
+        env.bind_stalker.actor_binder.update(binder, 1)
+    end
+    pass(4)
+    equal(calls.infos.agro_vzial_infy_s_terista_naca, nil, "a living terrorist hands nothing over")
+    calls.infos.aro_pidr1_strelki_death = true
+    pass(4)
+    equal(calls.infos.agro_vzial_infy_s_terista_naca, true, "his death hands over the dossier as well")
+    local delivered = #calls.given_infos
+    pass(4)
+    equal(#calls.given_infos, delivered, "and it is handed over exactly once")
+end
+
+-- A restrictor that names a story object the mod has already removed must not abort.
+do
+    local env, calls, _, module = fixture()
+    module.install()
+    local zone = {name = function() return "esc_gar_dezertiru_sqda_zone" end}
+    local function condition(field)
+        return env.xr_logic.cfg_get_npc_and_zone("ini", "sr_idle", field, zone)
+    end
+    calls.conditions.on_npc_in_zone = {"038", "esc_gar_dezertiru_sqda_zone", "%+esc_ydalite_nps_dezov_iz_gar% nil"}
+    calls.story = {}
+    local absent = condition("on_npc_in_zone")
+    equal(absent.name, "on_npc_in_zone", "the condition is kept, so later numbered ones are still read")
+    equal(absent.npc_id, 65535, "and points at no object, so it can never fire")
+    equal(absent.v2, "esc_gar_dezertiru_sqda_zone", "the zone it names is retained")
+    equal(absent.condlist.source, "%+esc_ydalite_nps_dezov_iz_gar% nil", "as is what it would have done")
+    calls.story = {[38] = {id = 700}}
+    equal(condition("on_npc_in_zone").npc_id, 700, "an object that is still there resolves exactly as before")
+    calls.story = {}
+    calls.conditions.on_npc_not_in_zone = {"038", "z", "nil"}
+    equal(condition("on_npc_not_in_zone").name, "on_npc_in_zone",
+        "the not-in-zone form cannot start firing on an object nobody can find")
+    calls.conditions.on_npc_not_in_zone2 = {"038", "z", "nil"}
+    equal(condition("on_npc_not_in_zone2").name, "on_npc_in_zone2", "and keeps its place in the numbered list")
+    equal(condition("on_npc_in_zone9"), nil, "a field the section does not have is still nil")
+end
+
+-- smart_terrain.on_death indexes both the dying object and its smart terrain without a check.
+do
+    local env, calls, objects, module = fixture()
+    module.install()
+    objects[80] = {id = 80, smart_terrain_id = function() return 12 end}
+    objects[12] = {id = 12, gulag = {}}
+    env.smart_terrain.on_death(80)
+    equal(calls.terrain, 80, "a death inside a live smart terrain still reaches the mod's own handler")
+    calls.terrain = nil
+    env.smart_terrain.on_death(81)
+    equal(calls.terrain, nil, "a death whose server object is already released is not indexed")
+    objects[82] = {id = 82, smart_terrain_id = function() return 13 end}
+    env.smart_terrain.on_death(82)
+    equal(calls.terrain, nil, "nor is one whose smart terrain is gone")
+    objects[83] = {id = 83, smart_terrain_id = function() return 65535 end}
+    env.smart_terrain.on_death(83)
+    equal(calls.terrain, 83, "an object that belongs to no smart terrain still reaches it")
+end
+
+-- The ATP scene: its closing portion has one source and nothing in the chain has a timeout.
+local function atp_fixture()
+    local env, calls, objects, module, actor = fixture()
+    module.install()
+    env.db.actor = actor()
+    local binder = {object = env.db.actor, first_update = false}
+    calls.story = {[41] = {id = 41, alive = function() return true end},
+        [42] = {id = 42, alive = function() return true end}}
+    calls.infos.atp_sdelka_t_fraza1 = true
+    return env, calls, objects, function(seconds)
+        env.clock_ms = env.clock_ms + seconds * 1000
+        env.bind_stalker.actor_binder.update(binder, 1)
+    end
+end
+
+do
+    local env, calls, _, pass = atp_fixture()
+    pass(4)
+    equal(calls.infos.esc_atp_ydalai_ysex_k_xyiam_end, nil, "a scene that is still running is left alone")
+    calls.story[41] = nil
+    pass(4)
+    equal(calls.infos.esc_atp_ydalai_ysex_k_xyiam_end, nil, "one tick of a missing leader is not yet a stall")
+    pass(6)
+    equal(calls.infos.esc_atp_ydalai_ysex_k_xyiam_end, true, "a leader who cannot come back closes the scene")
+    local delivered = #calls.given_infos
+    pass(6)
+    equal(#calls.given_infos, delivered, "and it is closed exactly once")
+end
+
+do
+    local env, calls, _, pass = atp_fixture()
+    calls.story[42] = {id = 42, alive = function() return false end}
+    calls.infos.atp_sdelka_t_fraza6 = true
+    pass(4)
+    pass(6)
+    equal(calls.infos.atp_sdelka_t_fraza7, true, "a dead Tikhon hands the leader the cue only he could give")
+    equal(calls.infos.esc_atp_ydalai_ysex_k_xyiam_end, nil,
+        "and the leader still closes the scene himself, so nothing of it is skipped")
+end
+
+do
+    local env, calls, _, pass = atp_fixture()
+    local playing = 1
+    calls.online[41] = {id = function() return 41 end, name = function() return "esc_atp_glava_specnaz" end,
+        active_sound_count = function() return playing end}
+    env.db.storage[41] = {active_scheme = "remark", combat_ignore = {enabled = false},
+        remark = {section = "remark4", logic = {{name = "on_signal", v1 = "sound_end"}}}}
+    pass(4)
+    equal(#calls.switches, 0, "a section that has only just started is not touched")
+    pass(95)
+    equal(env.db.storage[41].combat_ignore.enabled, true, "combat_ignore is turned back on, as a reload would")
+    equal(env.db.storage[41].remark.signals, nil, "a sound that is still playing is left to finish")
+    equal(#calls.switches, 1, "and the section is asked to make its own transition")
+    playing = 0
+    pass(95)
+    equal(env.db.storage[41].remark.signals["sound_end"], true, "a wait for a sound that ended is released")
+    equal(calls.infos.esc_atp_ydalai_ysex_k_xyiam_end, nil, "no portion is granted behind the scene's back")
+end
+
+-- Reba's spy job stamps itself failed at the very moment the actor reports it done.
+do
+    local env, calls, _, module, actor = fixture()
+    module.install()
+    env.db.actor = actor()
+    local binder = {object = env.db.actor, first_update = false}
+    local function pass(seconds)
+        env.clock_ms = env.clock_ms + seconds * 1000
+        env.bind_stalker.actor_binder.update(binder, 1)
+    end
+    pass(4)
+    equal(#calls.task_states, 0, "a job nobody reported is left alone")
+    equal(env.new_life.mne_nagrada_ot_rebu_za_shpionov("actor", "reba"), "desert eagle",
+        "the reward the phrase hands out is retained")
+    equal(calls.rewards, 1, "and the mod's own reward still runs once")
+    equal(calls.infos.esc_reba_proverky_proshel, true, "reporting the kills completes the job the task names")
+    equal(calls.infos.esc_reba_proverky_ne_proshel, nil,
+        "the fail portion is left to the dialog, which two other dialogs still wait for")
+    pass(4)
+    equal(#calls.task_states, 2, "and both objectives that name the portion are settled")
+    equal(calls.task_states[1].state, "completed", "as completed")
+    equal(calls.task_states[1].id, "esc_proverka_na_killerstvo", "on the spy job")
+    equal(calls.task_states[1].objective, 0, "the task itself")
+    equal(calls.task_states[2].objective, 3, "and its closing objective")
+    env.new_life.mne_nagrada_ot_rebu_za_shpionov("actor", "reba")
+    pass(4)
+    equal(#calls.task_states, 2, "a second run of the phrase settles nothing twice")
+end
+
+-- Two effects sit behind a timer with no target section, so the mod re-applies them on every update.
+do
+    local env, calls, _, module = fixture()
+    module.install()
+    local spy = {enemy = false,
+        relation = function(self) return self.enemy and env.game_object.enemy or "neutral" end}
+    env.xr_effects.actor_enemy("actor", spy)
+    equal(calls.declared, 1, "the first declaration of war still happens")
+    env.xr_effects.actor_enemy("actor", spy)
+    env.xr_effects.actor_enemy("actor", spy)
+    equal(calls.declared, 1, "and is not repeated once the relation already says so")
+    local other = {enemy = false, relation = function() return "neutral" end}
+    env.xr_effects.actor_enemy("actor", other)
+    equal(calls.declared, 2, "another object still gets its own declaration")
+    -- An object this build will not answer for keeps the mod's own unconditional declaration.
+    env.xr_effects.actor_enemy("actor", {enemy = false})
+    equal(calls.declared, 3, "and so does one with no relation to read")
+
+    env.xr_effects.run_postprocess("actor", nil, {"agr_u_fade"})
+    env.xr_effects.run_postprocess("actor", nil, {"agr_u_fade"})
+    equal(calls.effectors, 1, "one blackout adds one effector, not one per frame")
+    env.xr_effects.run_postprocess("actor", nil, {"other_fade"})
+    equal(calls.effectors, 2, "a different effect is never suppressed")
+    env.clock_ms = env.clock_ms + 1000
+    env.xr_effects.run_postprocess("actor", nil, {"agr_u_fade"})
+    equal(calls.effectors, 3, "and the same one runs again when it is genuinely asked for later")
 end
 
 -- The killer-less death branch of mob_death writes to a local only the other branch declares.

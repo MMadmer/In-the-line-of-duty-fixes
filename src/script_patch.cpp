@@ -18,6 +18,16 @@ constexpr auto replacement_statement = []
     return value;
 }();
 
+// abort() reports its reason with printf and then forces the fatal through printf("%s"), so the only thing
+// the crash box ever shows is the missing argument of that second call. Logging the reason without a second
+// format pass and raising it keeps the fatal while naming the actual cause. Same length and same line breaks,
+// so no other _g.script line number moves.
+constexpr std::string_view abort_tail =
+    "\tassert(\"ERROR: \" .. reason)\r\n\tprintf(\"ERROR: \" .. reason)\r\n\tprintf(\"%s\")\r\n";
+constexpr std::string_view abort_replacement =
+    "\tlog(\"ERROR: \" .. reason)   \r\n\terror(\"ERROR: \"..reason,2) \r\n\t            \r\n";
+static_assert(abort_tail.size() == abort_replacement.size());
+
 [[nodiscard]] auto as_bytes(std::string_view value)
 {
     return std::as_bytes(std::span(value.data(), value.size()));
@@ -42,6 +52,19 @@ Result remove_console_execution(std::span<std::byte> source)
     std::copy(replacement.begin(), replacement.end(), match);
     std::fill(match + replacement.size(), match + statement.size(), std::byte{' '});
     return Result::applied;
+}
+
+bool reveal_abort_reason(std::span<std::byte> source)
+{
+    const auto original = as_bytes(abort_tail);
+    const auto replacement = as_bytes(abort_replacement);
+    const auto match = std::search(source.begin(), source.end(), original.begin(), original.end());
+    if (match == source.end()) return false;
+    // A second copy means this is not the abort the pack validated; leave every one of them alone.
+    if (std::search(match + original.size(), source.end(), original.begin(), original.end()) != source.end())
+        return false;
+    std::copy(replacement.begin(), replacement.end(), match);
+    return true;
 }
 
 bool bind_update_menu(std::span<std::byte> source)

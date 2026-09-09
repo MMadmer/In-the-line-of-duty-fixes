@@ -303,6 +303,8 @@ HANDLE WINAPI create_file_mapping_hook(
     {
         std::memcpy(destination, source, static_cast<SIZE_T>(size.QuadPart));
         const auto bytes = std::span(static_cast<std::byte*>(destination), static_cast<SIZE_T>(size.QuadPart));
+        // Best effort on its own: an abort() the pack does not recognise still leaves the console fix below.
+        if (kind == MappedFile::console_script) static_cast<void>(ild::script_patch::reveal_abort_reason(bytes));
         patched = kind == MappedFile::console_script ?
             ild::script_patch::remove_console_execution(bytes) == ild::script_patch::Result::applied :
             kind == MappedFile::actor_script ? ild::script_patch::bind_gameplay(bytes) :
