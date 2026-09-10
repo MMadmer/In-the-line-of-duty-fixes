@@ -31,7 +31,11 @@ constexpr std::array sources{
     ConfigRepairSource{L"gamedata/scripts/ogsm_mutants.script", 40094,
         "F00377127ACB3AA6EE474CA51F6FC59139BB71AD74B50968600FC51A6F24A2A3", ConfigRepair::mutant_sounds},
     ConfigRepairSource{L"gamedata/config/text/rus/string_table_tasks_escape.xml", 10767,
-        "09B37C8A18C3183C5B2B87583BBA804162824B5AD65DF01660E78F4DE3F77810", ConfigRepair::vodka_task}
+        "09B37C8A18C3183C5B2B87583BBA804162824B5AD65DF01660E78F4DE3F77810", ConfigRepair::vodka_task},
+    ConfigRepairSource{L"gamedata/config/ui/zone_map_16.xml", 610,
+        "FD14F736D1B4733D5B6717637EA90DA287758D4496F0A992BCF3A277E7C92373", ConfigRepair::minimap_wide},
+    ConfigRepairSource{L"gamedata/config/ui/zone_map.xml", 628,
+        "53C5480827B7601D422E82B45953778A17ABA1DF2C455ADDFD8979B4466DC133", ConfigRepair::minimap_normal}
 };
 
 // Replace a unique expression with an equal-length one, padding the remainder with spaces.
@@ -108,6 +112,49 @@ bool borrow_indentation(std::string& contents, std::size_t excess)
     return true;
 }
 
+// A unique replacement that may change the length; the caller pays the difference back out of indentation.
+bool swap_unique(std::string& text, std::string_view old, std::string_view next)
+{
+    const auto at = text.find(old);
+    if (at == text.npos || text.find(old, at + old.size()) != text.npos) return false;
+    text.replace(at, old.size(), next);
+    return true;
+}
+
+struct MinimapFit
+{
+    std::string_view frame, frame_fix, background, background_fix, compass, compass_fix;
+};
+
+// The mod repainted the HUD atlas with a round bezel and pushed the minimap into the very corner of the
+// screen. The contact counter could not follow: it is laid out in maingame.xml inside the archives, so it
+// still prints where the stock plate used to be and lands low and left of the disc the new bezel draws. The
+// map is clipped to a rectangle, and with the frame the mod left on it, it reaches past the ring at the left
+// and the top. Both sets of numbers were measured off the atlas the mod ships: the background moves so the
+// disc sits under the counter and the painted dial stays under the compass needle, and the frame becomes the
+// largest rectangle that fits inside the ring, so no edge of the map can cross it. Nothing is resized, so the
+// file keeps its exact length.
+constexpr MinimapFit minimap_wide_fit{
+    R"(<level_frame x="0" y="-5" width="123" height="161"/>)",
+    R"(<level_frame x="18" y="43" width="86" height="113"/>)",
+    R"(<background x="0" y="0" width="138")", R"(<background x="-2" y="17" width="138")",
+    R"(<compass x="113" y="6" width="24")", R"(<compass x="111" y="21" width="24")"};
+constexpr MinimapFit minimap_normal_fit{
+    R"(<level_frame x="0" y="-5" width="163" height="161"/>)",
+    R"(<level_frame x="28" y="49" width="111" height="110"/>)",
+    R"(<background x="0" y="0" width="177")", R"(<background x="3" y="23" width="177")",
+    R"(<compass x="150" y="6" width="32")", R"(<compass x="146" y="26" width="32")"};
+
+bool fit_minimap(std::string& text, const MinimapFit& fit)
+{
+    const auto size = text.size();
+    if (!swap_unique(text, fit.frame, fit.frame_fix) ||
+        !swap_unique(text, fit.background, fit.background_fix) ||
+        !swap_unique(text, fit.compass, fit.compass_fix)) return false;
+    if (text.size() < size) return false;
+    return borrow_indentation(text, text.size() - size) && text.size() == size;
+}
+
 // The ransom dialog hands over the artefact case without the 250 000 roubles that its own lines, its task and
 // the mod's check and charge functions all describe; those two functions are simply never referenced. The
 // gate goes on the dialog, the charge on the phrase that hands the case over, both at the file's exact size.
@@ -160,6 +207,11 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
     {
         // Keep the existing final coin exchange; the earlier rejected-deal action has no implementation.
         if (!remove_absent_action(patched, "agro_zombi_petia_2", "moa_agro.ot_menia_monetu_bqrera", 1)) return false;
+    }
+    else if (repair == ConfigRepair::minimap_wide || repair == ConfigRepair::minimap_normal)
+    {
+        if (!fit_minimap(patched, repair == ConfigRepair::minimap_wide ? minimap_wide_fit : minimap_normal_fit))
+            return false;
     }
     else if (repair == ConfigRepair::psi_sound)
     {

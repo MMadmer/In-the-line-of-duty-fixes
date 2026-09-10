@@ -426,3 +426,27 @@ discriminator is proven and every asset on that path verified, but the engine fa
 The Duty base dialogs on Bar render as raw string ids, because the mod's own `stable_dialogs_bar.xml` shadows
 the archived file and drops every `bar_dolg_*` entry; none of those dialogs gates anything, so this is
 cosmetic, and repairing it means shipping a string table of our own.
+
+### Minimap alignment — 2026-09-10
+
+The mod repainted `textures\ui\ui_hud.dds` with a round bezel, left the vanilla region table in the archives
+untouched, and moved the whole minimap into the screen corner (`zone_map*.xml`: `background` from `7,6` to
+`0,0`, `level_frame` from `15,20` to `0,-5`). Two things fall out of that.
+
+The contact counter is `static_pda_online` in `config\ui\maingame_16.xml`, which lives inside `gamedata.dbb`
+and cannot be reached by a path-based repair. It still draws at `104,167` with the number centred in its own
+`27x28` box. The plate it was meant to sit on is region `ui_hud_map_counter`, and in the mod's atlas that
+region is **entirely transparent** — the disc the player sees is painted into the `ui_hud_map` region instead,
+centred at atlas `159.7,165.75`. Against the drawn `138x189` box that is `119.2,163.1`, while the number lands
+at `117.5,180.5`: seventeen pixels high and two to the left, which is exactly what the screenshot shows.
+
+The map is clipped to `level_frame`, a rectangle, so a circular bezel can only ever contain the inscribed
+rectangle. With the mod's frame the map reaches past the ring at the left and the top.
+
+Both are repaired in `config_repairs.cpp` as one equal-length in-memory patch per aspect file, gated on the
+file's size and SHA-256 like every other config repair. `background` moves so the painted disc sits under the
+counter and the painted dial stays under the compass needle; `level_frame` becomes the largest rectangle that
+fits inside the ring, computed from the ring measured off the atlas. Three bytes of inserted digits are paid
+for out of the file's own indentation, which carries no meaning in this XML. The map is therefore smaller than
+the mod left it: that is the cost of a rectangular clip inside a round frame, and the alternative is the
+overhang the player reported.

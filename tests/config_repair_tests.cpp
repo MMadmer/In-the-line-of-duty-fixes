@@ -94,6 +94,37 @@ int main(int argc, char** argv)
     unchanged = twice;
     if (ild::repair_config_text(twice, ConfigRepair::vodka_task) || twice != unchanged) return 21;
 
+    // The minimap: the bezel moves under the counter the archives lay out, and the map becomes a rectangle
+    // that fits inside the ring. The file must come out at exactly its own length.
+    std::string minimap =
+        "<window>\r\n\t<minimap>\r\n"
+        "\t\t<level_frame x=\"0\" y=\"-5\" width=\"123\" height=\"161\"/>\r\n"
+        "\t\t<background x=\"0\" y=\"0\" width=\"138\" height=\"189\" stretch=\"1\"> \r\n"
+        "\t\t\t<dist_text x=\"30\" y=\"3\" width=\"33\" height=\"20\">\r\n\t\t\t</dist_text>\r\n\t\t</background>\r\n"
+        "\t\t<compass x=\"113\" y=\"6\" width=\"24\" height=\"32\" heading=\"1\" stretch=\"1\">\r\n"
+        "\t\t</compass>\r\n\t</minimap>\r\n</window>\r\n";
+    const auto minimap_size = minimap.size();
+    if (!ild::repair_config_text(minimap, ConfigRepair::minimap_wide) || minimap.size() != minimap_size ||
+        minimap.find("<level_frame x=\"18\" y=\"43\" width=\"86\" height=\"113\"/>") == std::string::npos ||
+        minimap.find("<background x=\"-2\" y=\"17\" width=\"138\"") == std::string::npos ||
+        minimap.find("<compass x=\"111\" y=\"21\" width=\"24\"") == std::string::npos ||
+        minimap.find("y=\"-5\"") != std::string::npos) return 22;
+    // A source that is not the one the numbers were measured against is left exactly as it is.
+    std::string foreign = minimap;
+    if (ild::repair_config_text(foreign, ConfigRepair::minimap_wide) || foreign != minimap) return 23;
+    std::string narrow =
+        "<window>\r\n\t<minimap>\r\n"
+        "\t\t<level_frame x=\"0\" y=\"-5\" width=\"163\" height=\"161\"/>\r\n"
+        "\t\t<background x=\"0\" y=\"0\" width=\"177\" height=\"185\"> \r\n"
+        "\t\t\t<dist_text x=\"30\" y=\"3\" width=\"50\" height=\"20\">\r\n\t\t\t</dist_text>\r\n\t\t</background>\r\n"
+        "\t\t<compass x=\"150\" y=\"6\" width=\"32\" height=\"32\" heading=\"1\">\r\n"
+        "\t\t</compass>\r\n\t</minimap>\r\n</window>\r\n";
+    const auto narrow_size = narrow.size();
+    if (!ild::repair_config_text(narrow, ConfigRepair::minimap_normal) || narrow.size() != narrow_size ||
+        narrow.find("<level_frame x=\"28\" y=\"49\" width=\"111\" height=\"110\"/>") == std::string::npos ||
+        narrow.find("<background x=\"3\" y=\"23\" width=\"177\"") == std::string::npos ||
+        narrow.find("<compass x=\"146\" y=\"26\" width=\"32\"") == std::string::npos) return 24;
+
     if (argc == 3)
     {
         const std::filesystem::path root(argv[1]), output(argv[2]);

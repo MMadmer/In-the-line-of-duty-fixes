@@ -23,6 +23,7 @@
 * Разговор с Карабином о националистах на Агропроме и последний разговор с Мазаем в Тёмной долине снова доступны — оба ждали того, чего в игре нет.
 * Таймер выброса на ЧАЭС больше не висит на экране до конца уровня с нулями и служебной строкой вместо подписи. Немецкие снайперы в Мёртвом городе возвращаются на позиции утром. Сирена налёта играет один раз, а не каждый кадр. У пси-установки Тихоныча больше не копится по новому экранному эффекту на каждый кадр во время затемнения, а шпион у антенн не объявляет войну игроку по десять раз в секунду.
 * Вылет по вине скрипта показывает настоящую причину вместо «bad argument #2 to 'format'». Теперь по сообщению об ошибке видно, какой объект и какая секция её вызвали.
+* Мини-карта встала на место. Число обнаруженных NPC теперь стоит по центру своего кружка, а не съезжает вниз-влево, и сама карта больше не вылезает за кольцо слева и сверху. Мод перерисовал HUD круглым, но счётчик размечен в архивном файле игры и подвинуться за ним не мог — поэтому подвинута оправа, а область карты сжата до прямоугольника, который целиком помещается внутрь кольца.
 
 ## Установка
 
@@ -55,6 +56,7 @@ Crashes on the way into a level, and branches that stopped halfway
 * The Karabin conversation about the nationalists at Agroprom and Mazai's last talk in Dark Valley are available again — both waited for something the game does not contain.
 * The CNPP surge timer no longer hangs on screen at zero for the rest of the level with its own string id as the caption. The German snipers in Dead City return to their posts at dawn. The air-raid siren plays once instead of every frame. Tikhon's psi installation no longer piles up a fresh screen effect every frame during the blackout, and the spy by the antennas no longer declares war on the player ten times a second.
 * A crash caused by a script now shows the real reason instead of "bad argument #2 to 'format'", so the error message names the object and the section that caused it.
+* The minimap is aligned. The number of detected NPCs now sits in the middle of its own disc instead of low and to the left, and the map no longer reaches past the ring at the left and the top. The mod repainted the HUD round, but the counter is laid out in an archived game file and could not follow it, so the bezel moves instead, and the map area becomes the largest rectangle that fits inside the ring.
 
 ## Installation
 
