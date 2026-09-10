@@ -26,6 +26,7 @@ add_library(ild_script_patch STATIC
 target_include_directories(ild_script_patch PUBLIC src)
 
 add_library(dinput8 SHARED
+    src/reader_repairs.cpp
     src/texture_aliases.cpp
     src/config_repairs.cpp
     src/startup_repairs.cpp
@@ -47,6 +48,7 @@ target_compile_definitions(dinput8 PRIVATE ILD_VERSION="${PROJECT_VERSION}")
 set_target_properties(dinput8 PROPERTIES PREFIX "" OUTPUT_NAME "dinput8")
 
 add_library(dinput8_console_qa SHARED EXCLUDE_FROM_ALL
+    src/reader_repairs.cpp
     src/texture_aliases.cpp
     src/config_repairs.cpp
     src/startup_repairs.cpp

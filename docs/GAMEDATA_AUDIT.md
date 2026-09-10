@@ -427,26 +427,33 @@ The Duty base dialogs on Bar render as raw string ids, because the mod's own `st
 the archived file and drops every `bar_dolg_*` entry; none of those dialogs gates anything, so this is
 cosmetic, and repairing it means shipping a string table of our own.
 
-### Minimap alignment — 2026-09-10
+### The contact counter and the small config files — 2026-09-10
 
 The mod repainted `textures\ui\ui_hud.dds` with a round bezel, left the vanilla region table in the archives
 untouched, and moved the whole minimap into the screen corner (`zone_map*.xml`: `background` from `7,6` to
-`0,0`, `level_frame` from `15,20` to `0,-5`). Two things fall out of that.
+`0,0`, `level_frame` from `15,20` to `0,-5`). The contact counter did not follow.
 
-The contact counter is `static_pda_online` in `config\ui\maingame_16.xml`, which lives inside `gamedata.dbb`
-and cannot be reached by a path-based repair. It still draws at `104,167` with the number centred in its own
-`27x28` box. The plate it was meant to sit on is region `ui_hud_map_counter`, and in the mod's atlas that
-region is **entirely transparent** — the disc the player sees is painted into the `ui_hud_map` region instead,
-centred at atlas `159.7,165.75`. Against the drawn `138x189` box that is `119.2,163.1`, while the number lands
-at `117.5,180.5`: seventeen pixels high and two to the left, which is exactly what the screenshot shows.
+The counter is `static_pda_online` in `config\ui\maingame_16.xml`, inside `gamedata.dbb`. Its own plate,
+region `ui_hud_map_counter`, is **entirely transparent** in the mod's atlas; the disc the player sees is
+painted into the `ui_hud_map` region, centred at atlas `159.3,165.8`. Measured on screen with the bezel where
+the mod leaves it, that disc is at `297,306` and the number at `293.5,333` — low and slightly left, which is
+what the screenshots show. The counter is attached to the bezel, so moving the bezel moves both and can never
+close the gap: the number itself has to move, and it moves in `maingame*.xml`.
 
-The map is clipped to `level_frame`, a rectangle, so a circular bezel can only ever contain the inscribed
-rectangle. With the mod's frame the map reaches past the ring at the left and the top.
+Reaching that file needed the delivery fixed first. Config repairs rode on `CreateFileMappingA`, and the
+engine only maps a file above a size threshold; everything smaller is read straight into a private buffer.
+Every repair to a small file — `string_table_ui.xml`, `esc_last_day_kamp.ltx`, `z_zvyk_psi.ltx`,
+`avtodroch.xml`, `string_table_tasks_escape.xml` — had been failing silently since it shipped. Both exported
+`CLocatorAPI::r_open` overloads are detoured now (`reader_repairs.cpp`), pinned to the validated xrCore and
+its whole-instruction prologues, and every reader is offered to the same size-and-digest gated repair.
 
-Both are repaired in `config_repairs.cpp` as one equal-length in-memory patch per aspect file, gated on the
-file's size and SHA-256 like every other config repair. `background` moves so the painted disc sits under the
-counter and the painted dial stays under the compass needle; `level_frame` becomes the largest rectangle that
-fits inside the ring, computed from the ring measured off the atlas. Three bytes of inserted digits are paid
-for out of the file's own indentation, which carries no meaning in this XML. The map is therefore smaller than
-the mod left it: that is the cost of a rectangular clip inside a round frame, and the alternative is the
-overhang the player reported.
+An archived file arrives as a read-only view of the archive mapping (`MEM_MAPPED`, `PAGE_READONLY`), so it is
+not rewritten in place. The repair copies it, patches the copy, keeps it for the process and repoints the
+reader at it. That is only done for a reader that owns no memory of its own: for an entry stored uncompressed
+the engine hands out a plain reader over the archive mapping, which neither frees nor unmaps what it was
+given. A compressed entry arrives in a private buffer and takes the ordinary in-place path.
+
+The counter moves to `105,153` on the widescreen layout, which puts the number within half a pixel of the
+centre of the disc at 2560x1440, verified on a loaded save. The 4:3 layout is derived from the same atlas
+measurement and moves to `135,148`; it is not verified on screen. The minimap itself is left exactly as the
+mod ships it.

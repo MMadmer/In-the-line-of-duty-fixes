@@ -32,10 +32,10 @@ constexpr std::array sources{
         "F00377127ACB3AA6EE474CA51F6FC59139BB71AD74B50968600FC51A6F24A2A3", ConfigRepair::mutant_sounds},
     ConfigRepairSource{L"gamedata/config/text/rus/string_table_tasks_escape.xml", 10767,
         "09B37C8A18C3183C5B2B87583BBA804162824B5AD65DF01660E78F4DE3F77810", ConfigRepair::vodka_task},
-    ConfigRepairSource{L"gamedata/config/ui/zone_map_16.xml", 610,
-        "FD14F736D1B4733D5B6717637EA90DA287758D4496F0A992BCF3A277E7C92373", ConfigRepair::minimap_wide},
-    ConfigRepairSource{L"gamedata/config/ui/zone_map.xml", 628,
-        "53C5480827B7601D422E82B45953778A17ABA1DF2C455ADDFD8979B4466DC133", ConfigRepair::minimap_normal}
+    ConfigRepairSource{L"gamedata/config/ui/maingame_16.xml", 3826,
+        "6E80C195D264C4E431C59C0AB4A1782BC0EB2AEF1F753DAD25124BDDFF790C0B", ConfigRepair::counter_wide},
+    ConfigRepairSource{L"gamedata/config/ui/maingame.xml", 3830,
+        "E36AE22F91A0BDBBB61FD718686222B7C2D3DB8D4B2930F64D1A4B8DF2994454", ConfigRepair::counter_normal}
 };
 
 // Replace a unique expression with an equal-length one, padding the remainder with spaces.
@@ -121,39 +121,18 @@ bool swap_unique(std::string& text, std::string_view old, std::string_view next)
     return true;
 }
 
-struct MinimapFit
-{
-    std::string_view frame, frame_fix, background, background_fix, compass, compass_fix;
-};
-
-// The mod repainted the HUD atlas with a round bezel and pushed the minimap into the very corner of the
-// screen. The contact counter could not follow: it is laid out in maingame.xml inside the archives, so it
-// still prints where the stock plate used to be and lands low and left of the disc the new bezel draws. The
-// map is clipped to a rectangle, and with the frame the mod left on it, it reaches past the ring at the left
-// and the top. Both sets of numbers were measured off the atlas the mod ships: the background moves so the
-// disc sits under the counter and the painted dial stays under the compass needle, and the frame becomes the
-// largest rectangle that fits inside the ring, so no edge of the map can cross it. Nothing is resized, so the
-// file keeps its exact length.
-constexpr MinimapFit minimap_wide_fit{
-    R"(<level_frame x="0" y="-5" width="123" height="161"/>)",
-    R"(<level_frame x="18" y="43" width="86" height="113"/>)",
-    R"(<background x="0" y="0" width="138")", R"(<background x="-2" y="17" width="138")",
-    R"(<compass x="113" y="6" width="24")", R"(<compass x="111" y="21" width="24")"};
-constexpr MinimapFit minimap_normal_fit{
-    R"(<level_frame x="0" y="-5" width="163" height="161"/>)",
-    R"(<level_frame x="28" y="49" width="111" height="110"/>)",
-    R"(<background x="0" y="0" width="177")", R"(<background x="3" y="23" width="177")",
-    R"(<compass x="150" y="6" width="32")", R"(<compass x="146" y="26" width="32")"};
-
-bool fit_minimap(std::string& text, const MinimapFit& fit)
-{
-    const auto size = text.size();
-    if (!swap_unique(text, fit.frame, fit.frame_fix) ||
-        !swap_unique(text, fit.background, fit.background_fix) ||
-        !swap_unique(text, fit.compass, fit.compass_fix)) return false;
-    if (text.size() < size) return false;
-    return borrow_indentation(text, text.size() - size) && text.size() == size;
-}
+// The mod repainted the HUD atlas with a round bezel, and the dial it paints for the contact counter is
+// nowhere near where the stock plate used to be. The counter itself could not follow: it is laid out in
+// maingame.xml inside the archives, so it still prints low and to the left of the dial. Moving the bezel
+// would drag the whole minimap with it, so the counter moves instead, by what was measured between the
+// number on screen and the centre of the dial in the atlas. Nothing is resized, so the file keeps its
+// exact length.
+constexpr std::string_view counter_wide_at = R"(<static_pda_online x="104" y="167")";
+constexpr std::string_view counter_wide_fix = R"(<static_pda_online x="105" y="153")";
+constexpr std::string_view counter_normal_at = R"(<static_pda_online x="138" y="167")";
+constexpr std::string_view counter_normal_fix = R"(<static_pda_online x="135" y="148")";
+static_assert(counter_wide_at.size() == counter_wide_fix.size());
+static_assert(counter_normal_at.size() == counter_normal_fix.size());
 
 // The ransom dialog hands over the artefact case without the 250 000 roubles that its own lines, its task and
 // the mod's check and charge functions all describe; those two functions are simply never referenced. The
@@ -195,6 +174,13 @@ bool is_config_repair_path(std::wstring_view path, const std::filesystem::path& 
     return false;
 }
 
+bool is_config_repair_size(std::size_t size)
+{
+    for (const auto& source : sources)
+        if (source.size == size) return true;
+    return false;
+}
+
 bool repair_config_text(std::string& text, ConfigRepair repair)
 {
     auto patched = text;
@@ -208,10 +194,11 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
         // Keep the existing final coin exchange; the earlier rejected-deal action has no implementation.
         if (!remove_absent_action(patched, "agro_zombi_petia_2", "moa_agro.ot_menia_monetu_bqrera", 1)) return false;
     }
-    else if (repair == ConfigRepair::minimap_wide || repair == ConfigRepair::minimap_normal)
+    else if (repair == ConfigRepair::counter_wide || repair == ConfigRepair::counter_normal)
     {
-        if (!fit_minimap(patched, repair == ConfigRepair::minimap_wide ? minimap_wide_fit : minimap_normal_fit))
-            return false;
+        const auto wide = repair == ConfigRepair::counter_wide;
+        if (!swap_unique(patched, wide ? counter_wide_at : counter_normal_at,
+            wide ? counter_wide_fix : counter_normal_fix)) return false;
     }
     else if (repair == ConfigRepair::psi_sound)
     {

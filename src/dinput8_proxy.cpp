@@ -10,6 +10,7 @@
 #include "texture_aliases.h"
 #include "script_patch.h"
 #include "display_mode.h"
+#include "reader_repairs.h"
 #include "sha256.h"
 
 #include <Windows.h>
@@ -388,6 +389,12 @@ BOOL CALLBACK install_fixes(PINIT_ONCE, PVOID, PVOID*)
     // This one import carries the console-spam fix, every script and config repair, and the Lua payload with
     // the quest and NPC repairs. It is resolved by name, so it does not care which build of the engine runs.
     record("script, config and Lua repairs", real_create_file_mapping != nullptr);
+    // Files below the engine's mapping threshold never reach the hook above, which is every small config the
+    // pack repairs, so the reader itself is caught as well.
+    const auto readers = ild::install_reader_repairs(root);
+    record("small config repairs", readers);
+    if (!readers)
+        report_unsupported(L"The validated file reader could not be hooked. Repairs to small config files were disabled.");
     if (!real_create_file_mapping)
     {
         report_unsupported(L"The validated xrCore.dll import could not be hooked. The fix was disabled.");
