@@ -846,6 +846,32 @@ local function fox_condition(section, field, source)
         string.gsub(source, "%s+", "") == fox_transition
 end
 
+-- The X16 grate. Vanilla holds it open, drops it once the player is past, and reopens it for good when the
+-- primary emitter is shut down. The mod starts it in the fallen state and made the reopen wait for art_start,
+-- which nothing in the game grants, so it is welded shut. This is the vanilla condition, restored.
+local grate_config = [[scripts\yan\yan_grate.ltx]]
+local grate_transition = "{+art_start}ph_door@open"
+local grate_repaired = "{+yan_labx16_switcher_primary_off} ph_door@open_final"
+
+local function grate_condition(npc, section, field, source)
+    return field == "on_info" and section == "ph_door@close" and type(source) == "string" and
+        string.gsub(source, "%s+", "") == grate_transition and logic_config(npc) == grate_config
+end
+
+-- Both KPSS snipers leave their post at nightfall and are told to come back to the section they are already
+-- in, which switch_to_section refuses. They never return to the sniper's nest again.
+local sniper_configs = {
+    [ [[scripts\ded_city\nemec_sniper1_v_kpss_logic.ltx]] ] = true,
+    [ [[scripts\ded_city\nemec_sniper2_v_kpss_logic.ltx]] ] = true
+}
+local sniper_transition = "{!is_night}kamp"
+local sniper_repaired = "{!is_night} camper"
+
+local function sniper_condition(npc, section, field, source)
+    return field == "on_info" and section == "kamp" and type(source) == "string" and
+        string.gsub(source, "%s+", "") == sniper_transition and sniper_configs[logic_config(npc)] == true
+end
+
 local function install_burglar_repairs()
     local original_door = ph_door.set_scheme
     ph_door.set_scheme = function(npc, ini, scheme, section, gulag_name)
@@ -968,16 +994,21 @@ local function install_repeat_effect_repairs()
         if known and current == game_object.enemy then return end
         return original_enemy(actor, npc, ...)
     end
-    local original_postprocess = xr_effects.run_postprocess
-    xr_effects.run_postprocess = function(actor, npc, p)
-        local name = p and p[1]
-        if type(name) == "string" then
-            local now, last = time_global(), postprocess_last[name]
-            if last and now - last < postprocess_repeat then return end
-            postprocess_last[name] = now
+    local function throttled(original, key)
+        return function(actor, npc, p)
+            local name = p and p[1]
+            if type(name) == "string" then
+                local now, last = time_global(), postprocess_last[key .. name]
+                if last and now - last < postprocess_repeat then return end
+                postprocess_last[key .. name] = now
+            end
+            return original(actor, npc, p)
         end
-        return original_postprocess(actor, npc, p)
     end
+    xr_effects.run_postprocess = throttled(xr_effects.run_postprocess, "pp:")
+    -- The Dead City air raid restarts the same sound every update for five and a half seconds, from a clause
+    -- with no target section. A sound that is asked for again while it is still the same sound is one sound.
+    xr_effects.play_snd = throttled(xr_effects.play_snd, "snd:")
 end
 
 local function install_spy_task_repair()
@@ -994,14 +1025,27 @@ local function install_spy_task_repair()
     end
 end
 
+-- Both a completion and a fail portion end up known on these tasks, so the outcome must not depend on which
+-- of the two the engine happens to test first. Each entry names the objectives that carry them.
+local pending_tasks = {}
+
+local function settle_task(id, objectives)
+    pending_tasks[id] = objectives
+end
+
+local function settle_tasks()
+    for id, objectives in pairs(pending_tasks) do
+        pending_tasks[id] = nil
+        for _, objective in ipairs(objectives) do
+            pcall(function() level_tasks.set_task_state(task.completed, id, objective) end)
+        end
+    end
+end
+
 local function settle_spy_task()
     if not spy_task_reported then return end
     spy_task_reported = false
-    -- Both portions are known by now, so the outcome must not depend on which of the two the engine tests
-    -- first. These are the two objectives that name them.
-    for _, objective in ipairs(spy_task_objectives) do
-        pcall(function() level_tasks.set_task_state(task.completed, spy_task, objective) end)
-    end
+    settle_task(spy_task, spy_task_objectives)
 end
 
 local function deliver_paired_portions()
@@ -1011,6 +1055,353 @@ local function deliver_paired_portions()
             report_line("paired " .. portion)
         end
     end
+end
+
+-- The three soldiers who walk into the controller's ambush under Agroprom are meant to die there. Mozar says
+-- so in his own lines - he is dead, a monster killed him, and the two sergeants too - and the Prapor's
+-- final section is literally named remark@suicide. Nothing in the mod ever kills them. They hold the psy_pain
+-- animation for good, because combat_ignore_cond = always makes them ignore the controller as well, and the
+-- whole surface garrison sits behind {+und_prapor_dead}, which only the Prapor's own [death] section grants -
+-- so the base never reacts and the branch ends with nothing left to do. Each of them now dies on its own
+-- timer, the Prapor first, so the scripted scream, the PDA line and the zombie wave still land in the room.
+-- Sections that hold up the story behind something that may never arrive, with the transition the section
+-- itself would have made. The three Agroprom soldiers die because the scene says they did; the two remaining
+-- entries only put a floor under a wait for a sound. Keyed by spawn section: all of these NPCs carry their
+-- logic as custom_data, so they have no [logic] cfg to read.
+local scene_fallbacks = {
+    -- The Bar formation. bar_krik_konec has one producer and gates every quest of the rest of the game.
+    b_kom_stroi = {remark2 = {25000, "%+bar_krik_konec% remark3"}},
+    -- The SS paratroop commander. He is untalkable until camper55, and the ending dialog is only on him.
+    dt_ss_desantnik_kom = {
+        remark1 = {30000, "%+ddt_ss_desant_na_start% walker"},
+        remark2 = {30000, "%+dt_ss_nakonecto_k_tonelq% camper55"}
+    },
+    und_prapor2 = {["remark@suicide"] = {12000, "%=kill%"}},
+    agro_sania = {remark66 = {16000, "%=kill%"}},
+    agro_pania = {remark66 = {20000, "%=kill%"}}
+}
+local underground_task = "agro_v_podzemky"
+local underground_objectives = {0, 1}
+
+local function install_scene_fallbacks()
+    local original = xr_remark.set_scheme
+    xr_remark.set_scheme = function(npc, ini, scheme, section, gulag_name)
+        local result = original(npc, ini, scheme, section, gulag_name)
+        local owner = npc and scene_fallbacks[npc:section()]
+        local fallback = owner and owner[section]
+        local storage = fallback and db.storage[npc:id()]
+        local state = storage and storage[scheme]
+        -- on_timer is measured from the activation time activate_by_section has just written, and set_scheme
+        -- rebuilds st.logic on every activation, so this neither accumulates nor survives a section change.
+        -- The delays are well past what the section needs when nothing goes wrong.
+        if state and state.logic then
+            table.insert(state.logic, {name = "on_timer1", v1 = fallback[1],
+                condlist = xr_logic.parse_condlist(npc, section, "on_timer1", fallback[2])})
+            report_line("fallback " .. npc:name() .. " " .. section)
+        end
+        return result
+    end
+end
+
+-- Both objectives of the underground task carry und_prapor_dead as their fail portion and und_prapor_3 as
+-- their completion, and the dialog that completes it always runs first. Now that the deaths actually happen,
+-- the completion is re-asserted so the order the engine tests them in cannot matter.
+local function settle_underground_task()
+    if has_alife_info("und_prapor_dead") and has_alife_info("und_prapor_3") then
+        settle_task(underground_task, underground_objectives)
+    end
+end
+
+-- The branch ends with the base hostile, both Agroprom tasks already closed and no marker of any kind, while
+-- the only way on is an NPC who appears in an unmarked corner of the Garbage the moment the door opens. This
+-- is the one hint the pack adds, in the same shape the mod's own news.script uses.
+-- The engine reads scripts as CP1251 while this repository keeps its sources in UTF-8, so the one
+-- sentence the pack shows is assembled from its own bytes:
+-- Здесь больше нечего делать. Надо возвращаться на Свалку, к повстанцам.
+local garbage_hint = string.char(
+    199, 228, 229, 241, 252, 32, 225, 238, 235, 252, 248, 229, 32, 237, 229, 247, 229, 227, 238, 32, 228, 229, 235,
+    224, 242, 252, 46, 32, 205, 224, 228, 238, 32, 226, 238, 231, 226, 240, 224, 249, 224, 242, 252, 241, 255, 32,
+    237, 224, 32, 209, 226, 224, 235, 234, 243, 44, 32, 234, 32, 239, 238, 226, 241, 242, 224, 237, 246, 224, 236,
+    46)
+local garbage_hint_flag = "agro_finaluch_igra"
+
+-- The same scenes, watched from the actor's side: an action that is never selected cannot reach the timer
+-- above, and an NPC that is gone cannot reach anything at all.
+local scene_owners = {
+    b_kom_stroi = true, dt_ss_desantnik_kom = true, bar_letiagin_final2 = true,
+    und_prapor2 = true, agro_sania = true, agro_pania = true
+}
+
+-- NPCs whose loss cannot be recovered from, remembered from the moment they spawn so their absence can be
+-- told apart from "not spawned yet" without scanning the whole simulation.
+local critical_sections = {bar_melisa_nyjen_tyt = true}
+local critical_npc = {}
+
+local function watch_critical(binder)
+    local section = binder.object:section()
+    if critical_sections[section] then critical_npc[section] = binder.object:id() end
+end
+
+local function check_scene_stalls(now)
+    for id, storage in pairs(db.storage) do
+        if storage.active_scheme then
+            local object = level.object_by_id(id)
+            -- db.storage also holds restrictors and physic objects, which answer for a section differently.
+            local known, section = pcall(function() return object:section() end)
+            if known and scene_owners[section] then
+                pcall(unfreeze_scene, object, storage, "scene:" .. id, now)
+            end
+        end
+    end
+end
+
+-- A scene whose only producer is gone for good. Each entry hands over exactly what the section it replaces
+-- would have handed over, and only once the grace period proves nothing else is coming.
+local last_resort = {
+    -- The Bar formation commander is an ordinary stalker, so unlike the mod's other scene NPCs he can die.
+    {after = "bar_v_stroi", missing = "bar_krik_konec", grace = 180000},
+    -- The rally countdown is paid for in advance and its dialog cannot be re-run.
+    {after = "ddt_rally_otschet", missing = "dt_ralli_strt", grace = 40000}
+}
+local last_resort_since = {}
+
+local function deliver_last_resort(now)
+    for _, rule in ipairs(last_resort) do
+        if has_alife_info(rule.after) and not has_alife_info(rule.missing) then
+            last_resort_since[rule.missing] = last_resort_since[rule.missing] or now
+            if now - last_resort_since[rule.missing] >= rule.grace then
+                db.actor:give_info_portion(rule.missing)
+                report_line("scene " .. rule.missing)
+            end
+        else
+            last_resort_since[rule.missing] = nil
+        end
+    end
+end
+
+-- Letyagin's farewell hides the HUD and disables input, and the only thing that ever gives them back is a
+-- distance check on the walk he then takes - while a restrictor teleports the actor back to the same spot
+-- until that walk reports in. A walk that cannot be built therefore locks the player out of the game with no
+-- way back. This runs the section's own line instead: the stash, the portion and the input.
+local letyagin_grace = 120000
+local letyagin_since
+
+local function release_letyagin(now)
+    if not has_alife_info("bar_letia_final") or has_alife_info("barar_vse_letiaga_yshel") then
+        letyagin_since = nil
+        return
+    end
+    letyagin_since = letyagin_since or now
+    if now - letyagin_since < letyagin_grace then return end
+    letyagin_since = now
+    local simulator = alife()
+    local owner
+    for id, storage in pairs(db.storage) do
+        local object = storage.active_scheme and level.object_by_id(id)
+        if object and object:section() == "bar_letiagin_final2" then owner = object end
+    end
+    pcall(function() xr_effects.dt_final_rndm_tainik(db.actor, owner) end)
+    db.actor:give_info_portion("barar_vse_letiaga_yshel")
+    pcall(function() xr_effects.enable_ui(db.actor, owner) end)
+    if owner and simulator then
+        local server = simulator:object(owner:id())
+        if server then simulator:release(server, true) end
+    end
+    report_line("scene barar_vse_letiaga_yshel")
+end
+
+-- The nuke defuser has one source: Melisa, at the end of a chain that starts mid-game. Every one of the seven
+-- finale devices tests for it, and the portion that opens the ending comes only from the seventh.
+local function deliver_defuser()
+    if not has_alife_info("barar_vse_letiaga_yshel") or has_alife_info("bar_melisa_finish") then return end
+    local id = critical_npc.bar_melisa_nyjen_tyt
+    local simulator = alife()
+    if not id or not simulator or simulator:object(id) then return end
+    local actor = db.actor
+    simulator:create("bar_deaktiv_iaderki", actor:position(), actor:level_vertex_id(),
+        actor:game_vertex_id(), actor:id())
+    actor:give_info_portion("bar_melisa_finish")
+    report_line("scene bar_deaktiv_iaderki")
+end
+
+-- The X18 entrance door was changed to start open, which leaves [ph_door@locked] unreachable - and its on_use
+-- is the only producer of val_x18_door_open and dar_run_quest anywhere in the mod. Without them the lab task
+-- never completes, the Barman never takes the documents, the X16 task is never given and his stock never
+-- improves. Both portions mean "the way into the lab is open", so reaching the lab, or holding the two keys
+-- the door asked for, stands in for the use that can no longer happen. The door itself is left open: a player
+-- already inside would be sealed in by locking it again.
+local function open_x18_chain()
+    if has_alife_info("val_x18_door_open") then return end
+    if not has_alife_info("labx_nachalo_pizdeca") and not (has_alife_info("val_actor_has_barman_key") and
+        has_alife_info("val_actor_has_borov_key")) then return end
+    db.actor:give_info_portion("val_x18_door_open")
+    if not has_alife_info("dar_run_quest") then db.actor:give_info_portion("dar_run_quest") end
+    report_line("scene val_x18_door_open")
+end
+
+-- The restrictor that plays the X18 closing cutscene waits for the pseudogiant to leave the pit, and a corpse
+-- never leaves anything. That wait is the only path to labx_konec_psevducha, which the finale task, the
+-- cutscene giant's own removal and two locked doors all hang on.
+local x18_giant_story = 455
+local x18_pit_grace = 60000
+local x18_giant_seen, x18_pit_since
+
+local function check_x18_pit(now)
+    if has_alife_info("labx_konec_psevducha") then return end
+    local server = story_server(x18_giant_story)
+    if server then
+        x18_giant_seen = true
+        local known, alive = pcall(server.alive, server)
+        if not known or alive ~= false then
+            x18_pit_since = nil
+            return
+        end
+    elseif not x18_giant_seen then
+        return
+    end
+    x18_pit_since = x18_pit_since or now
+    if now - x18_pit_since < x18_pit_grace then return end
+    db.actor:give_info_portion("labx_konec_psevducha")
+    report_line("scene labx_konec_psevducha")
+end
+
+local function install_level_repairs()
+    -- The four village bloodsuckers were dropped from the spawn, so the portions their death sections carried
+    -- have no producer and two of Ugrumy's tasks can never close. The three restrictors that used to arm them
+    -- still fire, and walking the village past all three is the surviving proof the area was cleared.
+    local original_hunt = mil_tasks.bloodsuckers_dead
+    mil_tasks.bloodsuckers_dead = function(...)
+        if has_alife_info("mil_village_bloodsucker1") and has_alife_info("mil_village_bloodsucker2") and
+            has_alife_info("mil_village_bloodsucker3") then return true end
+        return original_hunt(...)
+    end
+    -- Lukash still hands out the order to destroy a Duty group whose leader and zone guard were removed from
+    -- the spawn, so neither objective can ever be met. A task that cannot be done is reported as failed rather
+    -- than left in the PDA for the rest of the game.
+    local original_lukash = mil_tasks.lukash_job_fail
+    mil_tasks.lukash_job_fail = function(...)
+        local simulator = alife()
+        if simulator and not (simulator:story_object(702) and simulator:story_object(708)) then return true end
+        return original_lukash(...)
+    end
+    -- The community table was re-skinned to monolith and vrag while the job lists still name the freedom and
+    -- dolg profiles, so nobody could fill those jobs: Ugrumy and the blockpost commander never receive the
+    -- meet dialog that is their only way of being spoken to.
+    local original_check = gulag_military.checkStalker
+    gulag_military.checkStalker = function(npc_community, gulag_type, ...)
+        if npc_community == "freedom" and (gulag_type == "mil_village" or gulag_type == "mil_fblockpost" or
+            gulag_type == "mil_fneutral") then return true end
+        if npc_community == "dolg" and gulag_type == "mil_dolg" then return true end
+        return original_check(npc_community, gulag_type, ...)
+    end
+    -- Mazai's last dialog waits for an artefact with no section and no spawner; the step before it is what the
+    -- player can actually reach.
+    dolina_skripts.esti_art_gemchyg = function() return has_alife_info("val_kom_mazai_4") end
+    -- Its scene would have created a zone section that exists nowhere. Nothing calls this today, and nothing
+    -- should be able to make it fatal later either.
+    dolina_skripts.spawn_sirena = function() end
+    new_life.test_test_test = new_life.test_test_test or function() end
+    -- The CNPP surge was commented out of this timer, but the section it lives in kept running with no exit,
+    -- so the counter reached zero and stayed on the HUD for the rest of the level, captioned with the raw
+    -- string id the commented-out line left behind. An exit at zero lets the scheme take its own statics down.
+    local original_timer = sr_timer.set_scheme
+    sr_timer.set_scheme = function(object, ini, scheme, section, gulag_name)
+        local result = original_timer(object, ini, scheme, section, gulag_name)
+        if object:name() == "aes_space_restrictor_timer" then
+            local storage = db.storage[object:id()]
+            local state = storage and storage[scheme]
+            if state and not state.on_value then
+                state.on_value = sr_timer.parse_data(object, "0|nil")
+                report_line("timer " .. object:name())
+            end
+        end
+        return result
+    end
+end
+
+-- The Monolith destruction has one producer for sar_monolith_destroy - the alarm section's sound_end - and
+-- that portion is the only route into the room where the game ends. Six generators down with the portion
+-- still missing means the signal never landed.
+local monolith_counter = "mon_destroy_generator"
+local monolith_grace = 45000
+local monolith_since
+
+local function check_monolith(now)
+    if has_alife_info("sar_monolith_destroy") then
+        monolith_since = nil
+        return
+    end
+    local known, counter = pcall(xr_logic.pstor_retrieve, db.actor, monolith_counter, 0)
+    if not known or (counter or 0) < 6 then
+        monolith_since = nil
+        return
+    end
+    monolith_since = monolith_since or now
+    if now - monolith_since < monolith_grace then return end
+    db.actor:give_info_portion("sar_monolith_destroy")
+    if not has_alife_info("sar_monolith_off") then db.actor:give_info_portion("sar_monolith_off") end
+    report_line("scene sar_monolith_destroy")
+end
+
+-- The brain-scorcher blackout hides the HUD and disables input, and hands them back only at the end of three
+-- waits with no timeout of their own: a sound, a movie and another sound. Any one of them failing leaves the
+-- player with no controls for the rest of the save. The dream is not replayed - only what was owed is paid.
+local blackout_grace = 120000
+local blackout_since
+
+local function release_blackout(now)
+    if not has_alife_info("bun_actor_fall") or has_alife_info("bun_antenna_off") then
+        blackout_since = nil
+        return
+    end
+    blackout_since = blackout_since or now
+    if now - blackout_since < blackout_grace then return end
+    blackout_since = now
+    db.actor:give_info_portion("sar_monolith_call")
+    db.actor:give_info_portion("bun_antenna_off")
+    pcall(function() xr_effects.enable_ui(db.actor, nil) end)
+    report_line("scene bun_antenna_off")
+end
+
+-- The five control-room guards hand their part of the door counter over as an effect rather than an info
+-- portion, so the death watch above cannot make good a death its callback missed - and that counter alone
+-- opens the door to the generator hall. The counter is set to what five deaths are worth, never incremented,
+-- so this can neither run ahead of the deaths that did register nor count any of them twice.
+local control_room_counter = "mon_clear_control_room"
+local control_room_guards = {}
+
+local function watch_control_room(binder)
+    local name = binder.object:name()
+    if string.find(name, "^mon_stalker_walker4_%d+$") then control_room_guards[name] = binder.object:id() end
+end
+
+local function settle_control_room()
+    if has_alife_info("mon_door_unlocked") then return end
+    local simulator = alife()
+    if not simulator then return end
+    local counted = 0
+    for _, id in pairs(control_room_guards) do
+        local server = simulator:object(id)
+        if server then
+            local known, alive = pcall(server.alive, server)
+            if not known or alive ~= false then return end
+        end
+        counted = counted + 1
+    end
+    if counted < 5 then return end
+    local known, counter = pcall(xr_logic.pstor_retrieve, db.actor, control_room_counter, 0)
+    if not known or (counter or 0) >= 5 then return end
+    xr_logic.pstor_store(db.actor, control_room_counter, 5)
+    report_line("scene " .. control_room_counter)
+end
+
+local function deliver_garbage_hint()
+    if not has_alife_info("agro_door_open") or has_alife_info(garbage_hint_flag) then return end
+    db.actor:give_info_portion(garbage_hint_flag)
+    db.actor:give_game_news(garbage_hint, [[ui\ui_npc_monster]], Frect():set(0, 215, 163, 105), 0, 20000)
+    pcall(function() xr_sound.get_safe_sound_object([[device\pda\pda_objective]])
+        :play_no_feedback(db.actor, sound_object.s2d, 0, vector(), 1.0) end)
+    report_line("hint " .. garbage_hint_flag)
 end
 
 -- The ATP scene is a ping-pong of remark sections between the spetsnaz leader (story 41) and Tikhon (42):
@@ -1064,20 +1455,21 @@ local function atp_sound_ended(npc, state)
     return false
 end
 
-local function atp_unfreeze(story_id, now)
-    local npc, storage = story_online(story_id)
-    if not npc then return false end
+-- The scene sections of this mod have no timeouts, and the schemes that run them stop being executed the
+-- moment anything deselects their action - a hit that disables combat_ignore for good, a danger, an enemy.
+-- Everything below is what a reload does: turn combat_ignore back on, release a wait for a sound that is no
+-- longer playing, and ask the section to make its own transition. No step of any scene is skipped.
+local function unfreeze_scene(npc, storage, key, now)
     local state = storage[storage.active_scheme]
     local section = state and state.section
     if not section then return false end
-    local record = atp_section_since[story_id]
+    local record = atp_section_since[key]
     if not record or record.section ~= section then
-        atp_section_since[story_id] = {section = section, since = now}
+        atp_section_since[key] = {section = section, since = now}
         return false
     end
     if now - record.since < atp_freeze then return false end
     record.since = now
-    -- A hit from the actor disables combat_ignore for good, and only a full reconfigure turns it back on.
     if storage.combat_ignore then storage.combat_ignore.enabled = true end
     if atp_sound_ended(npc, state) then
         state.signals = state.signals or {}
@@ -1086,6 +1478,12 @@ local function atp_unfreeze(story_id, now)
     xr_logic.try_switch_to_another_section(npc, state, db.actor)
     watch_report(npc, section, "scene")
     return true
+end
+
+local function atp_unfreeze(story_id, now)
+    local npc, storage = story_online(story_id)
+    if not npc then return false end
+    return unfreeze_scene(npc, storage, story_id, now)
 end
 
 local function check_atp_scene(now)
@@ -1124,6 +1522,18 @@ local function check_death_watch(now)
     if not simulator or not db.actor then return end
     deliver_paired_portions()
     settle_spy_task()
+    settle_underground_task()
+    deliver_garbage_hint()
+    pcall(check_scene_stalls, now)
+    deliver_last_resort(now)
+    release_letyagin(now)
+    deliver_defuser()
+    open_x18_chain()
+    pcall(check_x18_pit, now)
+    check_monolith(now)
+    release_blackout(now)
+    settle_control_room()
+    settle_tasks()
     pcall(check_atp_scene, now)
     for id, record in pairs(death_watch) do
         local server = simulator:object(id)
@@ -1160,7 +1570,11 @@ local function install_death_repairs()
         local original_spawn = binder.net_spawn
         binder.net_spawn = function(self, ...)
             local result = original_spawn(self, ...)
-            if result then pcall(watch_death, self) end
+            if result then
+                pcall(watch_death, self)
+                pcall(watch_critical, self)
+                pcall(watch_control_room, self)
+            end
             return result
         end
         local original_destroy = binder.net_destroy
@@ -1220,6 +1634,8 @@ function install()
         if lab_terminal_condition(npc, section, field, source) then source = lab_terminal_repaired end
         if ghost_window_condition(npc, section, field, source) then source = ghost_window_repaired end
         if fox_condition(section, field, source) then source = fox_repaired end
+        if grate_condition(npc, section, field, source) then source = grate_repaired end
+        if sniper_condition(npc, section, field, source) then source = sniper_repaired end
         return original_parse(npc, section, field, source)
     end
     local menu = ui_main_menu.main_menu
@@ -1250,6 +1666,8 @@ function install()
     install_story_object_repair()
     install_smart_terrain_repair()
     install_spy_task_repair()
+    install_scene_fallbacks()
+    install_level_repairs()
     install_repeat_effect_repairs()
 
     local binder = bind_stalker.actor_binder

@@ -14,7 +14,7 @@ local function fixture()
     local calls = {tutorials = {}, events = {}, spots = {}, food = {}, spawned = {}, removed = {}, detector = {},
         released = {}, init_btn = {}, on_info = {}, menu_toggles = {}, given = {}, taken = {}, news = {},
         amk_spawns = {}, treasure = {}, looks = {}, infos = {}, sounds = {}, statics = {}, tips = {},
-        created = {}, task_states = {}, object_queries = 0}
+        created = {}, task_states = {}, news = {}, played = {}, object_queries = 0}
     local objects = {}
     local clock = 100
     local env = setmetatable({}, {__index = _G})
@@ -143,10 +143,41 @@ local function fixture()
         end,
         run_postprocess = function(actor, npc, p)
             calls.effectors = (calls.effectors or 0) + 1
-        end
+        end,
+        play_snd = function(actor, npc, p) calls.played[#calls.played + 1] = p[1] end,
+        dt_final_rndm_tainik = function() calls.stash = (calls.stash or 0) + 1 end,
+        enable_ui = function() calls.ui_enabled = (calls.ui_enabled or 0) + 1 end
     }
     env.task = {completed = "completed", fail = "fail", in_progress = "in_progress"}
     env.game_object = {level_path = "level_path", enemy = "enemy"}
+    env.xr_remark = {set_scheme = function(npc, ini, scheme, section)
+        env.db.storage[npc:id()] = env.db.storage[npc:id()] or {}
+        -- set_scheme rebuilds the switch list on every activation, which is what makes appending safe.
+        env.db.storage[npc:id()][scheme] = {section = section, logic = {}}
+        return 'remark set'
+    end}
+    env.Frect = function()
+        return {set = function(self, ...) return {...} end}
+    end
+    env.sound_object = {s2d = "s2d"}
+    env.mil_tasks = {
+        bloodsuckers_dead = function() return false end,
+        lukash_job_fail = function() return false end
+    }
+    env.gulag_military = {checkStalker = function(community, kind)
+        -- What the mod ships: the job lists still name freedom, the table was re-skinned to monolith.
+        return community == "monolith"
+    end}
+    env.dolina_skripts = {esti_art_gemchyg = function() error("unpatched artefact check") end,
+        spawn_sirena = function() error("unpatched sirena spawn") end}
+    env.sr_timer = {
+        set_scheme = function(object, ini, scheme)
+            env.db.storage[object:id()] = env.db.storage[object:id()] or {}
+            env.db.storage[object:id()][scheme] = {string = "st_time_till_surge-->"}
+            return "timer set"
+        end,
+        parse_data = function(object, text) return {parsed = text} end
+    }
     env.level_tasks = {set_task_state = function(state, id, objective)
         calls.task_states[#calls.task_states + 1] = {state = state, id = id, objective = objective}
     end}
@@ -366,6 +397,9 @@ local function fixture()
         return condition
     end
     env.level.object_by_id = function(id) return calls.online[id] end
+    calls.pstor = {}
+    env.xr_logic.pstor_retrieve = function(_, name, default) return calls.pstor[name] or default end
+    env.xr_logic.pstor_store = function(_, name, value) calls.pstor[name] = value end
     env.bind_monster.generic_object_binder.net_spawn = function(self)
         calls.monster_spawns = (calls.monster_spawns or 0) + 1
         return self.spawn_result ~= false
@@ -396,11 +430,14 @@ local function fixture()
             end,
             set_fastcall = function(self, callback) self.fastcall = callback end,
             position = function() return {sub = function() return "direction" end} end,
+            level_vertex_id = function() return 4242 end,
+            game_vertex_id = function() return 42 end,
             id = function() return 0 end,
             give_info_portion = function(_, name)
                 calls.infos[name] = true
                 calls.given_infos[#calls.given_infos + 1] = name
-            end
+            end,
+            give_game_news = function(_, text) calls.news[#calls.news + 1] = text end
         }
     end
     return env, calls, objects, module, actor
@@ -1649,6 +1686,228 @@ do
     env.clock_ms = env.clock_ms + 1000
     env.xr_effects.run_postprocess("actor", nil, {"agr_u_fade"})
     equal(calls.effectors, 3, "and the same one runs again when it is genuinely asked for later")
+    env.xr_effects.play_snd("actor", nil, {[[new\prilet]]})
+    env.xr_effects.play_snd("actor", nil, {[[new\prilet]]})
+    equal(#calls.played, 1, "a sound asked for again while it is the same sound is one sound")
+    env.xr_effects.play_snd("actor", nil, {[[device\pda\pda_tip]]})
+    equal(#calls.played, 2, "a different sound is never suppressed")
+end
+
+-- The Agroprom underground betrayal: nothing in the mod ever kills the three soldiers it says died.
+do
+    local env, calls, _, module, actor = fixture()
+    module.install()
+    env.db.actor = actor()
+    local function soldier(id, section)
+        return {id = function() return id end, name = function() return section end,
+            section = function() return section end}
+    end
+    local prapor = soldier(900, "und_prapor2")
+    equal(env.xr_remark.set_scheme(prapor, "ini", "remark", "remark@suicide"), "remark set",
+        "the mod's own scheme result is retained")
+    local logic = env.db.storage[900].remark.logic
+    equal(#logic, 1, "the section that says suicide finally has an end")
+    equal(logic[1].name, "on_timer1", "as a timer the switch loop already understands")
+    equal(logic[1].v1, 12000, "the Prapor falls first, so the scene still plays around him")
+    equal(logic[1].condlist.source, "%=kill%", "and dies by his own hand, as the section is named")
+    env.xr_remark.set_scheme(soldier(901, "agro_sania"), "remark", "remark", "remark66")
+    equal(env.db.storage[901].remark.logic[1].v1, 16000, "the sergeants follow him")
+    env.xr_remark.set_scheme(soldier(902, "agro_pania"), "remark", "remark", "remark66")
+    equal(env.db.storage[902].remark.logic[1].v1, 20000, "one after the other")
+    env.xr_remark.set_scheme(prapor, "ini", "remark", "remark3")
+    equal(#env.db.storage[900].remark.logic, 0, "his earlier sections are left exactly as they were")
+    env.xr_remark.set_scheme(soldier(903, "agr_soldat_kamp1"), "ini", "remark", "remark66")
+    equal(#env.db.storage[903].remark.logic, 0, "and no other remark user is touched")
+
+    local binder = {object = env.db.actor, first_update = false}
+    local function pass(seconds)
+        env.clock_ms = env.clock_ms + seconds * 1000
+        env.bind_stalker.actor_binder.update(binder, 1)
+    end
+    calls.infos.und_prapor_3 = true
+    pass(4)
+    equal(#calls.task_states, 0, "the underground task is left alone while the Prapor lives")
+    calls.infos.und_prapor_dead = true
+    pass(4)
+    equal(#calls.task_states, 2, "his death re-asserts the completion the dialog already gave")
+    equal(calls.task_states[1].id, "agro_v_podzemky", "on the underground task")
+    equal(calls.task_states[1].state, "completed", "as completed, whichever portion the engine reads first")
+    equal(#calls.news, 0, "and no hint is shown while the branch still has a next step")
+    calls.infos.agro_door_open = true
+    pass(4)
+    equal(#calls.news, 1, "the dead end finally says where to go")
+    equal(calls.infos.agro_finaluch_igra, true, "through a flag the mod declares and never uses")
+    pass(4)
+    equal(#calls.news, 1, "exactly once")
+end
+
+-- Scenes that gate the story behind a sound that may never end, and the last resort when their NPC is gone.
+do
+    local env, calls, objects, module, actor = fixture()
+    module.install()
+    env.db.actor = actor()
+    local function scene_npc(id, section)
+        return {id = function() return id end, name = function() return section end,
+            section = function() return section end, active_sound_count = function() return 0 end}
+    end
+    local commander = scene_npc(920, "b_kom_stroi")
+    env.xr_remark.set_scheme(commander, "ini", "remark", "remark2")
+    local logic = env.db.storage[920].remark.logic
+    equal(logic[1].v1, 25000, "the Bar formation cannot wait on its sound for ever")
+    equal(logic[1].condlist.source, "%+bar_krik_konec% remark3",
+        "and makes the transition the section itself would have made")
+    env.xr_remark.set_scheme(commander, "ini", "remark", "remark")
+    equal(#env.db.storage[920].remark.logic, 0, "its earlier sections are untouched")
+    local ss = scene_npc(921, "dt_ss_desantnik_kom")
+    env.xr_remark.set_scheme(ss, "ini", "remark", "remark1")
+    equal(env.db.storage[921].remark.logic[1].condlist.source, "%+ddt_ss_desant_na_start% walker",
+        "the paratroop commander starts moving")
+    env.xr_remark.set_scheme(ss, "ini", "remark", "remark2")
+    equal(env.db.storage[921].remark.logic[1].condlist.source, "%+dt_ss_nakonecto_k_tonelq% camper55",
+        "and reaches the only section in which he can be talked to at all")
+
+    local binder = {object = env.db.actor, first_update = false}
+    local function pass(seconds)
+        env.clock_ms = env.clock_ms + seconds * 1000
+        env.bind_stalker.actor_binder.update(binder, 1)
+    end
+    calls.infos.bar_v_stroi = true
+    pass(4)
+    equal(calls.infos.bar_krik_konec, nil, "a scene still under way is left alone")
+    pass(200)
+    equal(calls.infos.bar_krik_konec, true, "a commander who never reports in stops holding up the game")
+    calls.infos.ddt_rally_otschet = true
+    pass(4)
+    equal(calls.infos.dt_ralli_strt, nil, "the countdown is given its own time first")
+    pass(50)
+    equal(calls.infos.dt_ralli_strt, true, "then the paid-for race starts anyway")
+
+    -- Letyagin: input and HUD come back with the portion, and the stash the section promised is still made.
+    calls.infos.bar_letia_final = true
+    pass(4)
+    equal(calls.ui_enabled, nil, "his walk is given its own time first")
+    pass(130)
+    equal(calls.infos.barar_vse_letiaga_yshel, true, "then the farewell is closed out")
+    equal(calls.ui_enabled, 1, "the input and the HUD come back")
+    equal(calls.stash, 1, "and the reward stash the line promised is still made")
+
+    -- Melisa: the only source of the defuser every finale device tests for.
+    equal(#calls.created, 0, "nothing is handed over while she is alive")
+    local melisa = {object = scene_npc(922, "bar_melisa_nyjen_tyt")}
+    objects[922] = {id = 922}
+    env.xr_motivator.motivator_binder.net_spawn(melisa)
+    pass(4)
+    equal(#calls.created, 0, "still nothing while she is alive")
+    objects[922] = nil
+    pass(4)
+    equal(calls.created[1][1], "bar_deaktiv_iaderki", "her loss no longer ends the game")
+    equal(calls.infos.bar_melisa_finish, true, "and the dialog she owned counts as done")
+    pass(4)
+    equal(#calls.created, 1, "exactly once")
+end
+
+-- Dark Valley, Yantar and the Military Warehouses: chains whose only producer the mod removed.
+do
+    local env, calls, objects, module, actor = fixture()
+    module.install()
+    env.db.actor = actor()
+    local binder = {object = env.db.actor, first_update = false}
+    local function pass(seconds)
+        env.clock_ms = env.clock_ms + seconds * 1000
+        env.bind_stalker.actor_binder.update(binder, 1)
+    end
+    -- The X18 entrance door starts open, so the use that granted these two can never happen.
+    pass(4)
+    equal(calls.infos.val_x18_door_open, nil, "a player who has not reached the lab gets nothing")
+    calls.infos.labx_nachalo_pizdeca = true
+    pass(4)
+    equal(calls.infos.val_x18_door_open, true, "reaching the lab opens the documents chain")
+    equal(calls.infos.dar_run_quest, true, "and gives the task that hangs off it")
+
+    local grate = make_physic(950, [[scripts\yan\yan_grate.ltx]])
+    equal(env.xr_logic.parse_condlist(grate, "ph_door@close", "on_info", "{+art_start} ph_door@open").source,
+        "{+yan_labx16_switcher_primary_off} ph_door@open_final",
+        "the X16 grate opens on the emitter again, as vanilla has it")
+    equal(env.xr_logic.parse_condlist(grate, "ph_door@open", "on_info", "{+art_start} ph_door@open").source,
+        "{+art_start} ph_door@open", "and its other sections are untouched")
+
+    local sniper = make_physic(951, [[scripts\ded_city\nemec_sniper1_v_kpss_logic.ltx]])
+    equal(env.xr_logic.parse_condlist(sniper, "kamp", "on_info", "{!is_night} kamp").source,
+        "{!is_night} camper", "the KPSS snipers can return to their nest at dawn")
+    equal(env.xr_logic.parse_condlist(sniper, "camper", "on_info", "{=is_night} kamp").source,
+        "{=is_night} kamp", "the way out to the campfire is unchanged")
+
+    equal(env.mil_tasks.bloodsuckers_dead(), false, "the hunt is not finished by walking in")
+    calls.infos.mil_village_bloodsucker1 = true
+    calls.infos.mil_village_bloodsucker2 = true
+    calls.infos.mil_village_bloodsucker3 = true
+    equal(env.mil_tasks.bloodsuckers_dead(), true,
+        "but clearing the village stands in for four monsters the spawn no longer holds")
+    equal(env.gulag_military.checkStalker("freedom", "mil_village"), true,
+        "Freedom can fill the jobs its own profiles are named in")
+    equal(env.gulag_military.checkStalker("monolith", "mil_village"), true, "and the mod's own answer stands")
+    equal(env.gulag_military.checkStalker("bandit", "mil_village"), false, "nobody else is let in")
+    equal(env.mil_tasks.lukash_job_fail(), true, "an order against a group that is not placed is reported failed")
+    calls.story = {[702] = {id = 702}, [708] = {id = 708}}
+    equal(env.mil_tasks.lukash_job_fail(), false, "and left alone where the targets do exist")
+    equal(env.dolina_skripts.esti_art_gemchyg(), false, "Mazai still wants the step before his last")
+    calls.infos.val_kom_mazai_4 = true
+    equal(env.dolina_skripts.esti_art_gemchyg(), true, "which the player can actually reach")
+end
+
+-- The endgame: one sound, one blackout and one counter stand between the player and the ending.
+do
+    local env, calls, objects, module, actor = fixture()
+    module.install()
+    env.db.actor = actor()
+    local binder = {object = env.db.actor, first_update = false}
+    local function pass(seconds)
+        env.clock_ms = env.clock_ms + seconds * 1000
+        env.bind_stalker.actor_binder.update(binder, 1)
+    end
+    calls.pstor.mon_destroy_generator = 5
+    pass(60)
+    equal(calls.infos.sar_monolith_destroy, nil, "five generators is not six")
+    calls.pstor.mon_destroy_generator = 6
+    pass(4)
+    equal(calls.infos.sar_monolith_destroy, nil, "and the alarm is given its own time")
+    pass(50)
+    equal(calls.infos.sar_monolith_destroy, true, "then the only way into the last room opens anyway")
+    equal(calls.infos.sar_monolith_off, true, "with the portion that came in the same breath")
+
+    calls.infos.bun_actor_fall = true
+    pass(4)
+    equal(calls.ui_enabled, nil, "the blackout is allowed to play out")
+    pass(130)
+    equal(calls.infos.bun_antenna_off, true, "then the chain that was owed is paid")
+    equal(calls.infos.sar_monolith_call, true, "including the call that opens the Monolith task")
+    equal(calls.ui_enabled, 1, "and the player gets the controls back")
+
+    local guards = {}
+    for index = 1, 5 do
+        local id = 960 + index
+        objects[id] = {id = id, alive = function() return true end}
+        guards[index] = {object = {id = function() return id end,
+            name = function() return string.format("mon_stalker_walker4_%04d", index) end}}
+        env.xr_motivator.motivator_binder.net_spawn(guards[index])
+    end
+    pass(4)
+    equal(calls.pstor.mon_clear_control_room, nil, "living guards keep the door shut")
+    for index = 1, 4 do objects[960 + index].alive = function() return false end end
+    pass(4)
+    equal(calls.pstor.mon_clear_control_room, nil, "four of five is not enough")
+    objects[965].alive = function() return false end
+    pass(4)
+    equal(calls.pstor.mon_clear_control_room, 5, "all five dead opens the way to the generator hall")
+    calls.pstor.mon_clear_control_room = 9
+    pass(4)
+    equal(calls.pstor.mon_clear_control_room, 9, "and a counter that is already high is never touched")
+
+    local timer = {id = function() return 970 end, name = function() return "aes_space_restrictor_timer" end}
+    equal(env.sr_timer.set_scheme(timer, "ini", "sr_timer", "sr_timer1"), "timer set",
+        "the mod's own timer scheme still runs")
+    equal(env.db.storage[970].sr_timer.on_value.parsed, "0|nil",
+        "the surge counter that was commented out can now leave the HUD")
 end
 
 -- The killer-less death branch of mob_death writes to a local only the other branch declares.

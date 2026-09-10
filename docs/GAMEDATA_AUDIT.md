@@ -358,3 +358,71 @@ switch distance, so its offline-to-online transition happens exactly on that app
 section, profile, visual, patrol path and graph vertex on that path was verified present and consistent, but
 the engine fault itself was not identified. The per-frame `actor_enemy` storm that object produced is
 repaired above; it is the one mechanism on that path that could be reached from script.
+
+## Sixth pass: every level after the Garbage — 2026-09-10
+
+Two player reports (the Agroprom military branch dead-ending, and the underground soldiers frozen in the
+mind-controlled pose) opened a full sweep of Bar, Wild Territory, Dark Valley, X18, Yantar, X16, Military
+Warehouses, Radar, Pripyat, the CNPP endgame and Dead City. The mechanical sweeps of the fifth pass were
+re-run mod-wide first — dangling switch targets, `active` condlists with no unconditional clause, undefined
+condlist functions, undeclared sound themes and missing sound files, story ids used by `on_npc_*_in_zone` —
+and came back clean outside what is listed here. What the earlier passes did not cover is the class this pass
+is about: **a scene section with no timeout whose one exit is a signal that may never arrive.** The mod is
+built almost entirely out of them.
+
+### Repairs
+
+| Defect | Consequence | Repair |
+| --- | --- | --- |
+| The three Agroprom underground soldiers enter `[remark@suicide]` / `[remark66]` after the betrayal and nothing in the mod ever kills them, although Mozar's own lines say the controller did | They hold the `psy_pain` animation for good, and the six-man surface garrison never leaves its idle sections because every one of them waits behind `{+und_prapor_dead}`, which only the warrant officer's `[death]` grants. Killing the captain changes nothing | Each of the three is given the end its section is named for, on its own timer, the warrant officer first so the scream, the PDA line and the zombie wave still land in the room |
+| `agro_door_open` carries no task, no article, no map spot and no tip, while the only way on is `nps_svalka.spawn_karabin` placing an NPC in an unmarked corner of the Garbage whose dialog is the sole grant of the portion that spawns the entire Bar | The branch ends with an empty PDA and nothing to act on | One PDA line, once. This is the only text the pack adds |
+| `stroi_kom_logic.ltx:19` — the Bar formation's `[remark2]` leaves only on `on_signal = sound_end`, and `bar_krik_konec` has one producer and one consumer | Every quest of the rest of the game hangs on that one signal, and the commander is an ordinary stalker who can also simply die | A timer floor inside the section, the actor-side unfreeze below, and a last resort that grants the portion when no such NPC is left |
+| `dt_ss_desantnik_kom.ltx:18` and `:56` — the SS paratroop commander's two remark sections have the same shape, and he is untalkable in every section but the last, which is where the ending dialog lives | An interrupted approach strands the ending | The same timer floors, on his own transitions |
+| `bar_letiagin_final2.ltx:18,30` — `disable_ui` is undone by a single `on_actor_dist_ge_nvis` on the walk that follows, while a restrictor teleports the actor back to the same spot until that walk reports in | A walk that cannot be built leaves the player with no HUD, no input and no way to move | After a grace period the pack runs the section's own line: the stash, the portion, the input |
+| `bar_deaktiv_iaderki` has one source, Melisa, and all seven finale devices test for it | Losing her ends the game with no way to finish | If she is gone, the item is handed over and her dialog counts as done |
+| `val_underground_door.ltx:2` — the X18 entrance door was changed from `ph_door@locked` to `ph_door@open`, leaving `[ph_door@locked]` unreachable; its `on_use` is the only producer of `val_x18_door_open` and `dar_run_quest` | The lab task never completes, the Barman never takes the documents, the X16 task is never given, his stock never improves. Every playthrough | Reaching the lab, or holding the two keys the door asked for, grants both. The door is left open: locking it again would seal in a player who is already inside |
+| `yan_grate.ltx:2,10` — the X16 grate starts fallen and its reopen waits for `art_start`, which nothing grants | A door vanilla holds open is welded shut | The vanilla condition is restored: it opens on `yan_labx16_switcher_primary_off` |
+| The X18 closing cutscene waits for the pseudogiant to leave the pit | A corpse never leaves. The finale task, the cutscene giant's removal and two locked doors all hang on it | Once the giant is dead or gone for a minute, the portion it was holding is delivered |
+| The four Military Warehouse bloodsuckers were dropped from the spawn, but the two tasks that complete on their deaths and Ugrumy's whole post-hunt branch were not | Two tasks sit in the PDA for good | Walking the village past all three arming restrictors stands in for them |
+| `gulag_military.checkStalker` was re-skinned to `monolith` and `vrag` while the job lists still name the freedom and dolg profiles | Ugrumy and the blockpost commander never receive the meet dialog that is their only way of being spoken to | The wrapper accepts the communities the job lists actually name |
+| Lukash still hands out an order against a Duty group whose leader and zone guard are not placed | A task that can never be done, with no way to fail it either | Reported failed when its targets are provably absent |
+| `sar_monolith_gen_main.ltx:21` — `sar_monolith_destroy` has one producer, a `sound_end`, and is the only route into the room where the game ends | The good ending is one lost signal away from being unreachable | Six generators down and the portion still missing delivers it |
+| `bun_deactivate_radar.ltx:10,20` — the brain-scorcher blackout hides the HUD and disables input, and gives them back only after a sound, a movie and another sound, none of which has a timeout | No controls for the rest of the save | After a grace period the portions that were owed are granted and the input comes back. The dream is not replayed |
+| The five control-room guards deliver their part of the door counter as `=inc_counter`, which the death watch cannot make good because it only harvests info portions | The door to the generator hall never opens, and the good ending is behind it | With all five dead or gone the counter is **set** to what five deaths are worth, never incremented, so it can neither run ahead nor count twice |
+| `esc_reba_proverky_proshel`'s closing phrase grants the fail portion of its own task | «УБИЙЦА МЕСЯЦА» is stamped failed at the moment it is finished | Covered in the fifth pass; the objectives are settled from the reward function of that one phrase |
+| `dialogs_darkvalley.xml:1384` gates Mazai's last dialog on `af_gemchyg`, an artefact with no section, whose spawn function is called from nowhere | The moonshine quest stops after the two gas cylinders | The gate becomes the step before it, which the player can reach |
+| `aes_space_restrictor_timer` — the CNPP surge was commented out of the timer but its section kept running with no exit | A counter sits at zero on the HUD for the rest of the level, captioned with the raw string id the commented-out line left behind | An exit at zero, so the scheme takes its own statics down |
+| `nemec_sniper1/2_v_kpss_logic.ltx:26` — `[kamp]`'s daytime return targets the section it is already in, which `switch_to_section` refuses | Both Dead City snipers abandon their posts permanently after the first nightfall | The transition names `camper`, which is what it meant |
+| `blok_dlia_prileta_xyiota.ltx:12` restarts the air-raid sound every update for five and a half seconds | One sound played dozens of times | `play_snd` now ignores a repeat of the same path within half a second, like `run_postprocess` already did |
+
+Alongside those, every scene NPC above is watched from the actor's side as well: a section that has not
+changed for ninety seconds gets `combat_ignore` turned back on, a wait for a sound that is no longer playing
+released, and its own transition retried — which is what reloading a save does, and nothing more. The mod
+sets `combat_ignore_cond = always` on nearly every scripted NPC and never sets
+`combat_ignore_keep_when_attacked`, so one stray round from the player disables it permanently and freezes
+whatever scene that NPC was carrying.
+
+### Examined and deliberately left alone
+
+The Bar arena is unreachable in this mod — `bar_arena_start` has no producer, the manager NPC was deleted from
+the spawn — so the eleven `arena_*` sound themes the mod dropped when it rewrote `sound_theme.script` are dead
+code and the megaphone can never abort. Every vanilla Bar task, `dar_codedoor_1/2`, `sar_monolith_go`, the
+`sar_monolith_destory` typo and `pripyat_task_1` are cut or vanilla content that gates nothing. The Dead City
+`config\scripts\cit\*` set is unreachable: the mod's Dead City is a new level and neither spawn holds a single
+`cit_` object. `agro_ygoli_kvest` has no string-table entries, no hand-out and no completion — a draft, and
+invisible as long as nothing gives it. The OGSM zombified-monster mechanic creates sections that do not exist,
+but neither of its triggers (`actor_set_zombied`, `af_transmut_8`) exists either. The nine `[spawner] cond =
+never` objects do spawn, because a bare token parses as a section name rather than a condition — on Radar that
+replaced a vanilla gate, but the mod has been played and balanced that way, so restoring the gate would be a
+content decision rather than a repair. `lab_psihoz115` names a logic file that does not exist; the object
+simply gets no logic, and the two candidate files in that folder both carry `inc_counter(mon_destroy_generator)`,
+which would pre-advance the endgame — wiring it up would break more than it fixes.
+
+### Not closed
+
+The ransom branch of `esc_l_d_reba_start` is still also the spy job's fail flag, for the reason recorded in the
+fifth pass. The logless crash on approaching the psi installation with the spy job active is still open: the
+discriminator is proven and every asset on that path verified, but the engine fault itself is not identified.
+The Duty base dialogs on Bar render as raw string ids, because the mod's own `stable_dialogs_bar.xml` shadows
+the archived file and drops every `bar_dolg_*` entry; none of those dialogs gates anything, so this is
+cosmetic, and repairing it means shipping a string table of our own.
