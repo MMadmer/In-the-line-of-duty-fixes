@@ -1,4 +1,5 @@
 #include "config_repairs.h"
+#include "item_descriptions.h"
 #include "preset_compat.h"
 #include <cstring>
 #include <fstream>
@@ -33,15 +34,31 @@ int main(int argc, char** argv)
     if (!ild::obsolete_preset_option(" rs_detail on") || ild::obsolete_preset_option("rs_detail_extra on") ||
         ild::obsolete_preset_option("r__tf_aniso 16")) return 7;
     // Only the material-5 phrase is retargeted; the material-7 phrase keeps its own reward.
-    std::string skat = "<text>b_bronevik_modern_5052</text><action>pochinka.b_mne_mod_skat57</action>\r\n"
+    const std::string skat_phrases = "<text>b_bronevik_modern_5052</text><action>pochinka.b_mne_mod_skat57</action>\r\n"
         "<text>b_bronevik_modern_505</text>\r\n<action>pochinka.give_b_skat_komb</action>\r\n"
         "<action>pochinka.b_mne_mod_skat7</action>\r\n"
         "<text>b_bronevik_modern_705</text>\r\n<action>pochinka.b_mne_mod_skat7</action>\r\n";
+    // Bronevik's detector offer, in the same file: refusing without money must not hide it for good.
+    const std::string detector = "<dialog id=\"bar_bronevik_pochini_detektor\">\r\n"
+        "<has_info>b_bronevik_strt</has_info>\r\n<dont_has_info>bar_bronevik_pochini_detektor</dont_has_info>\r\n"
+        "<dont_has_info>bar_bronevik_ne_chini_detektor</dont_has_info>\r\n"
+        "<phrase id=\"25\"><give_info>bar_bronevik_ne_chini_detektor</give_info>   \r\n"
+        "<action>dialogs.break_dialog</action></phrase>\r\n"
+        "<phrase id=\"11\"><give_info>bar_bronevik_pochini_detektor</give_info></phrase>\r\n</dialog>\r\n";
+    std::string skat = skat_phrases + detector;
     const auto skat_size = skat.size();
     if (!ild::repair_config_text(skat, ConfigRepair::skat_upgrade) || skat.size() != skat_size ||
         skat.find("b_mne_mod_skat5<") == std::string::npos ||
         skat.find("b_mne_mod_skat7") != skat.rfind("b_mne_mod_skat7") ||
         skat.find("b_mne_mod_skat57") == std::string::npos) return 12;
+    if (skat.find("bar_bronevik_ne_chini_detektor") != std::string::npos ||
+        skat.find("<dont_has_info>bar_bronevik_pochini_detektor</dont_has_info>") == std::string::npos ||
+        skat.find("<give_info>bar_bronevik_pochini_detektor</give_info>") == std::string::npos ||
+        skat.find("<action>dialogs.break_dialog</action>") == std::string::npos) return 25;
+    // Without the detector dialog this is not the file the repair was written for.
+    std::string skat_only = skat_phrases;
+    unchanged = skat_only;
+    if (ild::repair_config_text(skat_only, ConfigRepair::skat_upgrade) || skat_only != unchanged) return 26;
     std::string absent = "<text>b_bronevik_modern_505</text>\r\n<action>pochinka.other</action>\r\n";
     if (ild::repair_config_text(absent, ConfigRepair::skat_upgrade)) return 13;
     std::string ambiguous = "<text>b_bronevik_modern_505</text><text>b_bronevik_modern_505</text>";
@@ -60,11 +77,18 @@ int main(int argc, char** argv)
     const std::string prince_part = "<dialog id=\"esc_princ_persii_start\"><phrase id=\"1\">A</phrase>"
         "<phrase id=\"2\">B</phrase><phrase id=\"1\">A</phrase><phrase id=\"2\">B</phrase></dialog>\r\n";
     const std::string indent(60, ' ');
-    std::string ransom = prince_part + "<dialog id=\"esc_dengi_rebe\">\r\n<has_info>esc_tixon_atp_final</has_info>\r\n"
+    const std::string reba = "<dialog id=\"esc_dengi_rebe\">\r\n<has_info>esc_tixon_atp_final</has_info>\r\n"
         "<dont_has_info>esc_dengi_rebe</dont_has_info>\r\n" + indent + "<phrase_list>\r\n" + indent +
         "<phrase id=\"4\">\r\n" + indent + "<text>esc_dengi_rebe_4</text> \r\n"
         "<action>new_life.sidor_mne_keis_s_artami</action>\r\n\t<give_info>esc_dengi_rebe</give_info>   \r\n" +
         indent + "</phrase>\r\n" + indent + "</phrase_list>\r\n </dialog>\r\n";
+    // Tikhon's closing dialog, whose "here is your share" line pays nothing in the mod.
+    const std::string tikhon = "<dialog id=\"esc_tixon_atp_final\">\r\n"
+        "<has_info>esc_atp_ydalai_ysex_k_xyiam_end</has_info>\r\n" +
+        indent + "<phrase_list>\r\n" + indent + "<phrase id=\"1\">\r\n" + indent +
+        "<text>esc_tixon_atp_final_1</text>    \r\n" + indent + "<next>2</next>\r\n" + indent + "</phrase>\r\n" +
+        indent + "</phrase_list>\r\n </dialog>\r\n";
+    std::string ransom = prince_part + tikhon + reba;
     const auto ransom_size = ransom.size();
     if (!ild::repair_config_text(ransom, ConfigRepair::prince_dialog) || ransom.size() != ransom_size ||
         ransom.find("<dont_has_info>esc_dengi_rebe</dont_has_info>"
@@ -74,8 +98,38 @@ int main(int argc, char** argv)
         ransom.find(" <text>esc_dengi_rebe_4</text> \r\n") == std::string::npos ||
         ransom.find("\t<give_info>esc_dengi_rebe</give_info>   \r\n") == std::string::npos ||
         ransom.find("\r\n <phrase_list>") == std::string::npos) return 17;
+    if (ransom.find("<text>esc_tixon_atp_final_1</text><action>ild_script_repairs.tikhon_share</action>    \r\n") ==
+        std::string::npos || ransom.find("<next>2</next>") == std::string::npos) return 27;
     unchanged = ransom;
     if (ild::repair_config_text(ransom, ConfigRepair::prince_dialog) || ransom != unchanged) return 18;
+    // The charge never goes in without the share that pays for it.
+    std::string unpaid = prince_part + reba;
+    unchanged = unpaid;
+    if (ild::repair_config_text(unpaid, ConfigRepair::prince_dialog) || unpaid != unchanged) return 28;
+    // The Dark Valley seller: the refusal gate and its writer go, the purchase still closes the offer.
+    std::string trader = "<dialog id=\"val_chr_torgash4_start\">\r\n"
+        "<dont_has_info>val_chr_torgash4_pshel_nax</dont_has_info>\r\n"
+        "<dont_has_info>val_chr_torgash4_kypil_art</dont_has_info>\r\n"
+        "<phrase id=\"18\"><give_info>val_chr_torgash4_pshel_nax</give_info>      \r\n"
+        " <action>dialogs.break_dialog</action></phrase>\r\n"
+        "<phrase id=\"17\"><give_info>val_chr_torgash4_kypil_art</give_info></phrase>\r\n</dialog>\r\n";
+    const auto trader_size = trader.size();
+    if (!ild::repair_config_text(trader, ConfigRepair::trader_refusal) || trader.size() != trader_size ||
+        trader.find("pshel_nax") != std::string::npos ||
+        trader.find("<dont_has_info>val_chr_torgash4_kypil_art</dont_has_info>") == std::string::npos ||
+        trader.find("<give_info>val_chr_torgash4_kypil_art</give_info>") == std::string::npos) return 29;
+    unchanged = trader;
+    if (ild::repair_config_text(trader, ConfigRepair::trader_refusal) || trader != unchanged) return 30;
+    // The shovel's description stops calling it short-lived; every other item and text is returned untouched.
+    const std::string shovel = "\xCD\xE5\xEF\xEB\xEE\xF5\xE0\xFF \xF8\xF2\xFB\xEA\xEE\xE2\xE0\xFF "
+        "\xEB\xEE\xEF\xE0\xF2\xE0, \xF5\xEE\xF2\xFC \xE8 \xED\xE5 \xE4\xEE\xEB\xE3\xEE\xE2\xE5\xF7\xED\xE0, "
+        "\xED\xEE \xE2\xE5\xF1\xFC\xEC\xE0 \xEF\xEE\xEB\xE5\xE7\xED\xE0.";
+    const auto repaired = ild::repaired_description("item_lopata", shovel);
+    if (!repaired || repaired->find("\xE4\xEE\xEB\xE3\xEE\xE2\xE5\xF7\xED\xE0") != std::string::npos ||
+        repaired->find("\xEA\xF0\xE5\xEF\xEA\xE0\xFF \xE8 \xED\xE0\xE4\xB8\xE6\xED\xE0\xFF, \xE4\xE0 \xE8 "
+            "\xE2\xE5\xF1\xFC\xEC\xE0") == std::string::npos) return 31;
+    if (ild::repaired_description("esc_lopata_kopatelia_veshi", shovel) ||
+        ild::repaired_description("item_lopata", "\xDD\xF2\xEE \xEB\xEE\xEF\xE0\xF2\xE0.")) return 32;
     std::string cramped = prince_part + "<dialog id=\"esc_dengi_rebe\">\r\n<dont_has_info>esc_dengi_rebe</dont_has_info>\r\n"
         "<action>new_life.sidor_mne_keis_s_artami</action>\r\n</dialog>\r\n";
     unchanged = cramped;

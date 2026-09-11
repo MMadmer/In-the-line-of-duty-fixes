@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(InTheLineOfDutyFixes VERSION 1.0.3 LANGUAGES CXX)
+project(InTheLineOfDutyFixes VERSION 1.0.4 LANGUAGES CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "In the Line of Duty Fixes supports Windows only")
@@ -31,6 +31,7 @@ add_library(dinput8 SHARED
     src/config_repairs.cpp
     src/startup_repairs.cpp
     src/inventory_hooks.cpp
+    src/vehicle_repairs.cpp
     src/update_bridge.cpp
     src/console_hooks.cpp
     src/x86_detour.cpp
@@ -53,6 +54,7 @@ add_library(dinput8_console_qa SHARED EXCLUDE_FROM_ALL
     src/config_repairs.cpp
     src/startup_repairs.cpp
     src/inventory_hooks.cpp
+    src/vehicle_repairs.cpp
     tests/runtime_capture.cpp
     src/update_bridge.cpp
     src/dinput8_proxy.cpp src/display_mode.cpp src/console_hooks.cpp src/x86_detour.cpp src/iat_hook.cpp src/sha256.cpp
@@ -85,6 +87,13 @@ add_executable(ild_command_line_tests tests/command_line_tests.cpp)
 target_include_directories(ild_command_line_tests PRIVATE src)
 add_test(NAME command_line COMMAND ild_command_line_tests)
 find_program(ILD_LUA51 NAMES lua PATHS "C:/Program Files (x86)/Lua/5.1")
+find_program(ILD_LUAC51 NAMES luac PATHS "C:/Program Files (x86)/Lua/5.1")
+if(ILD_LUA51 AND ILD_LUAC51)
+    file(GLOB ILD_PAYLOAD_SCRIPTS ${CMAKE_CURRENT_SOURCE_DIR}/payload/gamedata/scripts/*.script)
+    file(TO_NATIVE_PATH "${ILD_LUAC51}" ILD_LUAC51_NATIVE)
+    add_test(NAME script_globals COMMAND ${ILD_LUA51} ${CMAKE_CURRENT_SOURCE_DIR}/tests/script_globals.lua
+        ${ILD_LUAC51_NATIVE} ${ILD_PAYLOAD_SCRIPTS})
+endif()
 if(ILD_LUA51)
     add_test(NAME recipe_repairs COMMAND ${ILD_LUA51} ${CMAKE_CURRENT_SOURCE_DIR}/tests/recipe_repairs_tests.lua
         ${CMAKE_CURRENT_SOURCE_DIR}/payload/gamedata/scripts/ild_recipe_repairs.script)

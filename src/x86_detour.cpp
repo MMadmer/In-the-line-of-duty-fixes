@@ -16,10 +16,27 @@ void write_jump(unsigned char* source, const void* target)
 }
 }
 
+bool code_matches(const void* address, std::span<const unsigned char> expected)
+{
+    constexpr DWORD readable = PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY | PAGE_READONLY |
+        PAGE_READWRITE | PAGE_WRITECOPY;
+    auto cursor = static_cast<const unsigned char*>(address);
+    const auto end = cursor + expected.size();
+    if (!address) return false;
+    while (cursor < end)
+    {
+        MEMORY_BASIC_INFORMATION region{};
+        if (!VirtualQuery(cursor, &region, sizeof region) || region.State != MEM_COMMIT ||
+            !(region.Protect & readable) || (region.Protect & PAGE_GUARD)) return false;
+        cursor = static_cast<const unsigned char*>(region.BaseAddress) + region.RegionSize;
+    }
+    return std::memcmp(address, expected.data(), expected.size()) == 0;
+}
+
 bool X86Detour::prepare(void* target, void* replacement, std::span<const unsigned char> expected)
 {
     if (!target || !replacement || expected.size() < 5 || expected.size() > saved_.size() ||
-        std::memcmp(target, expected.data(), expected.size()) != 0) return false;
+        !code_matches(target, expected)) return false;
     target_ = target;
     replacement_ = replacement;
     length_ = expected.size();

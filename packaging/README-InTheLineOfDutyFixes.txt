@@ -9,10 +9,15 @@ The complete runtime consists of the dinput8 loader, updater helper, uniquely na
 Lua/UI files, and the .ild-fixes directory with the version, ownership and update
 manifests. Do not install individual DLLs.
 
-Repairs to mod scripts, configs and dialogs, and the whole Lua payload, work on any
-build of the 1.0006 engine. The native tweaks below write to fixed addresses inside
-the executable and are applied only on the exact binaries listed here; on any other
-build each one skips itself and the rest of the fix pack still works.
+Repairs to mod scripts, configs and dialogs, the whole Lua payload, the in-game
+updater and the added options work on any build of the 1.0006 engine, with or
+without the mod's own binaries: the updater checks the engine's console command
+layout against the executable's own exports, not its hash. The native tweaks below
+write to fixed addresses inside the binaries and apply only where the code at
+their patch site is the validated one; on any other build each one skips itself
+without a message, the loader report says so, and the rest of the pack still works.
+An installation of 1.0.3 or older without the mod's binaries never saw the update
+window, so it has to install this version by hand once.
 
 Validated binaries (SHA-256):
   bin\XR_3DA.exe                   B22BC15B94A2A58C4E7046E46D46A3750D80C399BA8F37A2EF40CCF78EE3126D
@@ -56,13 +61,30 @@ portion is never forced, so no scripted step is skipped. Each intervention is
 recorded in .ild-fixes\runtime\npc-watchdog.txt.
 
 Quest repairs, each in memory only: the Don Reba ransom checks and takes the
-250 000 its dialog, task and check functions describe; the "Alcohol Wars" task
-text names the 20 000 the sergeant actually asks for; the stash Sidorovich sells
-on Cordon, and any other sealed box the player is pointed at, becomes searchable;
-the Burglar skill's first level is both of its journals, so Tikhon's storeroom
-and the Bar autopark safe open as their tips promise; a scripted mutant that dies
-out of sight still delivers the info portions of its death section, unless a mod
-script removed it; and a killer-less mutant death no longer aborts its scheme.
+250 000 its dialog, task and check functions describe, and Tikhon's "here is your
+share" line at the ATP pays exactly that sum, once; the "Save up a quarter million"
+objective completes while the sum is held; the "Alcohol Wars" task text names the
+20 000 the sergeant actually asks for; the stash Sidorovich sells on Cordon, and
+any other sealed box the player is pointed at, becomes searchable; the Burglar
+skill's first level is both of its journals, so Tikhon's storeroom and the Bar
+autopark safe open as their tips promise; Bronevik's detector inspection and the
+Dark Valley trader's "Bogdan" artefact stay on offer after a visit without money;
+a scripted mutant that dies out of sight still delivers the info portions of its
+death section, unless a mod script removed it; and a killer-less mutant death no
+longer aborts its scheme.
+The Wild Territory rally, in memory as well: the opponents' trucks keep driving
+while nobody looks at them (where the game DLL matches the validated build every
+car stays in the engine's per-frame update, as an armed one always did; elsewhere
+a truck the physics shows moving is not judged stuck), and the track behind the
+level's invisible walls has a way out. After the organizer's closing words the
+player is moved to the ordinary side of the door; a finish reached at the wheel
+still returns the player to the organizer; and walking back onto the spot the
+door brought the player to and standing there for three seconds leads out at any
+time.
+
+Shovels, a deliberate change requested for the pack: digging a grave stash no
+longer takes the shovel, so one shovel lasts for every grave. Stamina, sounds,
+loot and each grave closing after one dig are unchanged.
 
 Added options:
 Sound tab - "Radio volume", default 70%, in steps of 10. It scales every world
@@ -79,12 +101,15 @@ leaves the game's own settings exactly as they were.
 
 If something did not take effect:
 Every launch writes .ild-fixes\runtime\loader-report.txt. It lists each file the
-pack checks with its expected and actual SHA-256, and whether each repair applied.
+pack checks with its expected and actual SHA-256, whether each repair installed,
+the stored options, and whether Windows redirects what the game writes into its
+folder (UAC virtualization in a protected folder such as Program Files); while the
+game runs it adds whether the console spam fix and the script bindings took effect.
 Send that file when reporting a problem. A windowed screen mode also leaves
-.ild-fixes
-untime\window-state.txt: a few lines naming the window the pack
-found and the style it applied. If the loader report is absent, the loader never
-ran: check that bin\dinput8.dll is present and that nothing else replaced it.
+.ild-fixes\runtime\window-state.txt: a few lines naming the window the pack found
+and the style it applied. If the loader report is absent, the loader never ran:
+check that bin\dinput8.dll is present and that nothing, an antivirus included,
+removed or replaced it.
 
 Removal:
 Close the game and helper, remove the files listed in .ild-fixes\managed-files.txt,

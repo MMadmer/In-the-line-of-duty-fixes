@@ -7,6 +7,10 @@
 
 namespace ild
 {
+// True when the bytes at the address are committed, readable and equal to the expected ones. A fixed address in a
+// build that is smaller or laid out differently is never read past what is mapped there.
+[[nodiscard]] bool code_matches(const void* address, std::span<const unsigned char> expected);
+
 class X86Detour
 {
 public:

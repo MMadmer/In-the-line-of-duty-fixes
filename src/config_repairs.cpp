@@ -35,7 +35,9 @@ constexpr std::array sources{
     ConfigRepairSource{L"gamedata/config/ui/maingame_16.xml", 3826,
         "6E80C195D264C4E431C59C0AB4A1782BC0EB2AEF1F753DAD25124BDDFF790C0B", ConfigRepair::counter_wide},
     ConfigRepairSource{L"gamedata/config/ui/maingame.xml", 3830,
-        "E36AE22F91A0BDBBB61FD718686222B7C2D3DB8D4B2930F64D1A4B8DF2994454", ConfigRepair::counter_normal}
+        "E36AE22F91A0BDBBB61FD718686222B7C2D3DB8D4B2930F64D1A4B8DF2994454", ConfigRepair::counter_normal},
+    ConfigRepairSource{L"gamedata/config/gameplay/dialogs_darkvalley.xml", 128073,
+        "3614CFA556724034B31399AF2A8CEDC9E6643B1274B11F483F75014D7517D535", ConfigRepair::trader_refusal}
 };
 
 // Replace a unique expression with an equal-length one, padding the remainder with spaces.
@@ -159,6 +161,41 @@ bool add_ransom_check(std::string& text)
     text.replace(owner->begin, size, contents);
     return true;
 }
+
+// Tikhon's closing line hands over "your share" - the quarter million he guarantees for the ATP deal, and the sum
+// Reba names for the case - and the dialog has no action at all, so nothing was ever paid. The share is paid on
+// that very line by the pack's script. It rides on the same repair as the ransom's charge, so an installation
+// never gets one without the other: where the ransom gate went in, the share must go in too.
+bool add_tikhon_share(std::string& text, bool required)
+{
+    const auto owner = block(text, "dialog", "esc_tixon_atp_final");
+    if (!owner) return !required;
+    auto contents = text.substr(owner->begin, owner->end - owner->begin);
+    const auto size = contents.size();
+    constexpr std::string_view line = "<text>esc_tixon_atp_final_1</text>";
+    constexpr std::string_view share = "<action>ild_script_repairs.tikhon_share</action>";
+    if (contents.find("tikhon_share") != contents.npos) return false;
+    const auto at = contents.find(line);
+    if (at == contents.npos || contents.find(line, at + line.size()) != contents.npos) return false;
+    contents.insert(at + line.size(), share);
+    if (!borrow_indentation(contents, contents.size() - size) || contents.size() != size) return false;
+    text.replace(owner->begin, size, contents);
+    return true;
+}
+
+// An offer whose only reply for a player who cannot pay records a refusal that the dialog itself is gated on, and
+// nothing ever clears it: one visit without money removes the offer for good. The one-shot the author meant is the
+// paid branch, which closes the dialog through its own portion, so the refusal gate and its only writer go.
+bool reopen_refused_offer(std::string& text, std::string_view dialog, std::string_view refusal)
+{
+    const auto owner = block(text, "dialog", dialog);
+    if (!owner) return false;
+    auto contents = text.substr(owner->begin, owner->end - owner->begin);
+    if (!blank_to(contents, "<dont_has_info>" + std::string(refusal) + "</dont_has_info>", "") ||
+        !blank_to(contents, "<give_info>" + std::string(refusal) + "</give_info>", "")) return false;
+    text.replace(owner->begin, contents.size(), contents);
+    return true;
+}
 }
 
 std::span<const ConfigRepairSource> config_repair_sources() { return sources; }
@@ -223,6 +260,14 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
         const auto action = patched.find(reward, phrase);
         if (action == patched.npos || action - phrase > 200) return false;
         patched[action + reward.size() - 1] = '5';
+        // Bronevik's detector inspection: the only reply without 5000 roubles hid the offer for the rest of the game.
+        if (!reopen_refused_offer(patched, "bar_bronevik_pochini_detektor", "bar_bronevik_ne_chini_detektor"))
+            return false;
+    }
+    else if (repair == ConfigRepair::trader_refusal)
+    {
+        // The Dark Valley seller of the only "Bogdan" artefact: turning down his 800 roubles ended the offer for good.
+        if (!reopen_refused_offer(patched, "val_chr_torgash4_start", "val_chr_torgash4_pshel_nax")) return false;
     }
     else if (repair == ConfigRepair::vodka_task)
     {
@@ -299,9 +344,10 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
         if (repair == ConfigRepair::prince_dialog)
         {
             // Retain every implemented reward and state transition; remove only absent legacy action references.
+            const auto ransom_present = block(patched, "dialog", "esc_dengi_rebe").has_value();
             if (!remove_absent_action(patched, "esc_sidor_artu_dolgy_ne_dal", "new_life.sidor_nagrada_1_6", 2) ||
                 !remove_absent_action(patched, "esc_post_pianka", "new_life.give_albom", 1) ||
-                !add_ransom_check(patched)) return false;
+                !add_ransom_check(patched) || !add_tikhon_share(patched, ransom_present)) return false;
         }
     }
     if (patched.size() != text.size()) return false;

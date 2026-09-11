@@ -457,3 +457,98 @@ The counter moves to `105,153` on the widescreen layout, which puts the number w
 centre of the disc at 2560x1440, verified on a loaded save. The 4:3 layout is derived from the same atlas
 measurement and moves to `135,148`; it is not verified on screen. The minimap itself is left exactly as the
 mod ships it.
+
+## Seventh pass: money nobody paid, offers that vanished, and an updater tied to one build — 2026-09-11
+
+Sources: three player reports from the mod's forum thread (Tikhon's unpaid share, the Wild Territory rally, the
+auto-update session that lost its settings), two reports from the maintainer (Bronevik's detector offer, single-use
+shovels) and the maintainer's note that a streamer without the mod's own binaries never received an update after 1.0.1.
+
+### Repairs
+
+| Defect | Consequence | Repair |
+| --- | --- | --- |
+| `dialogs_escape.xml` `esc_tixon_atp_final` — Tikhon's "вот твоя доля" line has no action, and no function anywhere in the mod pays 250 000 (the largest grant is 75 000). His earlier line guarantees exactly that sum, and it is the price Reba names in all three branches | Since 1.0.2 made Reba actually charge the ransom, the Cordon line stops at a quarter million the game never gives; «ДОБРО НЫНЧЕ ДОРОГОЕ» objective 1 has no completion condition at all | The same hash-gated repair that wires Reba's charge inserts `<action>ild_script_repairs.tikhon_share</action>` on that line, paid for with the block's own indentation; the charge never goes in without it. The share is paid once (`ild_tikhon_share_paid` in the actor's pstor, which the unmodified mod saves and loads as is). A save past Tikhon's dialog is paid when Reba's check runs. Objective 1 completes while the player holds the sum. A Tikhon who dies after the ATP scene no longer strands the line: his dialog counts as said once he is gone for good |
+| `dialogs_bar.xml` `bar_bronevik_pochini_detektor` — the only reply without 5000 roubles gives `bar_bronevik_ne_chini_detektor`, and the dialog is gated on that same portion; nothing clears it | One visit without money hides the detector inspection for the rest of the game | The gate and its only writer are blanked in memory, at the file's exact size. The paid inspection still closes the dialog through its own portion |
+| `dialogs_darkvalley.xml` `val_chr_torgash4_start` — the same shape: turning down 800 roubles gives `val_chr_torgash4_pshel_nax`, the start dialog's own gate | The only source of the "Bogdan" artefact (`af_teleport`) is lost for good, whether the player refused or simply could not pay | Same repair; buying still closes the offer |
+| `xr_effects.minys_lopata` — the only consumer of `item_lopata`, run from the timers of four grave stashes. The first timer branch wins whenever the shared roll allows it, so Garbage and Agroprom take the shovel every time and Cordon's two about half the time | Some shovels "last" and others vanish after one dig | The effect is a no-op, at the maintainer's request (a deliberate mechanic change). Stamina, sounds, loot and the grave closing for good are unchanged. The description's "хоть и не долговечна" is replaced where the engine reads it (`CInifile::r_string`, as for the knives): `system.ltx` and its includes are parsed before any hook of the pack exists, so a file repair cannot reach them |
+
+### The Wild Territory rally
+
+**Trucks that stop.** The three opponents (`kar_sopernik1-3`, story ids 609-611) run stock `ph_car`, written for armed
+BTRs. Once a second it compares `self.object:position()` with the previous sample and, below 0.2 m, calls `stop_car`
+and ends the scheme for good (`ph_car.script:1045-1067`). That position is written from physics only in
+`CCar::VisualUpdate`, which runs from `UpdateCL`, and `CObject::UpdateCL` (XR_3DA `0x433620`) keeps an object in the
+per-frame update only while it is drawn, within 30 m of the camera, or asks for it through `AlwaysTheCrow` - which
+`CCar` (xrGame `0x10269020`) answers yes only for an active mounted weapon. Driving commands still reach an unseen
+truck, so it starts, and within about two seconds the check parks it where it stands. A player who takes the
+organizer at his word and floors it at the signal leaves all three at the line; one who watches them sees them race.
+The mod's binaries are not involved: none of the injected hooks touch the car, script-action or object-update code.
+
+- `CCar::AlwaysTheCrow` answers yes for every car where its 28-byte body matches the validated one: its first
+  instruction becomes `mov eax, 1; ret`. The patch is applied before any car exists. A car keeps updating whether or
+  not anyone looks at it, as an armed one always did, so positions, steering, the stuck check and the finish
+  restrictor (`on_npc_in_zone` reads the same position) all see where the truck really is.
+- Everywhere else, `ph_car.action_car.fast_update` skips the stuck check for five seconds after `start_car` (a truck
+  in first gear gets no torque for up to about a second) and while `CurrentVel()` - which reads live physics - shows
+  the car moving. A car that really cannot move is still parked by the scheme's own check.
+
+**No way back.** The race is staged behind the level's own invisible walls, and the mod's organizer says so («Мы за картой»). The walls
+are GSC geometry, not the mod's: `materials\fake` faces with the ActorObstacle flag in `level.cform` (the door stands
+0.53 m on the playable side of a 20 m high double-sided quad from (-214.39, 10.66) to (-204.91, 27.01)), and
+`level.ai` holds no node at the camp or the finish. Walk-graph analysis of the collision mesh leaves the arrival
+point, the camp, the start and the finish with no way onto the playable side short of a 1.5 km trip under the far
+southern wall.
+
+| Defect | Consequence | Repair |
+| --- | --- | --- |
+| The door `dt_door_na_dorogy_smerti` runs `=ddt_tptator_na_trasy_ralli` on every use; nothing anywhere takes the actor back | Anyone who enters, races or not, is stuck behind the walls | Walking back onto the spot the door put him on, after having left it, and standing there for three seconds moves him to AI node 23123, 1.8 m from the door on the playable side. Only the player's own move triggers it, so a race in progress is never interrupted |
+| The finish restrictor's only return, `ddt_tp_gg_nastart` → `dik_ter.ddt_tpt_rally_na_start`, lands in the start camp, which is also behind the walls | The race ends and the player cannot leave | Once the organizer's closing dialog (`dt_ralli_gg_win`/`_fail`) has been had, or five minutes after the finish if nobody talks to him, the player is moved to the same node, once per session; a player who comes back through the door afterwards leaves on foot |
+| The return fires 3.5 s after the finish, almost always while the player is still at the wheel, and `CCar::VisualUpdate` rewrites the driver's position every frame | The teleport is lost; the player is left at the finish, 500 m from the organizer, with the car now locked | The return is withheld from a seated driver and delivered once he is out of the car, and only while he is inside the rally area |
+| The same return pulls the actor to the camp from wherever he is | A race resolving while the player has left drags him back behind the walls | The return is skipped outside the rally area |
+| `dt_ralli_vodila1` alone turns the bet into the countdown | A dead or absent driver strands a race the player has already paid for | The countdown portion is delivered 30 s after any of the three bets if he never gives it; the existing rule then starts the race 40 s after the countdown |
+
+
+- **Dead watchers.** In `ild_script_repairs.script`, `check_scene_stalls` named `unfreeze_scene` and `check_x18_pit` named
+  `story_server` above their `local function` declarations. Lua compiles such a name as a global, which is nil at run
+  time, and the `pcall` around both swallowed the error on every tick: the actor-side scene watcher and the X18
+  pseudogiant fallback shipped in 1.0.3 and never did anything. The helpers now sit above their first use.
+  `tests/script_globals.lua` reads the compiler's own listing of every payload script and fails on any global lookup
+  of a name the script declares as a module local; it fails on the 1.0.3 file and passes now.
+- **The 200-local ceiling.** Lua 5.1 refuses a chunk with more than 200 active locals, and this batch took
+  `ild_script_repairs.script` past it during development: the whole file, and with it every Lua repair, would not have
+  loaded. Nothing like that shipped. The rally helpers now live in their own block, the file holds 180 module locals,
+  and the same test fails when a script does not compile.
+- **The updater was tied to one executable.** The console bridge that carries the update window, the added options and
+  the support verbs was installed only when `XR_3DA.exe` and `ui_main_menu.script` matched their digests, so an
+  installation without the mod's patched binaries never saw an update. The bridge now validates the command layout
+  against the executable's own exports: `IConsole_Command`'s exported vtable must hold the exported `Status`, `Info`
+  and `Save` in slots 2-4 with no code after them, and the exported constructor, run on a scratch buffer, must write
+  the vtable at 0, the name at 4 and three flags at 8-10 and nothing beyond. The menu is bound by path and by its unique
+  anchor. Verified in staging with an `XR_3DA.exe` whose digest was changed: identity `MISMATCH`, updater and options
+  installed, menu bound.
+- **The file reader hook was behind the same gate.** The `_read` import that binds the menu and the actor script and
+  installs the knife and texture repairs is resolved by name and is now installed on every build; scripts are
+  recognised by resolved path (a game started through a junction, a SUBST drive or a short name reports its executable
+  under that name while every file resolves to the real location, which silently cost 1.0.3 its console-spam fix and
+  every path-based config repair there).
+- **Pop-ups for an unfamiliar build.** Every tweak that found another build showed a message box on each launch. They
+  are report lines now; a skip on an unvalidated file says "skipped", a failure on the validated one says "FAILED".
+- **Without the bridge, the Lua payload issued verbs the console did not know**, which the engine logs as an error per
+  call (the radio refresh once a second near a radio). The bridge is looked up once through `get_string`, which answers
+  nil for an unknown command, and every verb is skipped without it.
+
+### The loader report
+
+`loader-report.txt` gains a `[settings]` section (the stored options, and whether UAC file virtualization redirects this
+folder: the executable requests no execution level, so in a protected folder everything it writes lands in the
+player's VirtualStore, where an elevated session and the updater never look) and a `[runtime]` section filled in as
+scripts load: whether the console-spam statement was removed, the abort reason revealed, the menu and the actor script
+bound. The keyboard-name and preset tweaks now check a position-independent signature of their own code instead of a
+six-byte prologue.
+
+The session that lost its radio setting and got the console spam back after an automatic update is not reproducible
+from the data. Both symptoms together mean the bridge and the `_g.script` patch were both absent in that session: the
+loader not loaded (a proxy DLL that an antivirus removes after the updater rewrote it), a changed `ui_main_menu.script`
+and `_g.script` (a reinstalled or patched mod), or files read through VirtualStore. 1.0.4 removes the digest gates and
+writes exactly those facts into the report, which is what to ask the player for.

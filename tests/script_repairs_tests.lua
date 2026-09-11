@@ -145,6 +145,8 @@ local function fixture()
             calls.effectors = (calls.effectors or 0) + 1
         end,
         play_snd = function(actor, npc, p) calls.played[#calls.played + 1] = p[1] end,
+        -- What four grave stashes run from their timers: the mod's own shovel removal.
+        minys_lopata = function() env.sak.out_item_namber("item_lopata", 1) end,
         dt_final_rndm_tainik = function() calls.stash = (calls.stash or 0) + 1 end,
         enable_ui = function() calls.ui_enabled = (calls.ui_enabled or 0) + 1 end
     }
@@ -1057,6 +1059,36 @@ do
     equal(silent.played_sound, nil, "a source with no sound is left as it is")
 end
 
+-- An installation without the native bridge: the console does not know ild_update, answers nil for it, and would
+-- log an error line for every verb executed anyway.
+do
+    local env, calls, _, module = fixture()
+    local lookups = 0
+    env.get_console = function()
+        return {
+            execute = function(_, line)
+                calls.console = calls.console or {}
+                calls.console[#calls.console + 1] = line
+            end,
+            get_string = function()
+                lookups = lookups + 1
+                return nil
+            end
+        }
+    end
+    module.install()
+    local source = {st = {theme = "melnica_radio"}, played_sound = {volume = 1.0}}
+    env.ph_sound.snd_source.update(source, 10)
+    equal(source.played_sound.volume, 0.7, "radios still play at the default volume")
+    calls.conditions.on_npc_in_zone = {"038", "z", "nil"}
+    calls.story = {}
+    env.xr_logic.cfg_get_npc_and_zone("ini", "sr_idle", "on_npc_in_zone", {name = function() return "zone" end})
+    env.clock_ms = env.clock_ms + 2000
+    env.ph_sound.snd_source.update(source, 10)
+    equal(calls.console, nil, "no verb is ever sent to a console that does not know it")
+    equal(lookups, 1, "and the bridge is looked up once")
+end
+
 
 -- The NPC stall watchdog. Every fault below leaves a scheme waiting on a callback the engine will never
 -- deliver, which is what strands an NPC mid-quest until the player reloads.
@@ -1629,6 +1661,299 @@ do
     pass(95)
     equal(env.db.storage[41].remark.signals["sound_end"], true, "a wait for a sound that ended is released")
     equal(calls.infos.esc_atp_ydalai_ysex_k_xyiam_end, nil, "no portion is granted behind the scene's back")
+end
+
+-- Both of these once named helpers declared further down the module, so the lookup went to a nil global and the
+-- pcall around it swallowed that on every tick: the watchers existed and never did anything.
+local function watcher_fixture()
+    local env, calls, objects, module, actor = fixture()
+    module.install()
+    env.db.actor = actor()
+    local binder = {object = env.db.actor, first_update = false}
+    return env, calls, objects, function(seconds)
+        env.clock_ms = env.clock_ms + seconds * 1000
+        env.bind_stalker.actor_binder.update(binder, 1)
+    end
+end
+
+do
+    local env, calls, _, pass = watcher_fixture()
+    pass(4)
+    equal(calls.infos.labx_konec_psevducha, nil, "a pseudogiant that never appeared holds nothing up")
+    local alive = true
+    calls.story = {[455] = {id = 455, alive = function() return alive end}}
+    pass(70)
+    equal(calls.infos.labx_konec_psevducha, nil, "a living pseudogiant is left to the scene")
+    alive = false
+    pass(4)
+    equal(calls.infos.labx_konec_psevducha, nil, "a fresh corpse is given the time the scene needs")
+    pass(61)
+    equal(calls.infos.labx_konec_psevducha, true, "a corpse in the pit no longer locks the X18 finale")
+end
+
+do
+    local env, calls, _, pass = watcher_fixture()
+    calls.story = {[455] = {id = 455, alive = function() return true end}}
+    pass(4)
+    calls.story = {}
+    pass(4)
+    equal(calls.infos.labx_konec_psevducha, nil, "a released pseudogiant is not given up on at once")
+    pass(61)
+    equal(calls.infos.labx_konec_psevducha, true, "but one that is gone for good releases the finale too")
+end
+
+do
+    local env, calls, _, pass = watcher_fixture()
+    calls.online[930] = {id = function() return 930 end, name = function() return "bar_kom_stroi" end,
+        section = function() return "b_kom_stroi" end, active_sound_count = function() return 0 end}
+    env.db.storage[930] = {active_scheme = "remark", combat_ignore = {enabled = false},
+        remark = {section = "remark2", logic = {{name = "on_signal", v1 = "sound_end"}}}}
+    calls.online[931] = {id = function() return 931 end, section = function() return "esc_box" end}
+    env.db.storage[931] = {active_scheme = "ph_idle", ph_idle = {section = "ph_idle"}}
+    pass(4)
+    equal(#calls.switches, 0, "a scene section that has only just been seen is not touched")
+    pass(95)
+    equal(env.db.storage[930].combat_ignore.enabled, true, "a frozen scene NPC gets combat_ignore back")
+    equal(env.db.storage[930].remark.signals["sound_end"], true, "its wait for a sound that ended is released")
+    equal(#calls.switches, 1, "only the scene NPC is asked to make its own transition")
+    equal(calls.switches[1].victim, calls.online[930], "and it is that NPC")
+end
+
+-- Tikhon's share: the quarter million his closing line hands over and Reba charges for the case.
+local function ransom_fixture()
+    local env, calls, objects, module, actor = fixture()
+    calls.cash = 1000
+    env.dialogs.relocate_money = function(victim, amount, direction)
+        calls.cash = calls.cash + (direction == "in" and amount or -amount)
+        calls.relocations = (calls.relocations or 0) + 1
+    end
+    env.new_life.don_reba_denga_za_artu_esti = function() return calls.cash >= 250000 end
+    module.install()
+    env.db.actor = actor()
+    env.db.actor.money = function() return calls.cash end
+    calls.objectives = {}
+    env.db.actor.get_task_state = function(_, id, objective) return calls.objectives[id .. ":" .. objective] end
+    local binder = {object = env.db.actor, first_update = false}
+    return env, calls, module, function(seconds)
+        env.clock_ms = env.clock_ms + seconds * 1000
+        env.bind_stalker.actor_binder.update(binder, 1)
+    end
+end
+
+do
+    local env, calls, module, pass = ransom_fixture()
+    calls.objectives["esc_dobro_nunche_dorogoe:1"] = env.task.in_progress
+    pass(4)
+    equal(#calls.task_states, 0, "a player without the money has not saved anything up")
+    module.tikhon_share("actor", "tikhon")
+    equal(calls.cash, 251000, "Tikhon's closing line pays the quarter million he promised")
+    equal(calls.pstor.ild_tikhon_share_paid, true, "and the payment is remembered in the save")
+    module.tikhon_share("actor", "tikhon")
+    equal(calls.cash, 251000, "a second pass through the line pays nothing more")
+    pass(4)
+    equal(calls.task_states[1].id, "esc_dobro_nunche_dorogoe", "holding the sum settles the saving objective")
+    equal(calls.task_states[1].objective, 1, "and only that objective")
+    equal(calls.task_states[1].state, "completed", "as completed")
+    calls.objectives["esc_dobro_nunche_dorogoe:1"] = env.task.completed
+    pass(4)
+    equal(#calls.task_states, 1, "an objective that is already done is left alone")
+    equal(env.new_life.don_reba_denga_za_artu_esti("actor", "reba"), true, "Reba's dialog opens for the money")
+    equal(calls.cash, 251000, "without paying the share a second time")
+end
+
+do
+    local env, calls, module, pass = ransom_fixture()
+    equal(env.new_life.don_reba_denga_za_artu_esti("actor", "reba"), false,
+        "before Tikhon's closing dialog Reba still wants money the player does not have")
+    equal(calls.cash, 1000, "and nothing is paid")
+    calls.infos.esc_tixon_atp_final = true
+    equal(env.new_life.don_reba_denga_za_artu_esti("actor", "reba"), true,
+        "a save that heard Tikhon out before the share existed is paid when Reba asks")
+    equal(env.new_life.don_reba_denga_za_artu_esti("actor", "reba"), true, "her check still answers")
+    equal(calls.relocations, 1, "and the share is paid exactly once")
+end
+
+do
+    local env, calls, module, pass = ransom_fixture()
+    calls.infos.esc_tixon_atp_final = true
+    calls.infos.esc_dengi_rebe = true
+    module.tikhon_share("actor", "tikhon")
+    equal(env.new_life.don_reba_denga_za_artu_esti("actor", "reba"), false, "a ransom already paid is not refunded")
+    equal(calls.relocations, nil, "so nothing is paid after the case changed hands")
+end
+
+do
+    local env, calls, module, pass = ransom_fixture()
+    calls.infos.esc_atp_ydalai_ysex_k_xyiam_end = true
+    local alive = true
+    calls.story = {[42] = {id = 42, alive = function() return alive end}}
+    pass(4)
+    equal(calls.infos.esc_tixon_atp_final, nil, "a living Tikhon keeps his own closing dialog")
+    alive = false
+    pass(4)
+    equal(calls.infos.esc_tixon_atp_final, nil, "a fresh death is given its grace period")
+    pass(6)
+    equal(calls.infos.esc_tixon_atp_final, true, "a Tikhon gone for good no longer strands Reba's ransom")
+    equal(calls.relocations, nil, "and the share still comes only through the dialogs")
+end
+
+-- The Wild Territory rally: a one-way door into an area behind the level's invisible walls.
+local function rally_fixture()
+    local env, calls, objects, module, actor = fixture()
+    local points = {
+        arrival = {x = -211.6, y = 0, z = 11.53}, camp = {x = -115.25, y = 0.1, z = 49.35},
+        finish = {x = -332.36, y = 0, z = -379.44}, start = {x = -121, y = 0, z = 18},
+        elsewhere = {x = -250, y = 0, z = 150}, away = {x = -201.6, y = 0, z = 11.53},
+        back = {x = -210.6, y = 0, z = 11.53}
+    }
+    calls.rally = {pos = points.elsewhere, teleports = {}, camp_returns = 0, entries = 0}
+    local rally = calls.rally
+    env.level.name = function() return "l06_rostok" end
+    env.level.vertex_position = function() return {x = -215.6, y = 0, z = 12.6} end
+    env.xr_effects.ddt_tptator_na_trasy_ralli = function()
+        rally.entries = rally.entries + 1
+        rally.pos = points.arrival
+    end
+    env.dik_ter = {ddt_tpt_rally_na_start = function()
+        rally.camp_returns = rally.camp_returns + 1
+        rally.pos = points.camp
+    end}
+    module.install()
+    env.db.actor = actor()
+    env.db.actor.position = function() return rally.pos end
+    env.db.actor.get_current_holder = function() return rally.holder end
+    env.db.actor.is_talking = function() return rally.talking == true end
+    env.db.actor.set_actor_position = function(_, position)
+        rally.teleports[#rally.teleports + 1] = position
+        rally.pos = position
+    end
+    local binder = {object = env.db.actor, first_update = false}
+    calls.infos.spawn_sikret_rally_kvest = true
+    return env, calls, points, function(seconds)
+        env.clock_ms = env.clock_ms + seconds * 1000
+        env.bind_stalker.actor_binder.update(binder, 1)
+    end
+end
+
+do
+    local env, calls, points, pass = rally_fixture()
+    local rally = calls.rally
+    env.xr_effects.ddt_tptator_na_trasy_ralli()
+    pass(4)
+    equal(#rally.teleports, 0, "arriving through the door is not mistaken for walking back to it")
+    rally.pos = points.start
+    calls.infos.dt_ralli_nachalo2 = true
+    pass(4)
+    equal(calls.infos.ddt_rally_otschet, nil, "the driver is given his time to call the countdown")
+    pass(31)
+    equal(calls.infos.ddt_rally_otschet, true, "a driver who never calls it no longer holds up a paid race")
+    calls.infos.dt_ralli_strt = true
+    rally.holder = {}
+    rally.pos = points.finish
+    for _ = 1, 150 do pass(4) end
+    equal(#rally.teleports + rally.camp_returns, 0, "ten minutes of a race in progress are never interrupted")
+    -- The finish fires its return while the player is still at the wheel.
+    calls.infos.ddt_rally_pobeda_gg = true
+    calls.infos.ddt_tp_gg_nastart = true
+    env.dik_ter.ddt_tpt_rally_na_start()
+    equal(rally.camp_returns, 0, "a return issued to a seated driver is not wasted on the car")
+    pass(4)
+    equal(rally.camp_returns, 0, "nor forced while he stays seated")
+    rally.holder = nil
+    pass(4)
+    equal(rally.camp_returns, 1, "once out of the car he is taken to the organizer, as the finish intended")
+    pass(4)
+    pass(4)
+    equal(rally.camp_returns, 1, "and only once")
+    rally.talking = true
+    calls.infos.dt_ralli_gg_win = true
+    pass(30)
+    equal(#rally.teleports, 0, "nobody is moved in the middle of the reward dialog")
+    rally.talking = false
+    pass(4)
+    equal(#rally.teleports, 0, "the closing words are given a moment")
+    pass(21)
+    equal(#rally.teleports, 1, "then the show is over and the player is back on the playable side")
+    equal(rally.teleports[1].x, -215.6, "at the AI node right outside the door he came through")
+    pass(30)
+    equal(#rally.teleports, 1, "exactly once")
+end
+
+do
+    local env, calls, points, pass = rally_fixture()
+    local rally = calls.rally
+    env.xr_effects.ddt_tptator_na_trasy_ralli()
+    pass(4)
+    rally.pos = points.away
+    pass(4)
+    rally.pos = points.back
+    pass(4)
+    equal(#rally.teleports, 0, "passing the spot is not yet leaving")
+    pass(4)
+    equal(#rally.teleports, 1, "standing on it again takes a player who never raced back out")
+    equal(rally.teleports[1].z, 12.6, "to the playable side of the wall")
+end
+
+do
+    local env, calls, points, pass = rally_fixture()
+    local rally = calls.rally
+    calls.infos.ddt_tp_gg_nastart = true
+    rally.pos = points.elsewhere
+    env.dik_ter.ddt_tpt_rally_na_start()
+    equal(rally.camp_returns, 0, "a race that resolves while the player is elsewhere does not pull him back in")
+    pass(4)
+    equal(#rally.teleports + rally.camp_returns, 0, "and nothing is done outside the rally area")
+    rally.pos = points.camp
+    for _ = 1, 76 do pass(4) end
+    equal(#rally.teleports, 1, "a finished race nobody closes still lets the player out")
+end
+
+-- Rally trucks: ph_car parks a car whose script-visible position froze, which for an unseen unarmed car is always.
+do
+    local env, calls, _, module = fixture()
+    local parked = {}
+    env.ph_car = {action_car = {
+        start_car = function(self) self.started = true end,
+        -- The scheme's own check: a position that has not moved for a second parks the car for good.
+        fast_update = function(self)
+            local now = env.time_global()
+            if now < (self.last_pos_time or 0) + 1000 then return end
+            if self.last_pos and self.last_pos == self.position then parked[self.name] = true end
+            self.last_pos, self.last_pos_time = self.position, now
+        end
+    }}
+    module.install()
+    local function truck(name, speed)
+        return {name = name, position = "frozen", min_delta_per_sec = 0.2,
+            car = {CurrentVel = function() return {magnitude = function() return speed end} end}}
+    end
+    local driving, blocked = truck("kamaz", 9.5), truck("gaz66", 0)
+    env.ph_car.action_car.start_car(driving)
+    env.ph_car.action_car.start_car(blocked)
+    equal(driving.started, true, "the scheme's own start still runs")
+    for _ = 1, 8 do
+        env.clock_ms = env.clock_ms + 500
+        env.ph_car.action_car.fast_update(driving)
+        env.ph_car.action_car.fast_update(blocked)
+    end
+    equal(parked.gaz66, nil, "a truck still changing gear after the start is not judged stuck")
+    for _ = 1, 12 do
+        env.clock_ms = env.clock_ms + 500
+        env.ph_car.action_car.fast_update(driving)
+        env.ph_car.action_car.fast_update(blocked)
+    end
+    equal(parked.kamaz, nil, "an unseen truck that is driving is never parked")
+    equal(parked.gaz66, true, "a truck that really cannot move is still parked by the scheme itself")
+end
+
+-- The shovel: four grave stashes took it through one effect, some always and some on a roll.
+do
+    local env, calls, _, module = fixture()
+    module.install()
+    env.sak.inventory.item_lopata = 1
+    env.xr_effects.minys_lopata("actor", "grave")
+    equal(#calls.taken, 0, "digging a grave no longer takes the shovel")
+    equal(env.sak.inventory.item_lopata, 1, "which stays in the bag for the next one")
 end
 
 -- Reba's spy job stamps itself failed at the very moment the actor reports it done.

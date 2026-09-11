@@ -466,6 +466,38 @@ local function install_workbench_repairs()
     clamp_workbench(stanok.pochinka2, 0.85)
 end
 
+-- The engine never uses a shovel up. Four grave stashes take it through this one effect instead: always on the
+-- Garbage and Agroprom graves, and on a roll on Cordon's two, which is why some shovels seemed to last and others
+-- did not. Digging keeps everything else it costs and gives - stamina, sounds, the loot, the grave closing for good.
+local function install_shovel_repairs()
+    if type(xr_effects.minys_lopata) == "function" then xr_effects.minys_lopata = function() end end
+end
+
+-- Stock ph_car parks a car for good once the position scripts can see has not moved for a second. The engine
+-- refreshes that position for an unarmed car only while it is seen or near the camera, so the rally trucks were
+-- stopped as soon as the player stopped watching them. The loader keeps cars updating where it can patch the
+-- engine; everywhere else a car the physics shows moving, or one still changing gear after its start, is simply
+-- not judged stuck. A car that really cannot move is still parked by the scheme's own check.
+local function install_car_repairs()
+    local car = ph_car and ph_car.action_car
+    if not car or type(car.start_car) ~= "function" or type(car.fast_update) ~= "function" then return end
+    local original_start, original_update = car.start_car, car.fast_update
+    car.start_car = function(self, ...)
+        self.ild_started = time_global()
+        return original_start(self, ...)
+    end
+    car.fast_update = function(self, ...)
+        local now = time_global()
+        local moving = self.ild_started ~= nil and now - self.ild_started < 5000
+        if not moving then
+            local known, speed = pcall(function() return self.car:CurrentVel():magnitude() end)
+            moving = known and speed >= (self.min_delta_per_sec or 0.2)
+        end
+        if moving then self.last_pos, self.last_pos_time = nil, now end
+        return original_update(self, ...)
+    end
+end
+
 local function install_text_repairs()
     -- The mod replaced string_table_tips_escape.xml with its own file and lost this vanilla id; the engine
     -- returns the id itself when a string is absent, which is what reached the player's PDA.
@@ -488,6 +520,19 @@ local radio_markers = {"music", "radio", "muz", "myz", "soundtrack", "pesn", "tr
 local radio_cache = {}
 local radio_factor = 0.70
 local radio_checked = 0
+
+-- The support verbs live in the native console bridge, and an installation can be without it. A command the
+-- console does not know is logged as an error on every call, while get_string answers nil for it, so the bridge
+-- is looked up once and every verb is skipped when it is absent.
+local bridge_present
+
+local function bridge_ready()
+    if bridge_present == nil then
+        local known, value = pcall(function() return get_console():get_string("ild_update") end)
+        bridge_present = known and value ~= nil
+    end
+    return bridge_present
+end
 
 local function is_radio_theme(theme)
     if type(theme) ~= "string" then return false end
@@ -516,6 +561,7 @@ local function refresh_radio_volume()
     local now = time_global()
     if now - radio_checked < 1000 then return end
     radio_checked = now
+    if not bridge_ready() then return end
     local console = get_console()
     console:execute("ild_update read setting_radio_volume")
     local percent = tonumber(console:get_string("ild_update"))
@@ -572,6 +618,7 @@ local move_epsilon = 0.5
 local function report_line(text)
     -- Rare by construction, and the only trace an intervention leaves. The console verb writes it beside
     -- the loader report; a build without the native bridge simply has nowhere to write it.
+    if not bridge_ready() then return end
     pcall(function() get_console():execute("ild_update watchdog " .. text) end)
 end
 
@@ -1048,6 +1095,47 @@ local function settle_spy_task()
     settle_task(spy_task, spy_task_objectives)
 end
 
+-- Tikhon's closing line hands over "your share": the quarter million he guarantees for the ATP deal, which is the
+-- price Reba names for the case. The mod never paid it, and once the pack made Reba actually charge the sum, the
+-- whole Cordon line stopped at a quarter million nobody could have. The config repair puts this call on that line
+-- in the same repair that wires the charge, so the money only ever exists where it is also taken. The payment is
+-- remembered in the actor's pstor, the key/value table the unmodified mod saves and loads as it is.
+local ransom = {
+    amount = 250000, task = "esc_dobro_nunche_dorogoe", saving_objective = 1, flag = "ild_tikhon_share_paid"
+}
+
+function tikhon_share(first_speaker, second_speaker)
+    local actor = db.actor
+    if not actor or has_alife_info("esc_dengi_rebe") then return end
+    local known, paid = pcall(xr_logic.pstor_retrieve, actor, ransom.flag, false)
+    if not known or paid then return end
+    xr_logic.pstor_store(actor, ransom.flag, true)
+    dialogs.relocate_money(second_speaker or first_speaker or actor, ransom.amount, "in")
+    report_line("share " .. ransom.amount)
+end
+
+local function install_ransom_share()
+    local original = new_life.don_reba_denga_za_artu_esti
+    if type(original) ~= "function" then return end
+    -- A save that finished Tikhon's dialog before the share existed is paid the moment Reba is asked. Her check is
+    -- called only by the repaired dialog, so this too happens only where the charge is wired.
+    new_life.don_reba_denga_za_artu_esti = function(first_speaker, second_speaker, ...)
+        if has_alife_info("esc_tixon_atp_final") then tikhon_share(first_speaker, second_speaker) end
+        return original(first_speaker, second_speaker, ...)
+    end
+end
+
+-- "Save up a quarter million" has no completion condition of its own, so it could only ever be swept along when
+-- Reba's portion closed the whole task. It is what the player holds that the objective asks about.
+local function settle_ransom_saving()
+    local actor = db.actor
+    if has_alife_info("esc_dengi_rebe") or actor:money() < ransom.amount then return end
+    local known, state = pcall(function() return actor:get_task_state(ransom.task, ransom.saving_objective) end)
+    if not known or state ~= task.in_progress then return end
+    pcall(function() level_tasks.set_task_state(task.completed, ransom.task, ransom.saving_objective) end)
+    report_line("task " .. ransom.task .. " " .. ransom.saving_objective)
+end
+
 local function deliver_paired_portions()
     for trigger, portion in pairs(paired_portions) do
         if has_alife_info(trigger) and not has_alife_info(portion) then
@@ -1125,6 +1213,66 @@ local garbage_hint = string.char(
     46)
 local garbage_hint_flag = "agro_finaluch_igra"
 
+local function story_server(story_id)
+    local simulator = alife()
+    return simulator and simulator:story_object(story_id) or nil
+end
+
+-- nil when the object is released, false while it is a corpse, true while it can still run its logic.
+local function story_alive(story_id)
+    local server = story_server(story_id)
+    if not server then return nil end
+    local known, alive = pcall(server.alive, server)
+    return not known or alive ~= false
+end
+
+local function story_online(story_id)
+    local server = story_server(story_id)
+    local object = server and level.object_by_id(server.id)
+    local storage = object and db.storage[object:id()]
+    return storage and storage.active_scheme and object or nil, storage
+end
+
+local scene_freeze = 90000
+local scene_section_since = {}
+
+-- The section waits for a sound that is no longer playing: this is the assignment the remark scheme failed to
+-- make, and nothing else in the section can end it.
+local function scene_sound_ended(npc, state)
+    if npc:active_sound_count() ~= 0 then return false end
+    for _, condition in pairs(state.logic or {}) do
+        if condition.name and string.find(condition.name, "^on_signal%d*$") and condition.v1 == "sound_end" then
+            return true
+        end
+    end
+    return false
+end
+
+-- The scene sections of this mod have no timeouts, and the schemes that run them stop being executed the
+-- moment anything deselects their action - a hit that disables combat_ignore for good, a danger, an enemy.
+-- Everything below is what a reload does: turn combat_ignore back on, release a wait for a sound that is no
+-- longer playing, and ask the section to make its own transition. No step of any scene is skipped.
+local function unfreeze_scene(npc, storage, key, now)
+    local state = storage[storage.active_scheme]
+    local section = state and state.section
+    if not section then return false end
+    local record = scene_section_since[key]
+    if not record or record.section ~= section then
+        scene_section_since[key] = {section = section, since = now}
+        return false
+    end
+    if now - record.since < scene_freeze then return false end
+    record.since = now
+    if storage.combat_ignore then storage.combat_ignore.enabled = true end
+    if scene_sound_ended(npc, state) then
+        state.signals = state.signals or {}
+        state.signals["sound_end"] = true
+    end
+    xr_logic.try_switch_to_another_section(npc, state, db.actor)
+    watch_report(npc, section, "scene")
+    return true
+end
+
 -- The same scenes, watched from the actor's side: an action that is never selected cannot reach the timer
 -- above, and an NPC that is gone cannot reach anything at all.
 local scene_owners = {
@@ -1159,22 +1307,28 @@ end
 -- would have handed over, and only once the grace period proves nothing else is coming.
 local last_resort = {
     -- The Bar formation commander is an ordinary stalker, so unlike the mod's other scene NPCs he can die.
-    {after = "bar_v_stroi", missing = "bar_krik_konec", grace = 180000},
+    {after = {"bar_v_stroi"}, missing = "bar_krik_konec", grace = 180000},
     -- The rally countdown is paid for in advance and its dialog cannot be re-run.
-    {after = "ddt_rally_otschet", missing = "dt_ralli_strt", grace = 40000}
+    {after = {"ddt_rally_otschet"}, missing = "dt_ralli_strt", grace = 40000},
+    -- The countdown itself comes from one driver, who reacts to the bet the moment it is placed. Whichever of the
+    -- three bets was taken, a driver who is dead or gone must not keep the paid race from starting.
+    {after = {"dt_ralli_nachalo1", "dt_ralli_nachalo2", "dt_ralli_nachalo3"}, missing = "ddt_rally_otschet",
+        grace = 30000}
 }
 local last_resort_since = {}
 
 local function deliver_last_resort(now)
-    for _, rule in ipairs(last_resort) do
-        if has_alife_info(rule.after) and not has_alife_info(rule.missing) then
-            last_resort_since[rule.missing] = last_resort_since[rule.missing] or now
-            if now - last_resort_since[rule.missing] >= rule.grace then
+    for index, rule in ipairs(last_resort) do
+        local armed = false
+        for _, portion in ipairs(rule.after) do armed = armed or has_alife_info(portion) end
+        if armed and not has_alife_info(rule.missing) then
+            last_resort_since[index] = last_resort_since[index] or now
+            if now - last_resort_since[index] >= rule.grace then
                 db.actor:give_info_portion(rule.missing)
                 report_line("scene " .. rule.missing)
             end
         else
-            last_resort_since[rule.missing] = nil
+            last_resort_since[index] = nil
         end
     end
 end
@@ -1412,72 +1566,13 @@ end
 -- the scene itself would have run next.
 local atp_leader, atp_tikhon = 41, 42
 local atp_end_portion = "esc_atp_ydalai_ysex_k_xyiam_end"
-local atp_freeze = 90000
 local atp_gone_grace = 5000
 local atp_gone_since = {}
-local atp_section_since = {}
-
-local function story_server(story_id)
-    local simulator = alife()
-    return simulator and simulator:story_object(story_id) or nil
-end
-
--- nil when the object is released, false while it is a corpse, true while it can still run its logic.
-local function story_alive(story_id)
-    local server = story_server(story_id)
-    if not server then return nil end
-    local known, alive = pcall(server.alive, server)
-    return not known or alive ~= false
-end
 
 -- A release seen one tick before the portion it comes with is not a stranded scene.
 local function atp_gone_for_good(key, now)
     atp_gone_since[key] = atp_gone_since[key] or now
     return now - atp_gone_since[key] >= atp_gone_grace
-end
-
-local function story_online(story_id)
-    local server = story_server(story_id)
-    local object = server and level.object_by_id(server.id)
-    local storage = object and db.storage[object:id()]
-    return storage and storage.active_scheme and object or nil, storage
-end
-
--- The section waits for a sound that is no longer playing: this is the assignment the remark scheme failed to
--- make, and nothing else in the section can end it.
-local function atp_sound_ended(npc, state)
-    if npc:active_sound_count() ~= 0 then return false end
-    for _, condition in pairs(state.logic or {}) do
-        if condition.name and string.find(condition.name, "^on_signal%d*$") and condition.v1 == "sound_end" then
-            return true
-        end
-    end
-    return false
-end
-
--- The scene sections of this mod have no timeouts, and the schemes that run them stop being executed the
--- moment anything deselects their action - a hit that disables combat_ignore for good, a danger, an enemy.
--- Everything below is what a reload does: turn combat_ignore back on, release a wait for a sound that is no
--- longer playing, and ask the section to make its own transition. No step of any scene is skipped.
-local function unfreeze_scene(npc, storage, key, now)
-    local state = storage[storage.active_scheme]
-    local section = state and state.section
-    if not section then return false end
-    local record = atp_section_since[key]
-    if not record or record.section ~= section then
-        atp_section_since[key] = {section = section, since = now}
-        return false
-    end
-    if now - record.since < atp_freeze then return false end
-    record.since = now
-    if storage.combat_ignore then storage.combat_ignore.enabled = true end
-    if atp_sound_ended(npc, state) then
-        state.signals = state.signals or {}
-        state.signals["sound_end"] = true
-    end
-    xr_logic.try_switch_to_another_section(npc, state, db.actor)
-    watch_report(npc, section, "scene")
-    return true
 end
 
 local function atp_unfreeze(story_id, now)
@@ -1515,6 +1610,156 @@ local function check_atp_scene(now)
     atp_unfreeze(atp_tikhon, now)
 end
 
+-- Tikhon's closing dialog is the only source of esc_tixon_atp_final, and Reba's ransom dialog waits for it. A
+-- Tikhon who dies after the ATP scene - the pack itself plays that scene out for a dead one - would take the rest
+-- of the Cordon line with him, so once he is gone for good his dialog counts as said. The share still arrives only
+-- through the repaired dialogs.
+local function settle_tikhon_final(now)
+    if not has_alife_info(atp_end_portion) or has_alife_info("esc_tixon_atp_final") or
+        story_alive(atp_tikhon) == true then
+        atp_gone_since.final = nil
+        return
+    end
+    if not atp_gone_for_good("final", now) then return end
+    db.actor:give_info_portion("esc_tixon_atp_final")
+    report_line("scene esc_tixon_atp_final")
+end
+
+-- The Wild Territory rally is staged behind the level's own invisible walls - the organizer says as much. A door on
+-- the playable side teleports the actor in, and nothing ever takes him out: the teleport that follows the finish
+-- lands in the start camp, which is behind the same walls, and one issued while he still sits in his car is lost
+-- outright, since the car rewrites its driver's position every frame. The coordinates come from the level's
+-- collision and AI meshes: the door's own wall, the spot it teleports to, and the AI node just outside that wall.
+-- The block keeps its helpers to itself: a Lua 5.1 chunk may hold no more than 200 active locals.
+local check_rally, install_rally_repairs
+do
+    local rally_level = "l06_rostok"
+    local rally_quest = "spawn_sikret_rally_kvest"
+    local rally_camp = {x = -115.25, z = 49.35}
+    local rally_arrival = {x = -211.6, z = 11.53}
+    local rally_wall = {ax = -214.39, az = 10.66, bx = -204.91, bz = 27.01}
+    local rally_exit_vertex = 23123
+    local rally_exit = {x = -215.6, y = 0, z = 12.6}
+    -- Everything behind the walls from the start camp to the finish, and no node of the playable side above y = -3.
+    local rally_area = {
+        {-158, 86}, {-146, 96}, {-140, 104}, {-62, 104}, {-62, -80}, {-120, -85}, {-150, -105}, {-160, -250},
+        {-185, -270}, {-185, -420}, {-375, -420}, {-375, -80}, {-195, -80}, {-178, -62}, {-165, -30}, {-160, -5}
+    }
+    local rally_floor = -3
+    local rally_exit_hold = 3000
+    local rally_over_grace = 20000
+    local rally_abandoned_grace = 300000
+    local rally = {}
+
+    local function flat_distance(position, point)
+        local dx, dz = position.x - point.x, position.z - point.z
+        return math.sqrt(dx * dx + dz * dz)
+    end
+
+    local function inside_polygon(polygon, x, z)
+        local inside, previous = false, polygon[#polygon]
+        for _, point in ipairs(polygon) do
+            if (point[2] > z) ~= (previous[2] > z) and
+                x < (previous[1] - point[1]) * (z - point[2]) / (previous[2] - point[2]) + point[1] then
+                inside = not inside
+            end
+            previous = point
+        end
+        return inside
+    end
+
+    local function in_rally_area(position)
+        return position.y >= rally_floor and inside_polygon(rally_area, position.x, position.z)
+    end
+
+    -- On the rally side of the door's wall and within reach of the spot the door teleports to.
+    local function near_rally_arrival(position, reach)
+        local ax, az = rally_wall.bx - rally_wall.ax, rally_wall.bz - rally_wall.az
+        local side = ax * (position.z - rally_wall.az) - az * (position.x - rally_wall.ax)
+        return side / math.sqrt(ax * ax + az * az) < -0.3 and flat_distance(position, rally_arrival) <= reach
+    end
+
+    local function on_rally_level()
+        local known, name = pcall(level.name)
+        return known and name == rally_level
+    end
+
+    local function actor_seated(actor)
+        local known, holder = pcall(function() return actor:get_current_holder() end)
+        return known and holder ~= nil
+    end
+
+    local function leave_rally(actor, reason)
+        local target = vector():set(rally_exit.x, rally_exit.y, rally_exit.z)
+        local known, node = pcall(level.vertex_position, rally_exit_vertex)
+        if known and node and flat_distance(node, rally_exit) <= 1 then target = node end
+        actor:set_actor_position(target)
+        report_line("rally " .. reason)
+    end
+
+    function check_rally(now)
+        if not has_alife_info(rally_quest) or not on_rally_level() then return end
+        local actor = db.actor
+        if actor_seated(actor) then return end
+        local position = actor:position()
+        -- The way back the mod never built: having walked off the spot the door put him on, the player stands on it
+        -- again. Only the player's own move triggers this, so a race in progress is never interrupted.
+        if flat_distance(position, rally_arrival) >= 6 then rally.left_arrival = true end
+        if rally.left_arrival and near_rally_arrival(position, 3) then
+            rally.exit_since = rally.exit_since or now
+            if now - rally.exit_since < rally_exit_hold then return end
+            rally.exit_since, rally.left_arrival = nil, nil
+            leave_rally(actor, "door")
+            return
+        end
+        rally.exit_since = nil
+        if not has_alife_info("ddt_tp_gg_nastart") or actor:is_talking() or not in_rally_area(position) then return end
+        local closed = has_alife_info("dt_ralli_gg_win") or has_alife_info("dt_ralli_gg_fail")
+        -- The return the finish owed and a seated driver never got: the organizer with the reward is at the camp.
+        if not closed and not rally.returned and flat_distance(position, rally_camp) > 30 then
+            rally.returned = true
+            dik_ter.ddt_tpt_rally_na_start()
+            report_line("rally return")
+            return
+        end
+        -- The show is over once the organizer has had his say, or long after the finish if nobody talks to him.
+        if rally.released then return end
+        rally.finished_since = rally.finished_since or now
+        if closed then rally.closed_since = rally.closed_since or now end
+        if (rally.closed_since and now - rally.closed_since >= rally_over_grace) or
+            now - rally.finished_since >= rally_abandoned_grace then
+            rally.released = true
+            leave_rally(actor, "over")
+        end
+    end
+
+    function install_rally_repairs()
+        local original_entry = xr_effects.ddt_tptator_na_trasy_ralli
+        if type(original_entry) == "function" then
+            xr_effects.ddt_tptator_na_trasy_ralli = function(...)
+                -- A player who comes back through the door after the show leaves on his own feet, not on a timer.
+                rally.left_arrival, rally.exit_since = nil, nil
+                if has_alife_info("ddt_tp_gg_nastart") then rally.released = true end
+                return original_entry(...)
+            end
+        end
+        local original_return = dik_ter.ddt_tpt_rally_na_start
+        if type(original_return) ~= "function" then return end
+        dik_ter.ddt_tpt_rally_na_start = function(...)
+            local actor = db.actor
+            if actor and on_rally_level() then
+                local position = actor:position()
+                -- A race that resolves while the player is somewhere else no longer pulls him behind the walls, and one
+                -- that resolves while he is seated is delivered by the watch once he gets out.
+                if not in_rally_area(position) and not near_rally_arrival(position, 60) then return end
+                if actor_seated(actor) then return end
+                rally.returned = true
+            end
+            return original_return(...)
+        end
+    end
+end
+
 local function check_death_watch(now)
     if now - death_checked < death_period then return end
     death_checked = now
@@ -1535,6 +1780,9 @@ local function check_death_watch(now)
     settle_control_room()
     settle_tasks()
     pcall(check_atp_scene, now)
+    pcall(settle_tikhon_final, now)
+    pcall(settle_ransom_saving)
+    pcall(check_rally, now)
     for id, record in pairs(death_watch) do
         local server = simulator:object(id)
         local dead = server == nil
@@ -1656,6 +1904,8 @@ function install()
     install_ai_watchdog()
     install_hud_repairs()
     install_workbench_repairs()
+    install_shovel_repairs()
+    pcall(install_car_repairs)
     install_text_repairs()
     install_zone_update(se_zones.se_zone_anom, cse_anomalous_zone)
     install_zone_update(se_zones.se_zone_visual, cse_zone_visual)
@@ -1666,6 +1916,8 @@ function install()
     install_story_object_repair()
     install_smart_terrain_repair()
     install_spy_task_repair()
+    install_ransom_share()
+    pcall(install_rally_repairs)
     install_scene_fallbacks()
     install_level_repairs()
     install_repeat_effect_repairs()

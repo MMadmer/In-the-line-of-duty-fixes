@@ -11,6 +11,7 @@
 #include "script_patch.h"
 #include "display_mode.h"
 #include "reader_repairs.h"
+#include "vehicle_repairs.h"
 #include "sha256.h"
 
 #include <Windows.h>
@@ -18,68 +19,54 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <mutex>
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace
 {
 using DirectInput8CreateFn = HRESULT(WINAPI*)(HINSTANCE, DWORD, REFIID, LPVOID*, LPUNKNOWN);
 using CreateFileMappingAFn = decltype(&CreateFileMappingA);
 using ReadFn = int(__cdecl*)(int, void*, unsigned int);
+using OsHandleFn = std::intptr_t(__cdecl*)(int);
 
-constexpr ild::Sha256 expected_engine_hash{
-    std::byte{0xB2}, std::byte{0x2B}, std::byte{0xC1}, std::byte{0x5B}, std::byte{0x94}, std::byte{0xA2},
-    std::byte{0xA5}, std::byte{0x8C}, std::byte{0x4E}, std::byte{0x70}, std::byte{0x46}, std::byte{0xE4},
-    std::byte{0x6D}, std::byte{0x46}, std::byte{0xA3}, std::byte{0x75}, std::byte{0x0D}, std::byte{0x80},
-    std::byte{0xC3}, std::byte{0x99}, std::byte{0xBA}, std::byte{0x8F}, std::byte{0x37}, std::byte{0xA2},
-    std::byte{0xEF}, std::byte{0x40}, std::byte{0xCC}, std::byte{0xF7}, std::byte{0x8E}, std::byte{0xE3},
-    std::byte{0x12}, std::byte{0x6D},
+// The builds the native tweaks were validated against. They are recorded for support only: nothing below is
+// enabled or disabled by these digests, every repair checks what it needs by itself.
+struct Identity
+{
+    const wchar_t* relative;
+    std::string_view hash;
 };
-
-constexpr ild::Sha256 expected_core_hash{
-    std::byte{0xE6}, std::byte{0xB6}, std::byte{0xE0}, std::byte{0xC1}, std::byte{0x50}, std::byte{0xC4},
-    std::byte{0xC5}, std::byte{0x11}, std::byte{0xB2}, std::byte{0x99}, std::byte{0xAA}, std::byte{0x3C},
-    std::byte{0x0E}, std::byte{0x4E}, std::byte{0x91}, std::byte{0xD6}, std::byte{0xB7}, std::byte{0x7A},
-    std::byte{0x48}, std::byte{0x01}, std::byte{0xB2}, std::byte{0x3C}, std::byte{0x9B}, std::byte{0x6E},
-    std::byte{0x55}, std::byte{0xBF}, std::byte{0x7A}, std::byte{0x55}, std::byte{0x7A}, std::byte{0xBE},
-    std::byte{0xEE}, std::byte{0xEB},
+constexpr std::array identities{
+    Identity{L"bin\\XR_3DA.exe", "B22BC15B94A2A58C4E7046E46D46A3750D80C399BA8F37A2EF40CCF78EE3126D"},
+    Identity{L"bin\\xrCore.dll", "E6B6E0C150C4C511B299AA3C0E4E91D6B77A4801B23C9B6E55BF7A557ABEEEEB"},
+    Identity{L"bin\\xrGame.dll", "277B67FD6D21839A2F6C246EF57C8AD0C31079C0EAAAB179A8072D1B74A0284F"},
+    Identity{L"bin\\xrSound.dll", "741FE39CDB2081CADB7CAEE33C111C60BE7EE1248F01FFB6B8F550AF50BCEFEA"},
+    Identity{L"bin\\xrRender_R2.dll", "2A91C9BB90A4CBF8A3E0F9265634A7F38ED19662B5B10089149FD1E7B2942F86"},
+    Identity{L"gamedata\\scripts\\_g.script", "2C5C2CCD95AE5B91F58C988D777C21444B832B746AFE3B565DF9A0E42F7AF2EE"},
+    Identity{L"gamedata\\scripts\\bind_stalker.script",
+        "34732168AF8F7941A8BC87B7481A8A8686B447C27C25A914A11986D423B5C5B9"},
+    Identity{L"gamedata\\scripts\\ui_main_menu.script",
+        "F18503040ED2FBBB84161857C0B55C84E8101CC911868978217A8E2C11577E08"},
 };
-
-constexpr ild::Sha256 expected_script_hash{
-    std::byte{0x2C}, std::byte{0x5C}, std::byte{0x2C}, std::byte{0xCD}, std::byte{0x95}, std::byte{0xAE},
-    std::byte{0x5B}, std::byte{0x91}, std::byte{0xF5}, std::byte{0x8C}, std::byte{0x98}, std::byte{0x8D},
-    std::byte{0x77}, std::byte{0x7C}, std::byte{0x21}, std::byte{0x44}, std::byte{0x4B}, std::byte{0x83},
-    std::byte{0x2B}, std::byte{0x74}, std::byte{0x6A}, std::byte{0xFE}, std::byte{0x3B}, std::byte{0x56},
-    std::byte{0x5D}, std::byte{0xF9}, std::byte{0xA0}, std::byte{0xE4}, std::byte{0x2F}, std::byte{0x7A},
-    std::byte{0xF2}, std::byte{0xEE},
-};
+enum IdentityIndex : std::size_t { engine_identity, core_identity, game_identity, sound_identity };
 
 CreateFileMappingAFn real_create_file_mapping{};
 ReadFn real_read{};
-constexpr ild::Sha256 expected_actor_hash{
-    std::byte{0x34}, std::byte{0x73}, std::byte{0x21}, std::byte{0x68}, std::byte{0xAF}, std::byte{0x8F},
-    std::byte{0x79}, std::byte{0x41}, std::byte{0xA8}, std::byte{0xBC}, std::byte{0x87}, std::byte{0xB7},
-    std::byte{0x48}, std::byte{0x1A}, std::byte{0x8A}, std::byte{0x86}, std::byte{0x86}, std::byte{0xB4},
-    std::byte{0x47}, std::byte{0xC2}, std::byte{0x7C}, std::byte{0x25}, std::byte{0xA9}, std::byte{0x14},
-    std::byte{0xA1}, std::byte{0x19}, std::byte{0x86}, std::byte{0xD4}, std::byte{0x23}, std::byte{0xB5},
-    std::byte{0xC5}, std::byte{0xB9}
-};
-constexpr ild::Sha256 expected_menu_hash{
-    std::byte{0xF1}, std::byte{0x85}, std::byte{0x03}, std::byte{0x04}, std::byte{0x0E}, std::byte{0xD2},
-    std::byte{0xFB}, std::byte{0xBB}, std::byte{0x84}, std::byte{0x16}, std::byte{0x18}, std::byte{0x57},
-    std::byte{0xC0}, std::byte{0xB5}, std::byte{0x5C}, std::byte{0x84}, std::byte{0xE8}, std::byte{0x10},
-    std::byte{0x1C}, std::byte{0xC9}, std::byte{0x11}, std::byte{0x86}, std::byte{0x89}, std::byte{0x78},
-    std::byte{0x21}, std::byte{0x7A}, std::byte{0x8E}, std::byte{0x2C}, std::byte{0x11}, std::byte{0x57},
-    std::byte{0x7E}, std::byte{0x08},
-};
-std::filesystem::path target_script;
-std::filesystem::path target_actor;
+OsHandleFn crt_handle{};
 std::filesystem::path game_root;
+std::wstring target_script;
+std::wstring target_actor;
+std::wstring target_menu;
+std::filesystem::path resolved_root;
+std::atomic<bool> bridge_installed{};
 INIT_ONCE install_once = INIT_ONCE_STATIC_INIT;
-INIT_ONCE message_once = INIT_ONCE_STATIC_INIT;
 
 [[nodiscard]] std::wstring quote_argument(const std::wstring& value)
 {
@@ -95,25 +82,6 @@ INIT_ONCE message_once = INIT_ONCE_STATIC_INIT;
     result.append(slashes * 2, L'\\');
     result.push_back(L'\"');
     return result;
-}
-
-int __cdecl read_hook(int file, void* buffer, unsigned int size)
-{
-    static_cast<void>(ild::install_inventory_hooks(game_root));
-    static_cast<void>(ild::install_texture_aliases(game_root));
-    const auto read = real_read(file, buffer, size);
-    if (read > 0 && buffer)
-        static_cast<void>(ild::repair_config_buffer(std::span(static_cast<std::byte*>(buffer), static_cast<std::size_t>(read))));
-    if ((read == 8844 || read == 18708) && buffer)
-    {
-        const auto bytes = std::span(static_cast<std::byte*>(buffer), static_cast<std::size_t>(read));
-        ild::Sha256 actual{};
-        if (ild::sha256_bytes(bytes, actual) && actual == expected_menu_hash)
-            static_cast<void>(ild::script_patch::bind_update_menu(bytes));
-        else if (actual == expected_actor_hash)
-            static_cast<void>(ild::script_patch::bind_gameplay(bytes));
-    }
-    return read;
 }
 
 void start_update_service(const std::filesystem::path& engine)
@@ -158,30 +126,18 @@ void start_update_service(const std::filesystem::path& engine)
     return std::filesystem::path(buffer);
 }
 
-[[nodiscard]] bool equals_hash(const std::filesystem::path& path, const ild::Sha256& expected)
+// std::filesystem::path::string() throws for a name the ANSI code page cannot hold, which would take the game
+// down inside DirectInput8Create; the report is UTF-8 instead.
+[[nodiscard]] std::string utf8(std::wstring_view text)
 {
-    ild::Sha256 actual{};
-    return ild::sha256_file(path, actual) && actual == expected;
+    if (text.empty()) return {};
+    const auto size = WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0,
+        nullptr, nullptr);
+    if (size <= 0) return {};
+    std::string result(static_cast<std::size_t>(size), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), size, nullptr, nullptr);
+    return result;
 }
-
-BOOL CALLBACK show_unsupported_message(PINIT_ONCE, PVOID parameter, PVOID*)
-{
-    MessageBoxW(
-        nullptr,
-        static_cast<const wchar_t*>(parameter),
-        L"In the Line of Duty Fixes",
-        MB_OK | MB_ICONWARNING | MB_SYSTEMMODAL);
-    return TRUE;
-}
-
-void report_unsupported(const wchar_t* reason)
-{
-    InitOnceExecuteOnce(&message_once, show_unsupported_message, const_cast<wchar_t*>(reason), nullptr);
-}
-
-// A support report the player can send back. It is written on every launch, before and independently of the
-// identity gate, so an installation where nothing could be applied still says exactly why.
-std::string report;
 
 [[nodiscard]] std::string hex(const ild::Sha256& digest)
 {
@@ -196,62 +152,230 @@ std::string report;
     return text;
 }
 
-void record_identity(std::string_view name, const std::filesystem::path& path, const ild::Sha256& expected)
-{
-    ild::Sha256 actual{};
-    const auto readable = ild::sha256_file(path, actual);
-    report += "  ";
-    report += name;
-    report += "\n    expected " + hex(expected) + "\n    actual   ";
-    report += readable ? hex(actual) : std::string("<file not readable>");
-    report += readable && actual == expected ? "  MATCH\n" : "  MISMATCH\n";
-}
+// A support report the player can send back. It is written on every launch, before and independently of any
+// repair, and the scripts the pack binds later add what actually happened to them, so an installation where
+// something did not apply still says exactly why.
+std::mutex report_mutex;
+std::filesystem::path report_root;
+std::string report_head;
+std::vector<std::string> report_runtime;
 
-void record(std::string_view step, bool ok)
+void write_report_locked()
 {
-    report += "  ";
-    report += step;
-    report += ok ? " = ok\n" : " = FAILED\n";
-}
-
-void write_report(const std::filesystem::path& root)
-{
+    // A script loaded before the loader has finished is kept and written together with the rest.
+    if (report_root.empty()) return;
     std::error_code error;
-    const auto directory = root / L".ild-fixes" / L"runtime";
+    const auto directory = report_root / L".ild-fixes" / L"runtime";
     std::filesystem::create_directories(directory, error);
     if (error) return;
+    std::string text = report_head + "\n[runtime]\n";
+    for (const auto& line : report_runtime) text += line;
+    if (report_runtime.empty()) text += "  no script has been loaded yet\n";
+    text += "\nSend this file if a repair did not take effect.\n";
     const auto file = CreateFileW((directory / L"loader-report.txt").c_str(), GENERIC_WRITE, FILE_SHARE_READ,
         nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (file == INVALID_HANDLE_VALUE) return;
     DWORD written{};
-    static_cast<void>(WriteFile(file, report.data(), static_cast<DWORD>(report.size()), &written, nullptr));
+    static_cast<void>(WriteFile(file, text.data(), static_cast<DWORD>(text.size()), &written, nullptr));
     CloseHandle(file);
 }
 
-// Which repair a mapped file needs. Chosen by path, so a copy of the mod whose bytes differ slightly
-// still gets the repair; each transform verifies its own anchor and refuses an unexpected file.
-enum class MappedFile { none, console_script, actor_script, config };
-
-[[nodiscard]] MappedFile classify_handle(HANDLE file)
+void note_once(std::atomic<bool>& noted, std::string_view step, std::string_view outcome)
 {
-    std::wstring buffer(32768, L'\0');
-    const auto length = GetFinalPathNameByHandleW(file, buffer.data(), static_cast<DWORD>(buffer.size()),
-        FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
-    if (!length || length >= buffer.size())
-    {
-        return MappedFile::none;
-    }
+    if (noted.exchange(true, std::memory_order_acq_rel)) return;
+    const std::lock_guard lock(report_mutex);
+    report_runtime.push_back("  " + std::string(step) + " = " + std::string(outcome) + "\n");
+    write_report_locked();
+}
 
-    buffer.resize(length);
+std::atomic<bool> console_noted{}, abort_noted{}, actor_noted{}, menu_noted{}, vehicle_noted{};
+std::atomic<bool> vehicle_pending{};
+
+[[nodiscard]] std::string_view vehicle_outcome(ild::VehicleRepair result)
+{
+    return result == ild::VehicleRepair::applied ? "ok" : result == ild::VehicleRepair::skipped ?
+        "skipped, this build differs from the validated one" : "FAILED";
+}
+
+[[nodiscard]] bool record_identity(std::string& report, const Identity& identity)
+{
+    ild::Sha256 actual{};
+    const auto readable = ild::sha256_file(game_root / identity.relative, actual);
+    const auto matches = readable && hex(actual) == identity.hash;
+    report += "  " + utf8(identity.relative) + "\n    expected " + std::string(identity.hash) + "\n    actual   ";
+    report += readable ? hex(actual) : std::string("<file not readable>");
+    report += matches ? "  MATCH\n" : "  MISMATCH\n";
+    return matches;
+}
+
+// Whether a stored option survives a restart depends on the file being there and on the game seeing the real
+// folder. The executable asks for no execution level, so in a protected folder UAC virtualizes it: whatever it
+// writes lands in the player's VirtualStore, where an elevated session and the updater never look.
+void record_settings(std::string& report, const std::filesystem::path& root)
+{
+    report += "\n[settings]\n";
+    DWORD virtualized{};
+    HANDLE token{};
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token))
+    {
+        DWORD length{};
+        if (!GetTokenInformation(token, TokenVirtualizationEnabled, &virtualized, sizeof virtualized, &length))
+            virtualized = 0;
+        CloseHandle(token);
+    }
+    if (!virtualized)
+        report += "  UAC file virtualization = off\n";
+    else
+    {
+        // A token can be eligible without anything being redirected; only an existing copy of the pack's own folder
+        // under VirtualStore shows that its files there differ from what an elevated session or the updater sees.
+        std::wstring local(32768, L'\0');
+        const auto length = GetEnvironmentVariableW(L"LOCALAPPDATA", local.data(), static_cast<DWORD>(local.size()));
+        local.resize(length < local.size() ? length : 0);
+        const auto store = std::filesystem::path(local) / L"VirtualStore" / root.relative_path() / L".ild-fixes";
+        std::error_code error;
+        report += !local.empty() && std::filesystem::exists(store, error) ?
+            "  UAC file virtualization = on, this folder's writes are redirected to " + utf8(store.wstring()) + "\n" :
+            std::string("  UAC file virtualization = on, nothing of this folder is redirected\n");
+    }
+    const auto file = CreateFileW((root / L".ild-fixes" / L"settings.txt").c_str(), GENERIC_READ,
+        FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE)
+    {
+        report += "  no settings file, every option is at its default\n";
+        return;
+    }
+    std::array<char, 4096> data{};
+    DWORD read{};
+    const auto complete = ReadFile(file, data.data(), static_cast<DWORD>(data.size() - 1), &read, nullptr);
+    CloseHandle(file);
+    std::string_view text(data.data(), complete ? read : 0);
+    while (!text.empty())
+    {
+        const auto end = text.find('\n');
+        auto line = text.substr(0, end);
+        text.remove_prefix(end == text.npos ? text.size() : end + 1);
+        if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+        if (line.find('=') != line.npos && line.size() <= 128) report += "  " + std::string(line) + "\n";
+    }
+}
+
+// A tweak pinned to one build that finds another one has done its job by leaving the game alone; that is not a
+// failure the player needs to hear about, only something support needs to see.
+void record(std::string& report, std::string_view step, bool ok, bool validated = true)
+{
+    report += "  " + std::string(step) + (ok ? " = ok\n" : validated ? " = FAILED\n" :
+        " = skipped, this build differs from the validated one\n");
+}
+
+[[nodiscard]] std::wstring handle_path(HANDLE handle)
+{
+    std::wstring buffer(1024, L'\0');
+    for (;;)
+    {
+        const auto length = GetFinalPathNameByHandleW(handle, buffer.data(), static_cast<DWORD>(buffer.size()),
+            FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+        if (!length || length > 32768) return {};
+        if (length < buffer.size())
+        {
+            buffer.resize(length);
+            break;
+        }
+        buffer.assign(length + 1, L'\0');
+    }
     constexpr std::wstring_view extended_prefix = L"\\\\?\\";
-    if (buffer.starts_with(extended_prefix))
-    {
-        buffer.erase(0, extended_prefix.size());
-    }
+    if (buffer.starts_with(extended_prefix)) buffer.erase(0, extended_prefix.size());
+    return buffer;
+}
 
-    if (_wcsicmp(buffer.c_str(), target_script.c_str()) == 0) return MappedFile::console_script;
-    if (_wcsicmp(buffer.c_str(), target_actor.c_str()) == 0) return MappedFile::actor_script;
-    return ild::is_config_repair_path(buffer, game_root) ? MappedFile::config : MappedFile::none;
+// A game started through a junction, a SUBST drive or a short name reports its executable under that name, while
+// every file it opens resolves to the real location, so both sides are compared in resolved form.
+[[nodiscard]] std::filesystem::path resolve_directory(const std::filesystem::path& directory)
+{
+    const auto handle = CreateFileW(directory.c_str(), FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS,
+        nullptr);
+    if (handle == INVALID_HANDLE_VALUE) return directory;
+    auto resolved = handle_path(handle);
+    CloseHandle(handle);
+    return resolved.empty() ? directory : std::filesystem::path(std::move(resolved));
+}
+
+// Which repair a file needs. Chosen by path, so a copy of the mod whose bytes differ slightly still gets the
+// repair; each transform verifies its own anchor and refuses an unexpected file.
+enum class ScriptFile { none, console_script, actor_script, menu_script, config };
+
+[[nodiscard]] ScriptFile classify_handle(HANDLE file)
+{
+    const auto path = handle_path(file);
+    if (path.empty()) return ScriptFile::none;
+    if (_wcsicmp(path.c_str(), target_script.c_str()) == 0) return ScriptFile::console_script;
+    if (_wcsicmp(path.c_str(), target_actor.c_str()) == 0) return ScriptFile::actor_script;
+    if (_wcsicmp(path.c_str(), target_menu.c_str()) == 0) return ScriptFile::menu_script;
+    return ild::is_config_repair_path(path, resolved_root) ? ScriptFile::config : ScriptFile::none;
+}
+
+// Returns whether the bytes were changed.
+[[nodiscard]] bool patch_script(ScriptFile kind, std::span<std::byte> bytes)
+{
+    using ild::script_patch::Result;
+    if (kind == ScriptFile::console_script)
+    {
+        // Independent of each other: an abort() the pack does not recognise still leaves the spam fix.
+        const auto reason = ild::script_patch::reveal_abort_reason(bytes);
+        const auto console = ild::script_patch::remove_console_execution(bytes);
+        note_once(console_noted, "console spam fix in _g.script", console == Result::applied ? "ok" :
+            console == Result::already_applied ? "already present" : "FAILED, the statement was not found");
+        note_once(abort_noted, "crash reason in _g.script", reason ? "ok" : "skipped, abort() differs");
+        return reason || console == Result::applied;
+    }
+    if (kind == ScriptFile::actor_script)
+    {
+        const auto bound = ild::script_patch::bind_gameplay(bytes);
+        note_once(actor_noted, "gameplay repairs bound to bind_stalker.script", bound ? "ok" :
+            "FAILED, the anchor was not found");
+        return bound;
+    }
+    if (kind == ScriptFile::menu_script)
+    {
+        // The menu options name console commands of the bridge; binding them without it would hand the engine's
+        // option manager a command that does not exist.
+        if (!bridge_installed.load(std::memory_order_acquire))
+        {
+            note_once(menu_noted, "updater and options bound to ui_main_menu.script",
+                "skipped, the console bridge is not installed");
+            return false;
+        }
+        const auto bound = ild::script_patch::bind_update_menu(bytes);
+        note_once(menu_noted, "updater and options bound to ui_main_menu.script", bound ? "ok" :
+            "FAILED, the anchor was not found");
+        return bound;
+    }
+    return kind == ScriptFile::config && ild::repair_config_buffer(bytes);
+}
+
+int __cdecl read_hook(int file, void* buffer, unsigned int size)
+{
+    static_cast<void>(ild::install_inventory_hooks(game_root));
+    static_cast<void>(ild::install_texture_aliases(game_root));
+    if (vehicle_pending.load(std::memory_order_acquire))
+    {
+        const auto vehicles = ild::install_vehicle_updates();
+        if (vehicles != ild::VehicleRepair::pending && vehicle_pending.exchange(false, std::memory_order_acq_rel))
+            note_once(vehicle_noted, "unseen vehicles keep updating", vehicle_outcome(vehicles));
+    }
+    const auto read = real_read(file, buffer, size);
+    if (read <= 0 || !buffer) return read;
+    const auto bytes = std::span(static_cast<std::byte*>(buffer), static_cast<std::size_t>(read));
+    // Chosen by size and digest, so it needs no path.
+    static_cast<void>(ild::repair_config_buffer(bytes));
+    const auto handle = crt_handle ? reinterpret_cast<HANDLE>(crt_handle(file)) : INVALID_HANDLE_VALUE;
+    LARGE_INTEGER length{};
+    // A script anchor can only be trusted in a read that returned the whole file.
+    if (handle == INVALID_HANDLE_VALUE || !GetFileSizeEx(handle, &length) || length.QuadPart != read) return read;
+    const auto kind = classify_handle(handle);
+    if (kind != ScriptFile::config) static_cast<void>(patch_script(kind, bytes));
+    return read;
 }
 
 HANDLE WINAPI create_file_mapping_hook(
@@ -266,8 +390,8 @@ HANDLE WINAPI create_file_mapping_hook(
     {
         return CreateFileMappingA(file, attributes, protect, maximum_size_high, maximum_size_low, name);
     }
-    const auto kind = file == INVALID_HANDLE_VALUE ? MappedFile::none : classify_handle(file);
-    if (kind == MappedFile::none)
+    const auto kind = file == INVALID_HANDLE_VALUE ? ScriptFile::none : classify_handle(file);
+    if (kind == ScriptFile::none)
     {
         return real_create_file_mapping(file, attributes, protect, maximum_size_high, maximum_size_low, name);
     }
@@ -303,13 +427,8 @@ HANDLE WINAPI create_file_mapping_hook(
     if (source && destination)
     {
         std::memcpy(destination, source, static_cast<SIZE_T>(size.QuadPart));
-        const auto bytes = std::span(static_cast<std::byte*>(destination), static_cast<SIZE_T>(size.QuadPart));
-        // Best effort on its own: an abort() the pack does not recognise still leaves the console fix below.
-        if (kind == MappedFile::console_script) static_cast<void>(ild::script_patch::reveal_abort_reason(bytes));
-        patched = kind == MappedFile::console_script ?
-            ild::script_patch::remove_console_execution(bytes) == ild::script_patch::Result::applied :
-            kind == MappedFile::actor_script ? ild::script_patch::bind_gameplay(bytes) :
-            ild::repair_config_buffer(bytes);
+        patched = patch_script(kind,
+            std::span(static_cast<std::byte*>(destination), static_cast<SIZE_T>(size.QuadPart)));
     }
 
     if (source)
@@ -328,99 +447,84 @@ HANDLE WINAPI create_file_mapping_hook(
     }
 
     CloseHandle(private_mapping);
-    report_unsupported(L"The installed _g.script did not match the validated console fix. The fix was disabled.");
     return real_create_file_mapping(file, attributes, protect, maximum_size_high, maximum_size_low, name);
 }
 
 BOOL CALLBACK install_fixes(PINIT_ONCE, PVOID, PVOID*)
 {
     const auto engine = executable_path();
-    if (engine.empty())
-    {
-        report_unsupported(L"The game executable path could not be resolved. The fix was disabled.");
-        return TRUE;
-    }
+    if (engine.empty()) return TRUE;
 
-    const auto bin = engine.parent_path();
-    const auto root = bin.parent_path();
+    const auto root = engine.parent_path().parent_path();
     game_root = root;
     ild::load_display_mode(root);
-    const auto core = bin / L"xrCore.dll";
-    target_script = root / L"gamedata" / L"scripts" / L"_g.script";
-    target_actor = root / L"gamedata" / L"scripts" / L"bind_stalker.script";
+    resolved_root = resolve_directory(root);
+    const auto scripts = resolved_root / L"gamedata" / L"scripts";
+    target_script = (scripts / L"_g.script").wstring();
+    target_actor = (scripts / L"bind_stalker.script").wstring();
+    target_menu = (scripts / L"ui_main_menu.script").wstring();
 
-    report = "In the Line of Duty Fixes - loader report\nversion " ILD_VERSION "\ngame root " + root.string() +
-        "\n\n[identity]\n";
-    record_identity("bin\\XR_3DA.exe", engine, expected_engine_hash);
-    record_identity("bin\\xrCore.dll", core, expected_core_hash);
-    record_identity("gamedata\\scripts\\_g.script", target_script, expected_script_hash);
+    std::string report = "In the Line of Duty Fixes - loader report\nversion " ILD_VERSION "\ngame root " +
+        utf8(root.wstring()) + "\n\n[identity]\n";
+    std::array<bool, identities.size()> validated{};
+    for (std::size_t index = 0; index < identities.size(); ++index)
+        validated[index] = record_identity(report, identities[index]);
 
-    // The identity above is informational. Script, config and Lua repairs reach the game through an import
-    // resolved by name and are chosen by path, so they apply on any build of this engine version. Every
-    // native repair verifies its own patch site or module identity and skips only itself when the build
-    // differs, so an unfamiliar executable costs those tweaks rather than the whole fix pack.
+    // Only the tweaks that write to fixed addresses need the builds above, and each checks its own patch site
+    // before touching anything. Script, config and Lua repairs, the updater and the options it carries work on
+    // any build of this engine, including one without the mod's own binaries.
     report += "\n[install]\n";
-
+    const auto executable = GetModuleHandleW(nullptr);
     const auto core_module = GetModuleHandleW(L"xrCore.dll");
-    const auto keyboard = ild::install_input_name_fix(GetModuleHandleW(nullptr));
-    record("keyboard names", keyboard);
-    if (!keyboard) report_unsupported(L"The validated keyboard-name conversion could not be hooked.");
-    const auto presets = ild::install_preset_compatibility(GetModuleHandleW(nullptr));
-    record("graphics presets", presets);
-    if (!presets) report_unsupported(L"The validated stock graphics presets could not be adapted.");
-    record("screen mode", ild::install_display_mode(root));
-    const auto audio = ild::install_audio_metadata_fix(root);
-    record("sound metadata", audio);
-    if (!audio) report_unsupported(L"The validated audio metadata adapter could not be installed.");
-    const auto console = ild::install_console_hooks(GetModuleHandleW(nullptr));
-    record("console editing and spam", console);
-    if (!console)
-        report_unsupported(L"The validated console entry points could not be hooked. Console editing was not changed.");
+    record(report, "keyboard names", ild::install_input_name_fix(executable), validated[engine_identity]);
+    record(report, "graphics presets", ild::install_preset_compatibility(executable), validated[engine_identity]);
+    record(report, "screen mode", ild::install_display_mode(root));
+    record(report, "sound metadata", ild::install_audio_metadata_fix(root), validated[sound_identity]);
+    record(report, "console editing", ild::install_console_hooks(executable), validated[engine_identity]);
+    // The game DLL is loaded before input, so no car exists yet and nothing can be running the patched code.
+    const auto vehicles = ild::install_vehicle_updates();
+    if (vehicles == ild::VehicleRepair::pending)
+        vehicle_pending.store(true, std::memory_order_release);
+    else
+        report += "  unseen vehicles keep updating = " + std::string(vehicle_outcome(vehicles)) + "\n";
 #ifdef ILD_CONSOLE_QA
     if (ild::has_switch(ild::command_line_tail(GetCommandLineW()), L"-ild_console_qa"))
-        ild::run_console_selftest(GetModuleHandleW(nullptr), root / L"console-qa.txt");
+        ild::run_console_selftest(executable, root / L"console-qa.txt");
 #endif
     real_create_file_mapping = reinterpret_cast<CreateFileMappingAFn>(ild::replace_iat_import(
         core_module,
         "KERNEL32.dll",
         "CreateFileMappingA",
         reinterpret_cast<void*>(&create_file_mapping_hook)));
+    // This import carries the console-spam fix, the larger script and config repairs and the Lua payload with the
+    // quest and NPC repairs. It is resolved by name, so it does not care which build of the engine runs.
+    record(report, "script, config and Lua repairs", real_create_file_mapping != nullptr);
+    // Files below the engine's mapping threshold never reach the hook above, so the reader is caught as well.
+    record(report, "small config repairs", ild::install_reader_repairs(root), validated[core_identity]);
 
-    // This one import carries the console-spam fix, every script and config repair, and the Lua payload with
-    // the quest and NPC repairs. It is resolved by name, so it does not care which build of the engine runs.
-    record("script, config and Lua repairs", real_create_file_mapping != nullptr);
-    // Files below the engine's mapping threshold never reach the hook above, which is every small config the
-    // pack repairs, so the reader itself is caught as well.
-    const auto readers = ild::install_reader_repairs(root);
-    record("small config repairs", readers);
-    if (!readers)
-        report_unsupported(L"The validated file reader could not be hooked. Repairs to small config files were disabled.");
-    if (!real_create_file_mapping)
-    {
-        report_unsupported(L"The validated xrCore.dll import could not be hooked. The fix was disabled.");
-    }
-
-    // The console command hands the engine an object it calls back through IConsole_Command's vtable. That
-    // layout was validated against this executable, and getting it wrong would misdispatch rather than fail
-    // cleanly, so the updater and its support verbs are the one part that does require the known engine.
-    const auto menu = root / L"gamedata" / L"scripts" / L"ui_main_menu.script";
+    // The bridge checks the console command layout against the executable's own exports, not its digest.
     const auto payload_present = std::filesystem::exists(root / L"InTheLineOfDutyFixesUpdater.exe") &&
         std::filesystem::exists(root / L"gamedata" / L"scripts" / L"ild_fix_ui.script") &&
         std::filesystem::exists(root / L"gamedata" / L"config" / L"ui" / L"ild_fixes_update.xml");
-    const auto bridge = payload_present && equals_hash(engine, expected_engine_hash) &&
-        equals_hash(menu, expected_menu_hash) && ild::install_update_bridge(GetModuleHandleW(nullptr), root);
-    record("in-game updater and support verbs", bridge);
-    if (bridge)
-    {
-        const auto crt = GetModuleHandleW(L"MSVCR80.dll");
-        real_read = crt ? reinterpret_cast<ReadFn>(GetProcAddress(crt, "_read")) : nullptr;
-        if (real_read && ild::replace_iat_import(core_module, "MSVCR80.dll", "_read",
-                reinterpret_cast<void*>(&read_hook)))
-            start_update_service(engine);
-    }
+    const auto bridge = payload_present && ild::install_update_bridge(executable, root);
+    bridge_installed.store(bridge, std::memory_order_release);
+    record(report, "in-game updater, options and support verbs", bridge);
 
-    report += "\nSend this file if a repair did not take effect.\n";
-    write_report(root);
+    // Small files are read straight into a buffer, which is how the menu and the actor script arrive; the knife
+    // and texture repairs are also installed from here because their modules load later than this.
+    const auto crt = GetModuleHandleW(L"MSVCR80.dll");
+    real_read = crt ? reinterpret_cast<ReadFn>(GetProcAddress(crt, "_read")) : nullptr;
+    crt_handle = crt ? reinterpret_cast<OsHandleFn>(GetProcAddress(crt, "_get_osfhandle")) : nullptr;
+    const auto reader = real_read && ild::replace_iat_import(core_module, "MSVCR80.dll", "_read",
+        reinterpret_cast<void*>(&read_hook));
+    record(report, "script bindings and late repairs", reader);
+    if (bridge && reader) start_update_service(engine);
+    record_settings(report, root);
+
+    const std::lock_guard lock(report_mutex);
+    report_root = root;
+    report_head = std::move(report);
+    write_report_locked();
     return TRUE;
 }
 

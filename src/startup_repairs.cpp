@@ -163,13 +163,26 @@ __declspec(naked) VorbisComment* __cdecl comment_entry(void*, int)
 
 bool install_input_name_fix(HMODULE engine)
 {
-    const std::array<unsigned char, 6> expected{0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF8};
-    return input_hook.prepare(reinterpret_cast<unsigned char*>(engine) + 0x245D0,
-        reinterpret_cast<void*>(&input_name), expected) && input_hook.enable();
+    // The whole key-name query up to its GetProperty call. The prologue alone is shared by countless functions;
+    // this is position independent, so only a build whose code is identical here is ever patched.
+    constexpr std::array<unsigned char, 64> signature{
+        0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF8, 0x81, 0xEC, 0x1C, 0x02, 0x00, 0x00, 0x8B, 0x41, 0x14, 0x56,
+        0x8B, 0x75, 0x08, 0x8D, 0x54, 0x24, 0x08, 0x52, 0xC7, 0x44, 0x24, 0x0C, 0x18, 0x02, 0x00, 0x00,
+        0xC7, 0x44, 0x24, 0x10, 0x10, 0x00, 0x00, 0x00, 0x89, 0x74, 0x24, 0x14, 0xC7, 0x44, 0x24, 0x18,
+        0x01, 0x00, 0x00, 0x00, 0x8B, 0x08, 0x6A, 0x14, 0x50, 0x8B, 0x41, 0x14, 0xFF, 0xD0, 0x85, 0xC0};
+    const auto target = reinterpret_cast<unsigned char*>(engine) + 0x245D0;
+    if (!engine || !code_matches(target, signature)) return false;
+    return input_hook.prepare(target, reinterpret_cast<void*>(&input_name), std::span(signature).first(6)) &&
+        input_hook.enable();
 }
 
 bool install_preset_compatibility(HMODULE engine)
 {
+    // The preset loader's own r_string call, whose return address preset_line recognises. On any other build that
+    // address is not this call, so the adapter stays off rather than claiming to work.
+    constexpr std::array<unsigned char, 17> call_site{
+        0x68, 0x00, 0x04, 0x00, 0x00, 0x8D, 0x94, 0x24, 0x28, 0x04, 0x00, 0x00, 0x52, 0x8B, 0xC8, 0xFF, 0x15};
+    if (!engine || !code_matches(reinterpret_cast<unsigned char*>(engine) + 0xB6530, call_site)) return false;
     engine_base = reinterpret_cast<unsigned char*>(engine);
     original_line = reinterpret_cast<ReadLine>(GetProcAddress(GetModuleHandleW(L"xrCore.dll"),
         "?r_string@IReader@@QAEXPADI@Z"));

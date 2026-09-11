@@ -1,5 +1,6 @@
 #include "inventory_hooks.h"
 #include "iat_hook.h"
+#include "item_descriptions.h"
 #include "sha256.h"
 #include "x86_detour.h"
 #include <array>
@@ -96,10 +97,20 @@ bool __stdcall to_slot(void* window, void* cell, bool force)
     return true;
 }
 
+// Stable storage is required because the engine may intern a returned string later.
+const char* keep_description(std::string_view original, std::string repaired)
+{
+    static std::mutex mutex;
+    static std::map<std::string, std::string> descriptions;
+    const std::lock_guard lock(mutex);
+    return descriptions.try_emplace(std::string(original), std::move(repaired)).first->second.c_str();
+}
+
 const char* __fastcall read_string(void* ini, void*, const char* section, const char* key)
 {
     const auto value = original_read_string(ini, section, key);
     if (!value || !section || !key || std::strcmp(key, "description") != 0) return value;
+    if (auto repaired = repaired_description(section, value)) return keep_description(value, std::move(*repaired));
     constexpr std::array knives{"wpn_knife_6x2", "wpn_knife_6x4", "wpn_knife_nkvd", "wpn_knife_tip30", "wpn_knify"};
     bool knife{};
     for (const auto name : knives) if (std::strcmp(name, section) == 0) knife = true;
@@ -115,11 +126,7 @@ const char* __fastcall read_string(void* ini, void*, const char* section, const 
         return std::string(result.data());
     }();
     if (!text.substr(warning + marker.size()).starts_with(expected)) return value;
-    static std::mutex mutex;
-    static std::map<std::string, std::string> descriptions;
-    const std::lock_guard lock(mutex);
-    // Stable storage is required because the engine may intern the returned string later.
-    return descriptions.try_emplace(std::string(text), text.substr(0, warning)).first->second.c_str();
+    return keep_description(text, std::string(text.substr(0, warning)));
 }
 }
 
@@ -129,6 +136,14 @@ bool install_inventory_hooks(const std::filesystem::path& root)
     const auto module = GetModuleHandleW(L"xrGame.dll");
     if (!module) return false;
     checked = true;
+    // Descriptions arrive through an import resolved by name, so their repairs do not need the validated build.
+    // The original is published before the import slot changes, since any thread may call through it at once.
+    constexpr char read_string_symbol[] = "?r_string@CInifile@@QAEPBDPBD0@Z";
+    const auto core = GetModuleHandleW(L"xrCore.dll");
+    original_read_string = core ? reinterpret_cast<ReadString>(GetProcAddress(core, read_string_symbol)) : nullptr;
+    if (original_read_string)
+        static_cast<void>(replace_iat_import(module, "xrCore.dll", read_string_symbol,
+            reinterpret_cast<void*>(&read_string)));
     Sha256 hash{};
     if (!sha256_file(root / L"bin" / L"xrGame.dll", hash)) return false;
     constexpr char digits[] = "0123456789ABCDEF";
@@ -145,8 +160,6 @@ bool install_inventory_hooks(const std::filesystem::path& root)
     if (!slot_hook.prepare(game_base + 0x3BBF80, reinterpret_cast<void*>(&to_slot), expected)) return false;
     original_to_slot = reinterpret_cast<ToSlot>(slot_hook.original());
     if (!slot_hook.enable()) return false;
-    original_read_string = reinterpret_cast<ReadString>(replace_iat_import(module, "xrCore.dll",
-        "?r_string@CInifile@@QAEPBDPBD0@Z", reinterpret_cast<void*>(&read_string)));
     enabled = true;
     return true;
 }

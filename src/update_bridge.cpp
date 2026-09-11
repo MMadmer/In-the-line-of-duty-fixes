@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <cstdint>
 #include <cstring>
 #include <map>
 #include <sstream>
@@ -397,13 +398,61 @@ private:
     int fallback_;
 };
 
+namespace
+{
+[[nodiscard]] bool committed(const void* address, DWORD protection)
+{
+    MEMORY_BASIC_INFORMATION region{};
+    return address && VirtualQuery(address, &region, sizeof region) && region.State == MEM_COMMIT &&
+        (region.Protect & protection) != 0 && !(region.Protect & PAGE_GUARD);
+}
+
+constexpr DWORD code_protection = PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+constexpr DWORD read_protection = code_protection | PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY;
+
+// The console reads a command's name and its three flags straight out of the object and calls it through
+// IConsole_Command's vtable. Both are checked against the executable's own exports instead of its digest, so the
+// updater runs on any build that lays the class out this way - with or without the mod's patched binaries - and
+// stays off on any other layout rather than misdispatching.
+[[nodiscard]] bool command_layout_matches(HMODULE engine)
+{
+    const auto symbol = [engine](const char* name) { return reinterpret_cast<void*>(GetProcAddress(engine, name)); };
+    const auto table = static_cast<void* const*>(symbol("??_7IConsole_Command@@6B@"));
+    const auto status = symbol("?Status@IConsole_Command@@UAEXAAY0BAA@D@Z");
+    const auto info = symbol("?Info@IConsole_Command@@UAEXAAY0BAA@D@Z");
+    const auto save = symbol("?Save@IConsole_Command@@UAEXPAVIWriter@@@Z");
+    const auto construct = reinterpret_cast<void*(__thiscall*)(void*, const char*)>(
+        symbol("??0IConsole_Command@@QAE@PBD@Z"));
+    const auto name = reinterpret_cast<const char*(__thiscall*)(void*)>(symbol("?Name@IConsole_Command@@QAEPBDXZ"));
+    if (!table || !status || !info || !save || !construct || !name ||
+        !committed(table, read_protection) || !committed(table + 5, read_protection)) return false;
+    // The destructor and Execute come first, then Status, Info and Save, and the slot after Save holds no code.
+    if (!committed(table[0], code_protection) || !committed(table[1], code_protection) || table[2] != status ||
+        table[3] != info || table[4] != save || committed(table[5], code_protection)) return false;
+    if (!committed(construct, code_protection) || !committed(name, code_protection)) return false;
+
+    // The exported constructor writes the fields where this build keeps them: the vtable, the name, then the
+    // three flags, and nothing after them.
+    std::array<unsigned char, 32> probe{};
+    constexpr char probe_name[] = "ild_update";
+    construct(probe.data(), probe_name);
+    std::uintptr_t written_table{}, written_name{};
+    std::memcpy(&written_table, probe.data(), sizeof written_table);
+    std::memcpy(&written_name, probe.data() + 4, sizeof written_name);
+    return written_table == reinterpret_cast<std::uintptr_t>(table) &&
+        written_name == reinterpret_cast<std::uintptr_t>(probe_name) && probe[8] == 1 && probe[9] <= 1 &&
+        probe[10] <= 1 && std::all_of(probe.begin() + 11, probe.end(), [](unsigned char value) { return !value; }) &&
+        name(probe.data()) == probe_name;
+}
+}
+
 bool install_update_bridge(HMODULE engine, const std::filesystem::path& root)
 {
     using AddCommand = void(__thiscall*)(void*, ConsoleCommand*);
     const auto console = reinterpret_cast<void**>(GetProcAddress(engine, "?Console@@3PAVCConsole@@A"));
     const auto add = reinterpret_cast<AddCommand>(
         GetProcAddress(engine, "?AddCommand@CConsole@@QAEXPAVIConsole_Command@@@Z"));
-    if (!console || !*console || !add) return false;
+    if (!console || !*console || !add || !command_layout_matches(engine)) return false;
     static UpdateCommand command;
     command.configure(root);
     add(*console, &command);
