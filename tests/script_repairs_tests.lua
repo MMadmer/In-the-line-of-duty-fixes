@@ -2073,6 +2073,12 @@ do
     equal(#env.db.storage[900].remark.logic, 0, "his earlier sections are left exactly as they were")
     env.xr_remark.set_scheme(soldier(903, "agr_soldat_kamp1"), "ini", "remark", "remark66")
     equal(#env.db.storage[903].remark.logic, 0, "and no other remark user is touched")
+    -- Ded in the Warehouses village waits in remark2 for a sound whose files were never shipped.
+    env.xr_remark.set_scheme(soldier(904, "mil_ded_kontra"), "ini", "remark", "remark2")
+    equal(env.db.storage[904].remark.logic[1].v1, 8000, "Ded's silent introduction gets a floor")
+    equal(env.db.storage[904].remark.logic[1].condlist.source, "walker", "into the one section that lets him talk")
+    env.xr_remark.set_scheme(soldier(904, "mil_ded_kontra"), "ini", "remark", "walker")
+    equal(#env.db.storage[904].remark.logic, 0, "and walker itself is left alone")
 
     local binder = {object = env.db.actor, first_update = false}
     local function pass(seconds)
@@ -2087,6 +2093,20 @@ do
     equal(#calls.task_states, 2, "his death re-asserts the completion the dialog already gave")
     equal(calls.task_states[1].id, "agro_v_podzemky", "on the underground task")
     equal(calls.task_states[1].state, "completed", "as completed, whichever portion the engine reads first")
+    -- The engine announces every completion it is handed. Once the objectives read as complete the settle
+    -- must stop asking, or the PDA repeats "task complete" on every death-watch tick for the rest of the game
+    -- - which is what players saw from 1.0.4 on. A failed objective is still re-asserted: that is the repair.
+    calls.objectives = {}
+    env.db.actor.get_task_state = function(_, id, objective) return calls.objectives[id .. ":" .. objective] end
+    calls.objectives["agro_v_podzemky:0"], calls.objectives["agro_v_podzemky:1"] = "completed", "completed"
+    pass(4)
+    pass(4)
+    equal(#calls.task_states, 2, "a completed objective is never asserted twice")
+    calls.objectives["agro_v_podzemky:1"] = "fail"
+    pass(4)
+    equal(#calls.task_states, 3, "an objective the engine failed first is put right")
+    equal(calls.task_states[3].objective, 1, "and only that one")
+    calls.objectives["agro_v_podzemky:1"] = "completed"
     equal(#calls.news, 0, "and no hint is shown while the branch still has a next step")
     calls.infos.agro_door_open = true
     pass(4)

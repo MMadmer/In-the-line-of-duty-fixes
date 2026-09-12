@@ -848,3 +848,55 @@ and the arena - still print raw where those dialogs are reachable. Restoring the
 whole loose language folder has 11 092 bytes of borrowable indentation, so no in-memory repair can carry them;
 a string file of the pack's own would have to be named in the archived `localization.ltx`, which is possible but
 would put a `text/rus` path back in the payload and strand every client below 1.0.8 again.
+
+
+## Twelfth pass: pages 39 and 40 of the thread, and a fix from the thread - 2026-09-12
+
+Sources: the two newest pages of the mod's release thread, and `PDA-map-fixes-for-ILD-1.0.5.zip`, which
+uroboross2 posted there for use on top of the pack's 1.0.5.
+
+### A regression of the pack's own
+
+The loudest report on the two pages is «Забытые сокровища» announcing "task complete" every few seconds
+after the controller appears, with a player noting it began with the pack's 1.0.4 and was absent on 1.0.2.
+That is exactly right. The fourth pass gave the underground task a settle - both objectives re-asserted as
+complete once `und_prapor_dead` and `und_prapor_3` are both held, so the engine's order of testing the fail
+and completion portions cannot matter - and hung it on the death watch, which runs every three seconds. The
+settle had no memory: every tick queued both objectives again, `set_task_state` announced each one again, and
+the PDA repeated the line for the rest of the game. `settle_tasks` now reads the objective's state first and
+never re-asserts one that is already complete; a failed one still is, which is the repair. The spy job's
+settle was guarded already and is unaffected.
+
+### Repairs
+
+| Defect | Consequence | Repair |
+| --- | --- | --- |
+| The underground settle re-asserts completion on every death-watch tick | "task complete" repeats every few seconds after the Prapor dies, from 1.0.4 to 1.0.7 | An objective that already reads complete is left alone |
+| `mil_ded_kontra.ltx` - `remark2` plays `mil_ded_kontra_start` and leaves only on its `sound_end`; `walker` is the one section with a meet; the theme is declared in `sound_theme.script` and not one of its files is on disk or in the archives | «Потеряшки»: the sniper is dead, Ded is found, and he sits mute for the rest of the save | An eight-second floor into `walker`, through the scene fallback table the fourth pass already keeps; a build that does ship the sound finishes it first |
+| Every marker the mod places itself goes through a scan-and-`map_add_object_spot` function: the spot is not written into the save, and a scan that runs before its object exists places nothing | Markers gone after a reload, and the jammer marker absent until a much later conversation; the antenna stash, the ghost's station, the spy's stash, the BTR spot, the soap zone, the secret trader, Karabin and the two the info handlers place all behave the same way | Each of the mod's marker functions becomes a request; the request is honoured with `map_add_object_spot_ser` the moment its object exists, a spot an older version placed the volatile way is upgraded once per load, and every spot comes down on the portion that ends it. The list of markers and the serialised, retried spot are uroboross2's; the tenth pass's jammer-only repair is folded into it |
+
+### What was taken from the community fix, and what was not
+
+The archive holds three files. The idea and the eleven-rule list in `pda_quest_recovery.script` are sound and
+were checked one by one against the mod: every target section exists (five of them in `misc/quest_items.ltx`,
+which is why a search of `spawn_sections.ltx` alone misses them), every start and stop portion is declared, and
+`mil_jora2_pred ydarom` really is spelled with the space. The two info-handler branches it bypasses in
+`escape_tasks` and `garbage_tasks` do nothing but place a volatile spot on a story object they never check for,
+so nothing is lost. What is not taken: the file name, which no released updater owns and which the pack's own
+script contract has no room for; the `assert` on every marker function, which would have taken the pack's whole
+installation down with it on a build that lacks one; and `map_spots_relations.xml`, which adds relation dots for
+NPCs to the level map - a preference laid over the author's own file, not a repair. The third file is the
+pack's 1.0.5 script with one added line, and needs nothing.
+
+### Examined and deliberately not changed
+
+- **The parcel box on the checkpoint** («коробка неактивная»). `kordon_new/korob_blokpost.ltx` makes the box
+  usable only while the actor carries `sqjet_blokpost_vodka`, `vodka` or `vodka1`; the caption is shown before
+  that. The player who reported it had no bottle. Another player on the same page describes the intended run.
+- **The soap** («мыло не найти», «мешок не лутается»). The soap and its zones are real, spawned from
+  `misc/quest_items.ltx` sections at the checkpoint; the bag with the rat is the author's joke. What players
+  lost was the marker on the zone after a reload, which the marker repair above now keeps.
+- **Yura on the Garbage** (the exoskeleton search) was a missed spot, answered on the page itself; the tunnel
+  stall is the eleventh pass's repair.
+- **A green bug on start** came with no log and nothing can be said about it.
+- **Saves that stopped loading before the Dark Valley** are the open save-corruption item of the eleventh pass.

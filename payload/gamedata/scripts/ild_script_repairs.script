@@ -1094,10 +1094,18 @@ local function settle_task(id, objectives)
 end
 
 local function settle_tasks()
+    local actor = db.actor
     for id, objectives in pairs(pending_tasks) do
         pending_tasks[id] = nil
         for _, objective in ipairs(objectives) do
-            pcall(function() level_tasks.set_task_state(task.completed, id, objective) end)
+            -- The engine announces every completion it is handed, whether or not the objective was already
+            -- complete, and the underground settle is asked for on every death-watch tick once its two portions
+            -- are held: without this test the PDA repeated "task complete" every few seconds for the rest of
+            -- the game. A completed objective is never re-asserted; a failed one still is, which is the point.
+            local known, state = pcall(function() return actor and actor:get_task_state(id, objective) end)
+            if not (known and state == task.completed) then
+                pcall(function() level_tasks.set_task_state(task.completed, id, objective) end)
+            end
         end
     end
 end
@@ -1179,7 +1187,13 @@ local scene_fallbacks = {
     },
     und_prapor2 = {["remark@suicide"] = {12000, "%=kill%"}},
     agro_sania = {remark66 = {16000, "%=kill%"}},
-    agro_pania = {remark66 = {20000, "%=kill%"}}
+    agro_pania = {remark66 = {20000, "%=kill%"}},
+    -- Ded in the Warehouses village («Потеряшки»). remark2 plays mil_ded_kontra_start and leaves only on its
+    -- sound_end, and walker is the one section in which he can be spoken to; the theme is declared in
+    -- sound_theme.script but not one of its files exists, so the end never comes and he sits mute for the
+    -- rest of the save. Eight seconds is past the longest line the theme declares, so a build that does ship
+    -- the sound still finishes it first.
+    mil_ded_kontra = {remark2 = {8000, "walker"}}
 }
 local underground_task = "agro_v_podzemky"
 local underground_objectives = {0, 1}

@@ -484,16 +484,6 @@ local parked_depth = 2000
 local lchanger_section = "level_changer"
 local lchanger_spot = "level_changer"
 
--- The Monolith jammer on the Military warehouses.
-local jammer = {
-    section = "mil_glyshilka_monolita",
-    spot = "green_location",
-    hint = "mtka_na_glyshky_mnlt",
-    portion = "mil_gg_nashel_v_drvn_rpg",
-    wanted = false,
-    settled = false
-}
-
 -- Two all.spawn NPCs whose logic never arrives, keyed by the name all.spawn gives them. Each is held exactly
 -- where the spawn put him, in the shape his own neighbours carry.
 local missing_schemes = {
@@ -537,51 +527,176 @@ local function drop_parked_lchanger_spots()
     end
 end
 
-local function jammer_id()
+-- Every map marker the mod places itself has one shape: a function that scans the simulation for an object by
+-- section and calls level.map_add_object_spot on it. That call is not written into the save, so the marker is
+-- gone after the next load, and a scan that runs before the object exists - the jammer is created eleven
+-- actions after its marker is asked for - places nothing and says nothing. Both are what the thread reports as
+-- "no marker on the map". The list of markers and the idea of a serialisable, retried spot are uroboross2's,
+-- from his fix on the mod's forum; the shape is the pack's own. Each of the mod's marker functions becomes a
+-- request, the request is honoured with map_add_object_spot_ser the moment its object exists, a marker that an
+-- older version placed the volatile way is upgraded once, and every spot comes down on the portion that ends it.
+local marker_rules = {
+    {module = "new_life", fn = "metka_na_kopatela", section = "esc_dark_kopatel", spot = "blue_location",
+        hint = "mtka_na_kopatelia", starts = {"esc_makarov_nygna_orygka"}},
+    {module = "new_life", fn = "metka_na_tainik_s_antennoi", section = "esc_tainik_sidora_s_antennoi",
+        spot = "crlc_big", hint = "esc_mtka_na_anteny", starts = {"esc_sidor_delo_po_dolgy"},
+        stops = {"esc_teri_antenna_y_menia", "esc_radioantena_prizraka_zapyshena"}},
+    {module = "new_life", fn = "metka_na_stanciq_prizraka", section = "esc_radiostancia_prizraka",
+        spot = "crlc_big", hint = "esc_mtka_na_stanciq", starts = {"esc_sidor_delo_po_dolgy"},
+        stops = {"esc_radioantena_prizraka_zapyshena"}},
+    {module = "new_life", fn = "metka_na_tainik_mamkinogo_shpiona", section = "esc_tainik_mamkinogo_shpiona",
+        spot = "crlc_big", hint = "mtka_na_tainik_mamkinogo_shpiona", starts = {"esc_pervui_shpion_pacanchika_poshadil"}},
+    {module = "new_life", fn = "metka_na_space_dlia_btra_sda", name = "esc_dlia_btr_mai_space",
+        spot = "blue_location", hint = "esc_dlia_btr_mai_space_txt", starts = {"esc_gg_zavel_btr"},
+        stops = {"esc_makr_btr_privez"}},
+    {module = "new_life", fn = "metka_na_mulo", section = "esc_kor_zona_dla_mula", spot = "blue_location",
+        hint = "mtka_na_mulo", starts = {"es_kor_me_mulo"}, stops = {"es_kor_ydaliti_zony_dla_mulo"}},
+    {module = "gar_scriptu", fn = "metochka_na_sikret_torga_irvisa", section = "gar_sikret_torgovec",
+        spot = "crlc_big", hint = "metochka_na_sikret_torga_irvisa", starts = {"gar_spawn_sikret_torg"},
+        stops = {"gar_delete_sikret_torg", "gar_sekret_torgash_ymer"}},
+    {module = "moa_agro", fn = "metka_na_karaba_prosto", section = "agro_karabin", spot = "blue_location",
+        hint = "mtka_na_karabina", starts = {"agr_o_now_dopelkvest_karab_pozval"},
+        stops = {"agro_karabin_napizdel_choli"}},
+    -- The mod asks for this one from two portions and never checks, and the first comes before the jammer
+    -- exists. "mil_jora2_pred ydarom" is spelled with the space in the mod's own file.
+    {module = "skladu", fn = "metka_na_glyshilky_mnlt", section = "mil_glyshilka_monolita",
+        spot = "green_location", hint = "mtka_na_glyshky_mnlt",
+        starts = {"mil_gg_nashel_v_drvn_rpg", "mil_jora2_pred ydarom"}, stops = {"mil_monolita_glyshilke_smerti"}},
+    -- Two the mod places from its info handlers on a story object it never checks for.
+    {story = 93, spot = "green_location", hint = "metka_dejyr_za_volka_text", starts = {"esc_post_pianka_tolik"},
+        stops = {"ia_dejyrq_za_volka"}},
+    {story = 5041, spot = "crlc_big", hint = "metka_gar_ot_qru_text", starts = {"gar_dopq_qra_posle_ximer_poshel_nax"}}
+}
+-- The handlers whose only work for these portions was the volatile spot the rules above now own.
+local marker_handlers = {
+    escape_tasks = {esc_post_pianka_tolik = 10, ia_dejyrq_za_volka = 10},
+    garbage_tasks = {gar_dopq_qra_posle_ximer_poshel_nax = 11}
+}
+local markers = {next_tick = 0, cursor = 0, next_scan = 0, tick = 100, sweep = 2047, rest = 5000, last = 65534}
+
+local function marker_reset()
+    markers.next_tick, markers.cursor, markers.next_scan = 0, 0, 0
+    for _, rule in ipairs(marker_rules) do rule.id, rule.bound, rule.requested = nil, nil, nil end
+end
+
+local function any_info(names)
+    for _, name in ipairs(names or {}) do
+        if has_alife_info(name) then return true end
+    end
+    return false
+end
+
+local function marker_matches(rule, server)
+    if not server then return false end
+    local known, hit = pcall(function()
+        if rule.section then return server:section_name() == rule.section end
+        return rule.name ~= nil and server:name() == rule.name
+    end)
+    return known and hit
+end
+
+local function marker_reconcile(rule, server)
+    local present = level.map_has_object_spot(server.id, rule.spot) ~= 0
+    if rule.active then
+        if rule.bound ~= server.id or not present then
+            -- A spot an older version placed the volatile way is replaced by one the save keeps, once per load.
+            if present then level.map_remove_object_spot(server.id, rule.spot) end
+            level.map_add_object_spot_ser(server.id, rule.spot, rule.hint)
+            rule.bound = server.id
+        end
+    elseif rule.finished then
+        if present then level.map_remove_object_spot(server.id, rule.spot) end
+        rule.bound = nil
+    end
+end
+
+local function marker_update()
+    if not db.actor then return end
     local simulator = alife()
-    if not simulator then return nil end
-    for id = 1, 65534 do
+    if not simulator then return end
+    local now = time_global()
+    if now < markers.next_tick then return end
+    markers.next_tick = now + markers.tick
+    local missing = false
+    for _, rule in ipairs(marker_rules) do
+        rule.finished = any_info(rule.stops)
+        rule.active = not rule.finished and (rule.requested or any_info(rule.starts))
+        local server
+        if rule.story then
+            server = simulator:story_object(rule.story)
+            rule.id = server and server.id
+        elseif rule.id then
+            server = simulator:object(rule.id)
+            if not marker_matches(rule, server) then server, rule.id, rule.bound = nil, nil, nil end
+        end
+        if server then
+            marker_reconcile(rule, server)
+        elseif not rule.story and (rule.active or rule.finished) then
+            missing = true
+        end
+    end
+    if not missing or now < markers.next_scan then return end
+    -- One shared sweep, a slice per tick: never a full pass over the simulation on a single frame.
+    local last = math.min(markers.cursor + markers.sweep, markers.last)
+    for id = markers.cursor, last do
         local server = simulator:object(id)
-        local known, name = pcall(function() return server and server:section_name() end)
-        if known and name == jammer.section then return id end
+        if server then
+            for _, rule in ipairs(marker_rules) do
+                if not rule.story and not rule.id and (rule.active or rule.finished) and marker_matches(rule, server) then
+                    rule.id = server.id
+                    marker_reconcile(rule, server)
+                end
+            end
+        end
     end
-    return nil
+    markers.cursor = last + 1
+    if markers.cursor > markers.last then markers.cursor, markers.next_scan = 0, now + markers.rest end
 end
 
--- Placed at most once. The mod asks for this marker from two different info portions and never checks, so an
--- unconditional add would leave the player with the same icon twice over.
-local function place_jammer_spot()
-    local id = jammer_id()
-    if not id then return false end
-    if level.map_has_object_spot(id, jammer.spot) == 0 then
-        level.map_add_object_spot(id, jammer.spot, jammer.hint)
-    end
-    return true
+-- A fresh request starts a fresh sweep from the first id, so an object created in the same frame as the call -
+-- which is how the mod's info portions do it - is found on the next tick rather than after the current pass.
+local function marker_request(rule)
+    rule.requested = true
+    markers.next_tick, markers.cursor, markers.next_scan = 0, 0, 0
 end
 
--- mil_gg_nashel_v_drvn_rpg runs skladu.metka_na_glyshilky_mnlt as its first action and
--- skladu.spawn_mil_y_strt_glyshilka_monolita eleven actions later, and info-portion actions run in file order.
--- The marker call scans the simulation for an object that does not exist yet, finds nothing and says nothing,
--- so until the much later mil_jora2_pred ydarom the player has no marker for the jammer at all. The request is
--- remembered and the creation of the jammer honours it.
-local function install_jammer_spot()
-    skladu.metka_na_glyshilky_mnlt = function()
-        jammer.wanted = not place_jammer_spot()
+local function install_map_markers()
+    for _, rule in ipairs(marker_rules) do
+        -- A module or a function the installed mod does not have leaves that one rule to its start portions.
+        local module = rule.module and _G[rule.module]
+        if type(module) == "table" and type(module[rule.fn]) == "function" then
+            module[rule.fn] = function() marker_request(rule) end
+        end
     end
-    local original_jammer_spawn = skladu.spawn_mil_y_strt_glyshilka_monolita
-    skladu.spawn_mil_y_strt_glyshilka_monolita = function(...)
-        local result = original_jammer_spawn(...)
-        if jammer.wanted and place_jammer_spot() then jammer.wanted = false end
+    for name, portions in pairs(marker_handlers) do
+        local module = _G[name]
+        if type(module) == "table" and type(module.process_info_portion) == "function" then
+            local original = module.process_info_portion
+            module.process_info_portion = function(info, ...)
+                local index = portions[info]
+                if index then
+                    marker_request(marker_rules[index])
+                    return
+                end
+                return original(info, ...)
+            end
+        end
+    end
+    local binder = bind_stalker.actor_binder
+    local original_spawn, original_destroy, original_update = binder.net_spawn, binder.net_destroy, binder.update
+    binder.net_spawn = function(self, ...)
+        marker_reset()
+        return original_spawn(self, ...)
+    end
+    binder.net_destroy = function(self, ...)
+        marker_reset()
+        return original_destroy(self, ...)
+    end
+    binder.update = function(self, ...)
+        local result = original_update(self, ...)
+        pcall(marker_update)
         return result
     end
-end
-
--- A save that was granted the portion before this repair existed never got the marker either. One look per
--- level load, only once the portion is known, and only when no such spot is on the object already.
-local function settle_jammer_spot()
-    if jammer.settled or not db.actor or not has_alife_info(jammer.portion) then return end
-    jammer.settled = true
-    pcall(place_jammer_spot)
 end
 
 -- The engine can build an ini only from a file, and this pack ships no file of its own into the mod's config
@@ -652,23 +767,15 @@ function install()
     pcall(install_nemo_spawn)
     pcall(install_psy_ceiling)
     pcall(install_lchanger_spots)
-    pcall(install_jammer_spot)
+    pcall(install_map_markers)
     pcall(install_missing_schemes)
-    -- Two repairs need the actor's own binder: the Karabin quest re-checks its NPC on update, and the jammer
-    -- map spot is retried until the object it points at exists. Both are per-level state.
+    -- The Karabin quest re-checks its NPC from the actor's own update.
     pcall(function()
         local binder = bind_stalker.actor_binder
-        local original_spawn = binder.net_spawn
-        binder.net_spawn = function(self, ...)
-            jammer.wanted = false
-            jammer.settled = false
-            return original_spawn(self, ...)
-        end
         local original_update = binder.update
         binder.update = function(self, ...)
             local result = original_update(self, ...)
             pcall(restore_nemo)
-            pcall(settle_jammer_spot)
             return result
         end
     end)
