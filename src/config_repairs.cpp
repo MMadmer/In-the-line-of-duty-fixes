@@ -263,6 +263,20 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
         // Bronevik's detector inspection: the only reply without 5000 roubles hid the offer for the rest of the game.
         if (!reopen_refused_offer(patched, "bar_bronevik_pochini_detektor", "bar_bronevik_ne_chini_detektor"))
             return false;
+        // The wish-granter branch of the Bar mechanic's drinking talk answers and then names phrase 2 - the
+        // one-shot "here is your vodka" reply, which is gated on still carrying a bottle. Every other branch of
+        // the same dialog returns to the hub instead: 13 and 23 both name 4. The bottle is handed over at the
+        // start of that very conversation, so by the time the answer is given phrase 2 is filtered out and the
+        // branch has no reachable reply at all, with the talk window still open on it. The branch is pointed at
+        // the hub its siblings use; one digit, so the file keeps its length.
+        constexpr std::string_view wish_anchor = "b_nac_mex_bazar_17<";
+        constexpr std::string_view wish_jump = "<next>2</next>";
+        const auto wish = patched.find(wish_anchor);
+        if (wish == patched.npos || patched.find(wish_anchor, wish + wish_anchor.size()) != patched.npos)
+            return false;
+        const auto jump = patched.find(wish_jump, wish);
+        if (jump == patched.npos || jump - wish > 200) return false;
+        patched[jump + wish_jump.find('2')] = '4';
     }
     else if (repair == ConfigRepair::trader_refusal)
     {

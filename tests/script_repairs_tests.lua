@@ -2320,4 +2320,39 @@ do
         "another stash with the same line keeps it")
 end
 
+-- The Garbage depot ambush: the endless tushkan wave is the karlik's, and the player is told to look for him.
+do
+    local env, calls, _, module, actor = fixture()
+    module.install()
+    env.db.actor = actor()
+    local binder = {object = env.db.actor, first_update = false}
+    local function pass(seconds)
+        env.clock_ms = env.clock_ms + seconds * 1000
+        env.bind_stalker.actor_binder.update(binder, 1)
+    end
+    pass(4)
+    equal(#calls.news, 0, "nothing is said before the ambush starts")
+    calls.infos.gar_depo_napadenie_nachalosi = true
+    pass(4)
+    equal(#calls.news, 0, "nor while the player is still working out what is happening")
+    pass(21)
+    equal(#calls.news, 1, "twenty seconds in, the hint arrives")
+    equal(calls.pstor.ild_depo_karlik_hint, 1, "and is remembered in the save rather than in a portion")
+    pass(30)
+    equal(#calls.news, 1, "exactly once")
+
+    local again, calls2, _, module2, actor2 = fixture()
+    module2.install()
+    again.db.actor = actor2()
+    local binder2 = {object = again.db.actor, first_update = false}
+    calls2.infos.gar_depo_napadenie_nachalosi = true
+    calls2.infos.gr_depo_krus_podox = true
+    again.clock_ms = again.clock_ms + 60000
+    again.bind_stalker.actor_binder.update(binder2, 1)
+    again.clock_ms = again.clock_ms + 60000
+    again.bind_stalker.actor_binder.update(binder2, 1)
+    equal(#calls2.news, 0, "a karlik already dead needs no hint")
+    equal(calls2.pstor.ild_depo_karlik_hint, nil, "and nothing is written for him")
+end
+
 print("script_repairs_tests: " .. tests .. " checks passed")

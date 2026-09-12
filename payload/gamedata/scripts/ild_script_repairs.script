@@ -1202,7 +1202,7 @@ end
 
 -- The branch ends with the base hostile, both Agroprom tasks already closed and no marker of any kind, while
 -- the only way on is an NPC who appears in an unmarked corner of the Garbage the moment the door opens. This
--- is the one hint the pack adds, in the same shape the mod's own news.script uses.
+-- is one of the two hints the pack adds, in the same shape the mod's own news.script uses.
 -- The engine reads scripts as CP1251 while this repository keeps its sources in UTF-8, so the one
 -- sentence the pack shows is assembled from its own bytes:
 -- Здесь больше нечего делать. Надо возвращаться на Свалку, к повстанцам.
@@ -1995,6 +1995,37 @@ function install()
     install_level_repairs()
     install_repeat_effect_repairs()
 
+    -- The depot ambush on the Garbage keeps spawning tushkans for as long as the karlik behind it lives: his own
+    -- logic re-grants gr_depo_krus_podgon every ten seconds and every grant spawns three more. Killing him is the
+    -- whole answer and nothing in the mod says so, so the wave reads as a broken quest - it is the complaint
+    -- players bring. One line, once, twenty seconds after the ambush starts, in the shape the mod's own
+    -- news.script uses, and never after the karlik is already dead. The engine reads scripts as CP1251 while this
+    -- repository keeps its sources in UTF-8, so the sentence is assembled from its own bytes:
+    -- Что-то тут нечисто. Как будто, мутантами кто-то управляет. Надо бы поискать вокруг.
+    local depo_hint = {
+        armed = "gar_depo_napadenie_nachalosi", over = "gr_depo_krus_podox", flag = "ild_depo_karlik_hint",
+        delay = 20000,
+        text = string.char(
+            215, 242, 238, 45, 242, 238, 32, 242, 243, 242, 32, 237, 229, 247, 232, 241, 242, 238, 46, 32, 202,
+            224, 234, 32, 225, 243, 228, 242, 238, 44, 32, 236, 243, 242, 224, 237, 242, 224, 236, 232, 32, 234,
+            242, 238, 45, 242, 238, 32, 243, 239, 240, 224, 226, 235, 255, 229, 242, 46, 32, 205, 224, 228, 238,
+            32, 225, 251, 32, 239, 238, 232, 241, 234, 224, 242, 252, 32, 226, 238, 234, 240, 243, 227, 46)
+    }
+    local function deliver_depo_hint(now)
+        if not db.actor or not has_alife_info(depo_hint.armed) or has_alife_info(depo_hint.over) then return end
+        -- The actor's own pstor, which the unmodified mod saves and loads as is, so the line survives a reload
+        -- without a portion of our own in the registry.
+        local known, shown = pcall(xr_logic.pstor_retrieve, db.actor, depo_hint.flag, 0)
+        if not known or (shown or 0) ~= 0 then return end
+        depo_hint.since = depo_hint.since or now
+        if now - depo_hint.since < depo_hint.delay then return end
+        xr_logic.pstor_store(db.actor, depo_hint.flag, 1)
+        db.actor:give_game_news(depo_hint.text, [[ui\ui_npc_monster]], Frect():set(0, 215, 163, 105), 0, 20000)
+        pcall(function() xr_sound.get_safe_sound_object([[device\pda\pda_objective]])
+            :play_no_feedback(db.actor, sound_object.s2d, 0, vector(), 1.0) end)
+        report_line("hint " .. depo_hint.flag)
+    end
+
     local binder = bind_stalker.actor_binder
     local original_load = binder.load
     binder.load = function(self, ...)
@@ -2030,6 +2061,7 @@ function install()
         -- Several zones can respawn in one simulation batch; reconcile only once here.
         if db.actor and artefacts_dirty and reconcile_artefacts() then artefacts_dirty = false end
         pcall(check_death_watch, time_global())
+        pcall(deliver_depo_hint, time_global())
     end
     installed = true
 end

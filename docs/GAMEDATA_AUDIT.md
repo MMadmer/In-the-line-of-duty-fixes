@@ -375,7 +375,7 @@ built almost entirely out of them.
 | Defect | Consequence | Repair |
 | --- | --- | --- |
 | The three Agroprom underground soldiers enter `[remark@suicide]` / `[remark66]` after the betrayal and nothing in the mod ever kills them, although Mozar's own lines say the controller did | They hold the `psy_pain` animation for good, and the six-man surface garrison never leaves its idle sections because every one of them waits behind `{+und_prapor_dead}`, which only the warrant officer's `[death]` grants. Killing the captain changes nothing | Each of the three is given the end its section is named for, on its own timer, the warrant officer first so the scream, the PDA line and the zombie wave still land in the room |
-| `agro_door_open` carries no task, no article, no map spot and no tip, while the only way on is `nps_svalka.spawn_karabin` placing an NPC in an unmarked corner of the Garbage whose dialog is the sole grant of the portion that spawns the entire Bar | The branch ends with an empty PDA and nothing to act on | One PDA line, once. This is the only text the pack adds |
+| `agro_door_open` carries no task, no article, no map spot and no tip, while the only way on is `nps_svalka.spawn_karabin` placing an NPC in an unmarked corner of the Garbage whose dialog is the sole grant of the portion that spawns the entire Bar | The branch ends with an empty PDA and nothing to act on | One PDA line, once. With the depot hint of the tenth pass, one of the only two texts the pack adds |
 | `stroi_kom_logic.ltx:19` — the Bar formation's `[remark2]` leaves only on `on_signal = sound_end`, and `bar_krik_konec` has one producer and one consumer | Every quest of the rest of the game hangs on that one signal, and the commander is an ordinary stalker who can also simply die | A timer floor inside the section, the actor-side unfreeze below, and a last resort that grants the portion when no such NPC is left |
 | `dt_ss_desantnik_kom.ltx:18` and `:56` — the SS paratroop commander's two remark sections have the same shape, and he is untalkable in every section but the last, which is where the ending dialog lives | An interrupted approach strands the ending | The same timer floors, on his own transitions |
 | `bar_letiagin_final2.ltx:18,30` — `disable_ui` is undone by a single `on_actor_dist_ge_nvis` on the walk that follows, while a restrictor teleports the actor back to the same spot until that walk reports in | A walk that cannot be built leaves the player with no HUD, no input and no way to move | After a grace period the pack runs the section's own line: the stash, the portion, the input |
@@ -629,3 +629,32 @@ New repairs therefore go inside `install()`, next to the hook they belong to, wh
 budget applies - not into the main chunk. `script_globals` now counts module locals and fails the build above 182,
 and `tools/qa/Run-SmokeTest.ps1` starts the deployed game offscreen, reads the log back and restores `user.ltx`.
 **Every payload change must be launched before it ships.**
+## Tenth pass: two things players walked into — 2026-09-12
+
+Source: a stream of the mod and the complaints under it. Neither of these is a guess about what could go wrong;
+both are what happened to somebody.
+
+### Repairs
+
+| Defect | Consequence | Repair |
+| --- | --- | --- |
+| `dialogs_bar.xml`, dialog `b_nac_mex_bazar` — the mechanic's drinking talk. Its hub is phrase 4, and every branch comes back to it: 13 names 4, 23 names 4. The wish-granter branch does not. Phrase 17, the mechanic's answer about the wish-granter, names phrase **2** — the one-shot "here, take the vodka" reply, which carries `<precondition>bar_ckpint.vodka_have</precondition>` and the `give_vodka` action | The bottle is handed over at the start of that same conversation, so by the time the answer is given phrase 2 is filtered out and the branch has no reachable reply at all, with the talk window still open on it. A streamer crashed on exactly that click. Carrying a second bottle is no better: the branch takes it and pours another drink | One digit in memory, at the file's exact length: phrase 17 names the hub its siblings name. It rides on the repair that already owns this file, so the digest gate is unchanged |
+| The depot ambush on the Garbage. Once `gar_depo_napadenie_nachalosi` starts the fight, `gar_depo_korol_krus` — the karlik — re-grants `gr_depo_krus_podgon` every ten seconds, and every grant spawns three more tushkans (`info_l02garbage.xml:84-88`). His `[death]` section grants `gr_depo_krus_podox`, which is the only thing that stops the cycle | Killing the karlik is the whole answer and the mod never says so, or marks him, or gives the fight a task. The wave is endless until the player works it out, and the thread reads it as a broken quest | One line, once, twenty seconds after the ambush starts and never once the karlik is dead: «Что-то тут нечисто. Как будто, мутантами кто-то управляет. Надо бы поискать вокруг.» It is the actor's own thought, in the shape the mod's own `news.script` uses, remembered in the actor's pstor rather than in a portion of our own |
+
+The hint says where to look and not what to do, which is the line this project has held for added text: the fight,
+the karlik and the reward stay exactly as the mod wrote them.
+
+### The crash that was not ours
+
+The same pass re-opened the logless Cordon crash on the approach to the psi installation, on a report that it
+went away with 1.0.3 and came back with 1.0.4. The first reading — that 1.0.4's `CCar::AlwaysTheCrow` patch was a
+second, native way to crash on that path — was wrong, and the revert it produced has been undone.
+
+What actually closed it in 1.0.3 is `install_story_object_repair`: the abort behind that crash is
+`ERROR: object 'esc_gar_dezertiru_sqda_zone': section 'sr_idle': field 'on_npc_in_zone': there is no object with
+story_id '038'`, and it does reach the log — players were posting a tail of the log that started below it. That
+repair is **byte for byte identical in 1.0.3 and 1.0.4**, so it did not regress, and the vehicle patch is back
+where it was.
+
+The lesson stands on its own: a report that names two versions is not proof that everything which changed between
+them is a candidate. The first thing to do with one is to find what closed it, and check whether *that* moved.

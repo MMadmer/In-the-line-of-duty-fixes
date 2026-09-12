@@ -45,7 +45,11 @@ int main(int argc, char** argv)
         "<phrase id=\"25\"><give_info>bar_bronevik_ne_chini_detektor</give_info>   \r\n"
         "<action>dialogs.break_dialog</action></phrase>\r\n"
         "<phrase id=\"11\"><give_info>bar_bronevik_pochini_detektor</give_info></phrase>\r\n</dialog>\r\n";
-    std::string skat = skat_phrases + detector;
+    // The wish-granter branch of the mechanic's drinking talk, in the same file: it must come back to the hub.
+    const std::string wish = "<phrase id=\"17\">\r\n<text>b_nac_mex_bazar_17</text>\r\n"
+        "<give_info>bar_nac_mexik_bazar2</give_info>\r\n<next>2</next>\r\n</phrase>\r\n"
+        "<phrase id=\"18\">\r\n<next>2</next>\r\n</phrase>\r\n";
+    std::string skat = skat_phrases + detector + wish;
     const auto skat_size = skat.size();
     if (!ild::repair_config_text(skat, ConfigRepair::skat_upgrade) || skat.size() != skat_size ||
         skat.find("b_mne_mod_skat5<") == std::string::npos ||
@@ -55,6 +59,8 @@ int main(int argc, char** argv)
         skat.find("<dont_has_info>bar_bronevik_pochini_detektor</dont_has_info>") == std::string::npos ||
         skat.find("<give_info>bar_bronevik_pochini_detektor</give_info>") == std::string::npos ||
         skat.find("<action>dialogs.break_dialog</action>") == std::string::npos) return 25;
+    if (skat.find("<give_info>bar_nac_mexik_bazar2</give_info>\r\n<next>4</next>") == std::string::npos ||
+        skat.find("<phrase id=\"18\">\r\n<next>2</next>") == std::string::npos) return 33;
     // Without the detector dialog this is not the file the repair was written for.
     std::string skat_only = skat_phrases;
     unchanged = skat_only;
