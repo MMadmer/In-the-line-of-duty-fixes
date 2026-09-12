@@ -732,3 +732,21 @@ The pack finishes the branch along the line the author drew, and adds nothing be
   this is the third and last place the pack puts words in anyone's mouth.
 
 Nothing about the price, the broken detector, the cache or its other loot is changed.
+
+### The detector job as a PDA entry - 1.0.6
+
+The job had no entry of any kind: the portion its conversation grants is declared empty in
+`info_l08rostok_bar.xml:326` and no `game_task` anywhere names it, so 1.0.5 led the player with two standalone
+map spots. Those are now the job's own steps.
+
+`tasks_bar.xml` gains the skeleton - a title and the entry's own objective - and nothing else, because neither
+the children's cache nor Bronevik has a story id for the XML form of a map spot to point at. The two steps are
+built in script with `SGameTaskObjective`, each carrying its own `green_location` and the object it belongs to,
+which is what ties the spots to the task: the engine shows an objective's spot while it is open and takes it
+down when it closes. Step one closes when the chip is in the rucksack, step two and the entry when Bronevik
+hands the detector over.
+
+The entry is given from script rather than from the portion, so a save that already paid the five thousand
+receives it on the next update instead of never. The stage lives in the actor's pstor, so the entry is given
+once and a reload does not repeat it.
+

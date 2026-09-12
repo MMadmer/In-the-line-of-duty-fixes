@@ -14,7 +14,7 @@ local function fixture()
     local calls = {tutorials = {}, events = {}, spots = {}, food = {}, spawned = {}, removed = {}, detector = {},
         released = {}, init_btn = {}, on_info = {}, menu_toggles = {}, given = {}, taken = {}, news = {},
         amk_spawns = {}, treasure = {}, looks = {}, infos = {}, sounds = {}, statics = {}, tips = {},
-        created = {}, task_states = {}, news = {}, played = {}, escape_info = {}, map = {}, object_queries = 0}
+        created = {}, task_states = {}, news = {}, played = {}, escape_info = {}, map = {}, tasks = {}, object_queries = 0}
     local objects = {}
     local clock = 100
     local env = setmetatable({}, {__index = _G})
@@ -151,6 +151,21 @@ local function fixture()
         enable_ui = function() calls.ui_enabled = (calls.ui_enabled or 0) + 1 end
     }
     env.task = {completed = "completed", fail = "fail", in_progress = "in_progress"}
+    -- The engine's own task objects: a script-built task carries its map spots on its objectives.
+    env.CGameTask = function()
+        local job = {objectives = {}}
+        job.load = function(self, id) self.id = id end
+        job.add_objective = function(self, objective) self.objectives[#self.objectives + 1] = objective end
+        return job
+    end
+    env.SGameTaskObjective = function(job, index)
+        local step = {job = job, index = index}
+        step.set_description = function(self, text) self.description = text end
+        step.set_map_hint = function(self, hint) self.hint = hint end
+        step.set_map_location = function(self, kind) self.location = kind end
+        step.set_object_id = function(self, id) self.object = id end
+        return step
+    end
     env.game_object = {level_path = "level_path", enemy = "enemy"}
     env.xr_remark = {set_scheme = function(npc, ini, scheme, section)
         env.db.storage[npc:id()] = env.db.storage[npc:id()] or {}
@@ -446,6 +461,7 @@ local function fixture()
             end,
             set_fastcall = function(self, callback) self.fastcall = callback end,
             position = function() return {sub = function() return "direction" end} end,
+            give_task = function(self, job) calls.tasks[#calls.tasks + 1] = job end,
             level_vertex_id = function() return 4242 end,
             game_vertex_id = function() return 42 end,
             id = function() return 0 end,
@@ -2404,7 +2420,7 @@ do
     equal(calls.taken[2], "gar_lomanui_detektor", "and so is the broken detector, while the player still has it")
     equal(calls.given[#calls.given].section, "detector_elite", "the elite detector comes back")
     equal(calls.given[#calls.given].direction, "in", "into the player's hands")
-    equal(calls.pstor.ild_detector_done, 1, "and the save records that the job is finished")
+    equal(calls.pstor.ild_detector_task, 3, "and the save records that the job is finished")
 
     -- A save that sold the useless broken detector before this repair existed must not be stranded.
     local sold, sold_calls, _, sold_module, sold_actor = fixture()
@@ -2434,7 +2450,7 @@ do
     equal(#calls.created, 1, "and no other cache is touched")
 end
 
--- The detector job has two places to be, and which one the map shows follows the stage the player is on.
+-- The detector job as a PDA entry: two steps, each carrying the spot that belongs to it.
 do
     local env, calls, objects, module, actor = fixture()
     module.install()
@@ -2447,26 +2463,36 @@ do
         env.bind_stalker.actor_binder.update(binder, 1)
     end
     pass(4)
-    equal(calls.map["900:green_location"], nil, "nothing is marked before Bronevik has asked for the chip")
+    equal(#calls.tasks, 0, "no entry before Bronevik has asked for the chip")
     calls.infos.bar_bronevik_pochini_detektor = true
     pass(4)
-    equal(calls.map["900:green_location"], "ild_detector_cache_hint", "the cache is marked while the chip is out there")
-    equal(calls.map["901:green_location"], nil, "and the way back is not, yet")
+    equal(#calls.tasks, 1, "the entry a save that already paid never got")
+    local job = calls.tasks[1]
+    equal(job.id, "ild_detector_task", "loaded from the skeleton the pack adds to the task file")
+    equal(#job.objectives, 2, "with the two steps the job actually has")
+    equal(job.objectives[1].description, "ild_detector_task_1", "find the chip")
+    equal(job.objectives[1].object, 900, "pointing at the children's cache")
+    equal(job.objectives[1].location, "green_location", "as a map spot of its own")
+    equal(job.objectives[2].description, "ild_detector_task_2", "then take it back")
+    equal(job.objectives[2].object, 901, "pointing at Bronevik")
+    equal(calls.pstor.ild_detector_task, 1, "and the stage is remembered")
+    pass(4)
+    equal(#calls.tasks, 1, "the entry is given once")
+
+    local function closed(objective)
+        for _, state in ipairs(calls.task_states) do
+            if state.id == "ild_detector_task" and state.objective == objective then return state.state end
+        end
+    end
     env.db.actor.items["esc_mikro_sxema_koordinatu_tp"] = {}
     pass(4)
-    equal(calls.map["900:green_location"], nil, "the cache mark goes the moment the chip is in hand")
-    equal(calls.map["901:green_location"], "ild_detector_bronevik_hint", "and Bronevik is marked instead")
-    calls.pstor.ild_detector_done = 1
-    pass(4)
-    equal(calls.map["901:green_location"], nil, "a finished job leaves no mark at all")
-    -- A save that reloads keeps the engine's own spots, so the pass must not stack a second one.
-    calls.pstor.ild_detector_done = 0
-    env.db.actor.items["esc_mikro_sxema_koordinatu_tp"] = nil
-    pass(4)
-    local before = #calls.spots
-    pass(4)
-    equal(#calls.spots, before, "an unchanged stage touches nothing")
-    equal(calls.map["900:green_location"], "ild_detector_cache_hint", "and the mark it already had stays")
+    equal(closed(1), "completed", "the first step closes on the chip")
+    equal(calls.pstor.ild_detector_task, 2, "and the stage moves on")
+
+    module.repair_detector(nil, "bronevik")
+    equal(closed(2), "completed", "the second closes on the hand-over")
+    equal(closed(0), "completed", "and so does the entry itself")
+    equal(calls.pstor.ild_detector_task, 3, "the job is done")
 end
 
 print("script_repairs_tests: " .. tests .. " checks passed")

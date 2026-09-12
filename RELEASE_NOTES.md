@@ -2,15 +2,11 @@
 
 ## Тема
 
-Фикс квестов
+Квест на детектор в ПДА
 
 ## Изменения
 
-* Квест с починкой детектора аномалий доведён до конца: микросхема лежит в тайнике детей на Агропроме, Броневик собирает из неё рабочий элитный детектор. Карта ведёт по этапам, уже начатые прохождения подхватываются.
-* Квест с Порчей и Душой на Свалке больше нельзя загубить: закапывание срабатывает на любой из двух куч у могилы, свечи не зажигаются раньше времени, Порча не раздваивается.
-* Разговор с механиком в баре больше не вылетает на ветке про исполнителя желаний.
-* Бесконечные тушканы в депо больше не выглядят багом: через двадцать секунд после начала боя ГГ замечает, что мутантами кто-то управляет.
-* Две метки на карте Кордона больше не роняют игру.
+* У ремонта научного детектора появилась запись в ПДА с двумя подзадачами: найти микросхему EVA-1400 и отнести её Броневику. Метки на карте теперь принадлежат этим подзадачам и снимаются вместе с ними. Уже начатые прохождения получают запись сразу, перепроходить ничего не нужно.
 
 ## Установка
 
@@ -22,15 +18,11 @@
 
 ## Theme
 
-Quest fixes
+The detector job in the PDA
 
 ## Changes
 
-* The anomaly detector repair job now finishes: the microchip is in the children's cache on Agroprom and Bronevik builds a working elite detector out of it. The map leads the way stage by stage, and playthroughs already under way are picked up where they stand.
-* The Garbage quest about Порча and Душа can no longer be ruined: either mound at the grave works, the candles cannot be lit early, and Порча no longer splits in two.
-* The drinking talk with the Bar mechanic no longer crashes on the wish-granter branch.
-* The endless tushkans at the depot no longer look like a bug: twenty seconds into the fight the player notes that something is driving the mutants.
-* Two Cordon map spots no longer bring the game down.
+* The scientific detector repair now has a PDA entry with two steps: find the EVA-1400 microchip and take it to Bronevik. The map spots belong to those steps and come down with them. Playthroughs already under way get the entry at once, with nothing to replay.
 
 ## Installation
 

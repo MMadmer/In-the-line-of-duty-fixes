@@ -1889,7 +1889,10 @@ function repair_detector(first_speaker, second_speaker)
     -- The broken one calls itself the best detector in the world and says it shows every anomaly, which is the
     -- elite detector exactly. No trader sells it, so the job stays the only way to hold one.
     dialogs.relocate_item_section(second_speaker, "detector_elite", "in", 1)
-    xr_logic.pstor_store(db.actor, "ild_detector_done", 1)
+    -- The last step and the entry itself close together; the engine takes the remaining spot down with them.
+    pcall(level_tasks.set_task_state, task.completed, "ild_detector_task", 2)
+    pcall(level_tasks.set_task_state, task.completed, "ild_detector_task", 0)
+    xr_logic.pstor_store(db.actor, "ild_detector_task", 3)
     report_line("detector repaired")
 end
 
@@ -2080,17 +2083,16 @@ function install()
         return original_escape_info(info_id, ...)
     end
 
-    -- The detector job has two places to be and the mod marks neither, so the stage the player is on decides
-    -- which one the map shows: the cache that holds the chip until it is in hand, then Bronevik until the
-    -- detector is rebuilt. Both are read back from the map each pass rather than remembered here, because the
-    -- engine saves spots with the game while a local would not survive the reload. The gate is the portion the
-    -- inspection grants, so a save that already paid the five thousand is picked up exactly where it stands.
+    -- The job had no PDA entry at all: the portion its conversation grants is declared empty and no task names
+    -- it. The entry is given here rather than from that portion, so a save that already paid the five thousand
+    -- gets it too. Its two steps carry the map spots, which is what ties them to the task - the engine shows the
+    -- spot of an objective while it is open and takes it down when it closes. Neither the cache nor Bronevik has
+    -- a story id, so the objectives are built in script where both can be looked up.
     local detector_guide = {
         cache = {section = "agro_tainik_detei3", hint = "ild_detector_cache_hint"},
         owner = {section = "bar_bar_moder", hint = "ild_detector_bronevik_hint"},
         period = 30000
     }
-    -- Neither of them has a story id, so each is found by walking the simulation once and then remembered.
     local function detector_object(entry, now)
         if entry.id then return entry.id end
         if entry.scanned and now - entry.scanned < detector_guide.period then return nil end
@@ -2104,20 +2106,35 @@ function install()
         end
         return nil
     end
-    local function detector_spot(entry, wanted, now)
-        local id = detector_object(entry, now)
-        if not id then return end
-        local held = level.map_has_object_spot(id, "green_location")
-        if wanted and held == 0 then level.map_add_object_spot_ser(id, "green_location", entry.hint)
-        elseif not wanted and held ~= 0 then level.map_remove_object_spot(id, "green_location") end
+    local function detector_step(job, index, entry, id)
+        local step = SGameTaskObjective(job, index)
+        step:set_description("ild_detector_task_" .. index)
+        step:set_map_hint(entry.hint)
+        step:set_map_location("green_location")
+        step:set_object_id(id)
+        job:add_objective(step)
     end
-    local function guide_detector(now)
+    -- 0 not given, 1 looking for the chip, 2 carrying it back, 3 finished.
+    local function detector_task(now)
         if not db.actor or not has_alife_info("bar_bronevik_pochini_detektor") then return end
-        local known, done = pcall(xr_logic.pstor_retrieve, db.actor, "ild_detector_done", 0)
-        local finished = not known or (done or 0) ~= 0
-        local carried = db.actor:object("esc_mikro_sxema_koordinatu_tp") ~= nil
-        detector_spot(detector_guide.cache, not finished and not carried, now)
-        detector_spot(detector_guide.owner, not finished and carried, now)
+        local known, stage = pcall(xr_logic.pstor_retrieve, db.actor, "ild_detector_task", 0)
+        if not known then return end
+        stage = stage or 0
+        if stage == 0 then
+            local cache = detector_object(detector_guide.cache, now)
+            local owner = detector_object(detector_guide.owner, now)
+            if not cache or not owner then return end
+            local job = CGameTask()
+            job:load("ild_detector_task")
+            detector_step(job, 1, detector_guide.cache, cache)
+            detector_step(job, 2, detector_guide.owner, owner)
+            db.actor:give_task(job, 0, false)
+            xr_logic.pstor_store(db.actor, "ild_detector_task", 1)
+            report_line("task ild_detector_task")
+        elseif stage == 1 and db.actor:object("esc_mikro_sxema_koordinatu_tp") then
+            level_tasks.set_task_state(task.completed, "ild_detector_task", 1)
+            xr_logic.pstor_store(db.actor, "ild_detector_task", 2)
+        end
     end
 
     local binder = bind_stalker.actor_binder
@@ -2156,7 +2173,7 @@ function install()
         if db.actor and artefacts_dirty and reconcile_artefacts() then artefacts_dirty = false end
         pcall(check_death_watch, time_global())
         pcall(deliver_depo_hint, time_global())
-        pcall(guide_detector, time_global())
+        pcall(detector_task, time_global())
     end
     installed = true
 end

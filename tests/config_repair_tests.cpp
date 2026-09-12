@@ -82,6 +82,13 @@ int main(int argc, char** argv)
     if (ild::repair_config_text(profile, ConfigRepair::bronevik_profile)) return 37;
     std::string no_bronevik = "\t\t<actor_dialog>someone_else</actor_dialog>\r\n" + room;
     if (ild::repair_config_text(no_bronevik, ConfigRepair::bronevik_profile)) return 38;
+    // The PDA entry the job never had: only the skeleton, its two steps are built where the targets are known.
+    std::string tasks = room;
+    const auto tasks_size = tasks.size();
+    if (!ild::repair_config_text(tasks, ConfigRepair::detector_task) || tasks.size() != tasks_size ||
+        tasks.find("<game_task id=\"ild_detector_task\">") == std::string::npos ||
+        tasks.find("<title>ild_detector_task</title>") == std::string::npos) return 39;
+    if (ild::repair_config_text(tasks, ConfigRepair::detector_task)) return 40;
     // Without the detector dialog this is not the file the repair was written for.
     std::string skat_only = skat_phrases;
     unchanged = skat_only;

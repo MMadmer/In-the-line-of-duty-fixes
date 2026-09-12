@@ -39,7 +39,9 @@ constexpr std::array sources{
     ConfigRepairSource{L"gamedata/config/gameplay/dialogs_darkvalley.xml", 128073,
         "3614CFA556724034B31399AF2A8CEDC9E6643B1274B11F483F75014D7517D535", ConfigRepair::trader_refusal},
     ConfigRepairSource{L"gamedata/config/gameplay/character_desc_bar.xml", 114740,
-        "E796FBC317FA9309E3697C06DBA484A045871E34DEDD5E05C4A8F7DC75620BA4", ConfigRepair::bronevik_profile}
+        "E796FBC317FA9309E3697C06DBA484A045871E34DEDD5E05C4A8F7DC75620BA4", ConfigRepair::bronevik_profile},
+    ConfigRepairSource{L"gamedata/config/gameplay/tasks_bar.xml", 21473,
+        "6AE66AE92EB2520CE038E90CB9ED983D4CE8D9D0A56C78A16B490EE8001E9140", ConfigRepair::detector_task}
 };
 
 // Replace a unique expression with an equal-length one, padding the remainder with spaces.
@@ -173,6 +175,22 @@ bool add_detector_topic(std::string& text)
     if (at == text.npos || text.find(anchor, at + anchor.size()) != text.npos) return false;
     const auto size = text.size();
     text.insert(at, added);
+    return borrow_indentation(text, text.size() - size) && text.size() == size;
+}
+
+// The detector job had no PDA entry at all - the portion its conversation grants is declared empty and no task
+// names it. This is the skeleton the engine needs to know the task exists; its two steps, and the map spots
+// bound to them, are built in script where the cache and Bronevik can actually be found, because neither has a
+// story id for the XML form to point at.
+constexpr std::string_view detector_task_entry =
+    "<game_task id=\"ild_detector_task\"><title>ild_detector_task</title>"
+    "<objective><text>ild_detector_task</text><icon>ui_iconsTotal_artefact</icon></objective></game_task>";
+
+bool add_detector_task(std::string& text)
+{
+    if (text.find("ild_detector_task") != text.npos) return false;
+    const auto size = text.size();
+    text.insert(0, detector_task_entry);
     return borrow_indentation(text, text.size() - size) && text.size() == size;
 }
 
@@ -322,6 +340,10 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
     else if (repair == ConfigRepair::bronevik_profile)
     {
         if (!add_detector_topic(patched)) return false;
+    }
+    else if (repair == ConfigRepair::detector_task)
+    {
+        if (!add_detector_task(patched)) return false;
     }
     else if (repair == ConfigRepair::trader_refusal)
     {
