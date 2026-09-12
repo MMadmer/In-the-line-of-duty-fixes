@@ -3,11 +3,11 @@
 Non-destructive fixes for S.T.A.L.K.E.R.: Shadow of Chernobyl and the mod
 «По долгу службы». Original game/mod files and saves must remain unchanged.
 
-Current version: 1.0.4. The line repairs console editing, crashes, quest chains that
-stall or hand out the wrong reward, NPC jobs and scenes that strand their owner,
-absent sound files that were fatal to load and several wrong gameplay formulas, and
-it adds an in-game updater and options that work on any 1.0006 build, with or
-without the mod's own binaries. Original assets are changed only in private memory
+Current version: 1.0.5. The line repairs console editing, crashes, quest chains that
+stall or hand out the wrong reward, duplicated quest objects that disagree with each
+other, NPC jobs and scenes that strand their owner, absent sound files that were fatal
+to load and several wrong gameplay formulas, and it adds an in-game updater and
+options that work on any 1.0006 build, with or without the mod's own binaries. Original assets are changed only in private memory
 or through runtime hooks, never on disk. [RELEASE_NOTES.md](RELEASE_NOTES.md) holds
 the text of the current release.
 

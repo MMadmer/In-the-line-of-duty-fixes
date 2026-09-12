@@ -552,3 +552,80 @@ from the data. Both symptoms together mean the bridge and the `_g.script` patch 
 loader not loaded (a proxy DLL that an antivirus removes after the updater rewrote it), a changed `ui_main_menu.script`
 and `_g.script` (a reinstalled or patched mod), or files read through VirtualStore. 1.0.4 removes the digest gates and
 writes exactly those facts into the report, which is what to ask the player for.
+## Eighth pass: the Garbage soul quest, and objects placed twice — 2026-09-12
+
+Source: the mod author's own account of the Порча/Душа side quest on the Garbage, checked against the data. Three
+of his statements hold and three do not, and the check turned up one way to lose the quest outright.
+
+**What the account got right.** The stash of the two stalkers really is placed at one of three random points
+(`xr_effects.random_spawn_gar_tainik_dvyx_s_artami`), and the point he suspected of bad coordinates — the one in the
+bus by the road — is the best-placed of the three. `level.ai` was recovered from `gamedata.db0` (uncompressed, at
+offset 178,516,615, identified by its version / vertex-count / cell-size signature and matching the level GUID in
+`level.gct`), its node packing solved against 164 ground-truth pairs from `game.graph`, and all three entries then
+checked both ways: every `level_vertex_id` is inside the level's 382,663 vertices, every `game_vertex_id` is inside
+the Garbage band 252-415, and `level.gct` maps each level vertex to exactly the game vertex the table declares. The
+bus entry sits 1.30 m from its node horizontally and **1 cm** vertically — tighter than any of the mod's nine static
+`gar_tainik_*` placements, one of which misses by 57 m. `af_soul` is in the heap night-respawner's pool, and the
+Garbage does have exactly three artefact respawners (heaps, willow, swamp), all three wired from `all.spawn`.
+
+**What it did not.** The ecologist-suited corpse is the one on the depot tower beside the PDA
+(`grar_mertviak_na_bashne`, visual `actors\stalker_zombi\ekolog_zombi_zheltuy`), not the one under the slab; under
+the slab there is no corpse at all, and the ghost wears `a\38_strashnui_plash_antigas`. The tower diary names no
+stash: its one occurrence of "схрон" is the writer complaining that the artefact cannot be put into one. Those are
+content observations, reported to the author and not changed here.
+
+### Repairs
+
+| Defect | Consequence | Repair |
+| --- | --- | --- |
+| The grave carries two diggable mounds 22 cm apart: `grar_gygbfghjk` from `all.spawn`, and `gar_zemlia_dlia_dyshi`, spawned on top of it by `decor.spawn_gar_mogila_prizrak_dkr1`. Both take the shovel and the `af_soul`, both destroy the pair, both show `tip_zakopati` — and only the first grants `gar_porchy_bolshe_na_davati` | Which one the crosshair takes is chance. Digging the script-spawned one destroys the `af_soul` the player came for and grants nothing: `gar_porchy_bolshe_na_davati` is the `infoportion_complete` of both objectives of `gar_v_poiskax_dyshi`, so the task stays in the PDA for good, and it is also the flag the curse restrictor tests — whose 30-second timer is already armed and never checks for the artefact, so a fresh `af_porcha` arrives within half a minute. Recovery needs another `af_soul` (the stash is spent; the heaps give one about one night in nine) and the other mound, which nothing distinguishes | `parse_condlist` gives the script-spawned mound the portion its twin grants. Whichever mound the player digs, the task closes and the curse ends |
+| `grar_grsvecha` and `grar_grsvechae12e2` are the same candle box at the same point; only the second was given `[ph_idle0] on_info = {+gar_dialog_s_prizrakom}` | The candles can be lit before the ghost has ever been spoken to. The second conversation asks only for the candles, and both ghosts share one profile whose `start_dialog` is that conversation — so a player holding matches takes the task, buries the `af_soul` and closes the quest without ever receiving the curse it is about | The older box's `on_use` is given the same portion check. Both copies now wait for the conversation |
+| `grar_porcha_perezagryzka_spacer` `[sr_idle2]` — the section is entered while the actor holds an `af_porcha`, but its 30-second timer tests only `-gar_porchy_bolshe_na_davati` before running `=remove_item(af_porcha) =mne_porchy_art`. `xr_effects.remove_item` is `amk.remove_item(db.actor:object(...))`, which returns false on nil and is not checked | An `af_porcha` put into a box inside that window is not the one removed, so the pair leaves it there and creates a second | The removal is given `=actor_has_item(af_porcha)`, the condition the section's own entry already uses, plus a fallback back to that entry so the guard is not re-evaluated every frame |
+| `gar_tainik_s_artami.ltx:13` — the first clause of the lock, the one that consumes a lockpick and leaves the box shut, plays nothing. The mod's six other locks all answer a failed pick with `device\xrysti` | A lockpick disappears in silence on the one box the quest cannot be finished without, which reads as a dead box | The missing answer is added. How often the lock resists is untouched |
+
+All four are `parse_condlist` rewrites on a whitespace-insensitive match of the exact line, scoped to the object by
+section name (the mound and the stash are created from their own `system.ltx` sections, so they carry that section's
+`custom_data` directly and have no `[logic] cfg` to match on) or by object name (the two `all.spawn` objects).
+
+### Swept and clean
+
+Every pair of `all.spawn` objects within 2 m of each other that both carry inline logic was compared, mod-wide: the
+only near-identical pair whose text differs is the candle box above, and the rest are numbered NPC groups differing
+by a patrol index. Every one of the 63 coordinate-carrying spawn calls in `gar_vsia_xyinia_svalki` was checked
+against the `all.spawn` objects it lands among; the grave mound is the only one that lands on a twin of itself
+rather than on a restrictor or a particle source.
+
+### Examined and deliberately left alone
+
+`gar_v_poiskax_dyshi` has no `<map_location_type>`, no `<object_story_id>` and no `<article>`, the tower PDA is a
+plain `II_ATTCH` with no binding, tip, sound or journal entry, and the diary is 2,265 characters with two line breaks
+in a panel that does not scroll. Those are the author's, and stay: the maintainer's instruction is that unmarked
+locations for the PDA and the Душа are intended. The lock idiom is the author's throughout — with one
+`math.random(100)` shared by a whole condlist, every one of the seven locks has a band of rolls that does nothing,
+and repairing that is a balance change across all of them rather than a defect of this quest.
+`decor.spawn_grar_kpk_doxlogo_ycha` and `nps_svalka.spawn_gar_mertvui_ekolog_mrazi` are dead code; wiring the first
+up would place a second PDA on the tower, and the second names a profile that no `character_desc_*.xml` defines. The
+candle box's `on_timer = 8000 | %+gar_prizrak_vtoroi_prixod%` has no target section, so it re-grants a portion every
+frame for good — a no-op after the first grant, and the only section it could switch to is `nil`, which would turn
+the box into an ordinary container. `gar_tornado_dop` is spawned on the second ghost and never removed, but its
+`effective_radius` is 0 and its `hit_impulse_scale` 0.0. The ghost's `target = 5053` points at a treasure object,
+which only turns his head. All the Garbage content hangs off one grant of `gar_vsia_xyinia_svalki` in a Cordon
+dialog; that is how the mod gates the whole level and not a defect of this quest.
+
+### A ceiling to know about
+
+The payload's repair script is a single Lua chunk, and the engine wraps it in its own namespace header before
+compiling, which leaves **182 top-level locals** of Lua 5.1's 200. `ild_script_repairs.script` has stood at 181 since
+1.0.4, one below the ceiling.
+
+That was found the hard way, and the way it fails is the point: at 183 the game does not report a compile error. The
+namespace simply resolves to nil, and the first script that touches it dies instead - here `ild_gameplay.script:17:
+attempt to index global 'ild_script_repairs' (a nil value)`, on the main menu, with nothing in the log to say why.
+Desktop Lua 5.1 loads the same file without complaint (its own limit is 200 and there is no wrapper), so `luac -p`,
+the unit tests and the packaging all pass a build the game cannot start. It was caught by launching the game.
+
+Measured on the installed build: 181 locals loads, 182 loads, 183 does not; 3.5 KB of added comments changes nothing.
+New repairs therefore go inside `install()`, next to the hook they belong to, where the function's own register
+budget applies - not into the main chunk. `script_globals` now counts module locals and fails the build above 182,
+and `tools/qa/Run-SmokeTest.ps1` starts the deployed game offscreen, reads the log back and restores `user.ltx`.
+**Every payload change must be launched before it ships.**

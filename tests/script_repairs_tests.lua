@@ -2255,4 +2255,69 @@ do
     equal(calls.mob_deaths, 1, "without going through the broken branch")
 end
 
+-- The Garbage soul quest: the duplicated grave objects are made to agree, the curse is not handed out twice,
+-- and the stash that hides the artefact answers a failed pick.
+do
+    local env, _, _, module = fixture()
+    module.install()
+
+    local mound = make_physic(810, nil, {section = function() return "gar_zemlia_dlia_dyshi" end})
+    local dig = [[3000 | %=remove_item(af_porcha) =remove_item(af_soul)% nil]]
+    local dug = [[3000 | %=remove_item(af_porcha) =remove_item(af_soul) +gar_porchy_bolshe_na_davati% nil]]
+    local parsed = env.xr_logic.parse_condlist(mound, "ph_idle2", "on_timer", dig)
+    equal(parsed.source, dug, "the script-spawned mound completes the task its twin completes")
+    equal(parsed.npc, mound, "the mound is retained")
+    equal(parsed.section, "ph_idle2", "the section is retained")
+    local tight = "3000|%=remove_item(af_porcha)=remove_item(af_soul)%nil"
+    equal(env.xr_logic.parse_condlist(mound, "ph_idle2", "on_timer", tight).source, dug,
+        "however the ini spaced it")
+    equal(env.xr_logic.parse_condlist(mound, "ph_idle1", "on_timer", dig).source, dig,
+        "the mound's other sections are untouched")
+    equal(env.xr_logic.parse_condlist(mound, "ph_idle2", "on_use", dig).source, dig,
+        "and its other fields are untouched")
+    local other_box = make_physic(811, nil, {section = function() return "gar_tainik_101" end})
+    equal(env.xr_logic.parse_condlist(other_box, "ph_idle2", "on_timer", dig).source, dig,
+        "another object with the same line keeps it")
+    equal(env.xr_logic.parse_condlist(make_physic(812), "ph_idle2", "on_timer", dig).source, dig,
+        "an object that cannot name its section is forwarded unchanged")
+    equal(env.xr_logic.parse_condlist(nil, "ph_idle2", "on_timer", dig).source, dig,
+        "nil-object parsing is forwarded unchanged")
+
+    local candle = make_physic(813, nil, {name = function() return "grar_grsvecha" end})
+    local lighting = [[%=play_snd(new\spichki) =play_snd(anomaly\emi_blowout) +gar_gg_svechy_podjeg_s_magilu%]]
+    local ungated = [[{=actor_has_item(item_spichki)} ]] .. lighting .. "  ph_idle2"
+    local gated = [[{+gar_dialog_s_prizrakom =actor_has_item(item_spichki)} ]] .. lighting .. " ph_idle2"
+    equal(env.xr_logic.parse_condlist(candle, "ph_idle1", "on_use", ungated).source, gated,
+        "the candle nobody gated waits for the conversation its twin waits for")
+    equal(env.xr_logic.parse_condlist(candle, "ph_idle2", "on_use", ungated).source, ungated,
+        "the candle's other sections are untouched")
+    local twin = make_physic(814, nil, {name = function() return "grar_grsvechae12e2" end})
+    equal(env.xr_logic.parse_condlist(twin, "ph_idle1", "on_use", ungated).source, ungated,
+        "the twin that is already gated keeps its own line")
+
+    local spacer = make_physic(815, nil, {name = function() return "grar_porcha_perezagryzka_spacer" end})
+    local replace = [[%=remove_item(af_porcha) =mne_porchy_art% sr_idle1]]
+    local reissue = "30000 | {-gar_porchy_bolshe_na_davati} " .. replace
+    local guarded = "30000 | {-gar_porchy_bolshe_na_davati =actor_has_item(af_porcha)} " .. replace .. ", sr_idle1"
+    equal(env.xr_logic.parse_condlist(spacer, "sr_idle2", "on_timer", reissue).source, guarded,
+        "the curse is replaced only while the actor is carrying one")
+    equal(env.xr_logic.parse_condlist(spacer, "sr_idle1", "on_timer", reissue).source, reissue,
+        "the restrictor's waiting section is untouched")
+    local elsewhere = make_physic(816, nil, {name = function() return "gar_bandits_shuher" end})
+    equal(env.xr_logic.parse_condlist(elsewhere, "sr_idle2", "on_timer", reissue).source, reissue,
+        "another restrictor with the same line keeps it")
+
+    local stash = make_physic(817, nil, {section = function() return "gar_tainik_dvyx_s_artami" end})
+    local opens = [[{=actor_has_item(otmuchki) ~40} %=minys_otmuchka =play_snd(device\klyuch)% nil, ]] ..
+        [[{=actor_has_item(otmuchki) ~60} %=play_snd(device\klyuch)% nil]]
+    local silent = [[{=actor_has_item(otmuchki) ~20} %=minys_otmuchka%, ]] .. opens
+    local answered = [[{=actor_has_item(otmuchki) ~20} %=minys_otmuchka =play_snd(device\xrysti)%, ]] .. opens
+    equal(env.xr_logic.parse_condlist(stash, "ph_idle", "on_use", silent).source, answered,
+        "a pick the lock resists is heard, and the rolls are left exactly as the mod wrote them")
+    equal(env.xr_logic.parse_condlist(stash, "ph_idle2", "on_use", silent).source, silent,
+        "the stash's other sections are untouched")
+    equal(env.xr_logic.parse_condlist(other_box, "ph_idle", "on_use", silent).source, silent,
+        "another stash with the same line keeps it")
+end
+
 print("script_repairs_tests: " .. tests .. " checks passed")

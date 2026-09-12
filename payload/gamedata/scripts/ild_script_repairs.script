@@ -1870,6 +1870,78 @@ function install()
     if not delete.esc_ydalaem_bbbbbbbbbbbbbtttttttttttrrrrr then
         delete.esc_ydalaem_bbbbbbbbbbbbbtttttttttttrrrrr = delete.esc_ydalaem_bbbbbbbbbbbbbtttttttttttrrrrrrrrrrrrr
     end
+    -- The ghost's grave on the Garbage carries two of everything: both candle boxes stand on the same point, and
+    -- the mound the actor digs was placed in all.spawn and then again by decor.spawn_gar_mogila_prizrak_dkr1
+    -- twenty-two centimetres away. Each pair has one copy with the guard the quest needs and one without, and which
+    -- copy the crosshair takes is chance. Every line below gives the copy that was left behind what its twin
+    -- already says. The objects are named by section rather than by logic file: each is created from its own
+    -- system.ltx section, so it carries that section's custom_data directly and has no [logic] cfg to match on.
+    local soul_quest_lines = {
+        -- gar_porchy_bolshe_na_davati completes both objectives of the soul task and is the flag that stops the
+        -- curse being handed back; the all.spawn mound is its only producer. Digging the script-spawned one
+        -- destroys the af_soul the player came for, leaves the task in the PDA for good, and - because the
+        -- re-issue timer below is already running and never tests for the artefact - hands back a fresh
+        -- af_porcha within thirty seconds.
+        {
+            owner = "gar_zemlia_dlia_dyshi", by_section = true, section = "ph_idle2", field = "on_timer",
+            broken = "3000|%=remove_item(af_porcha)=remove_item(af_soul)%nil",
+            repaired = "3000 | %=remove_item(af_porcha) =remove_item(af_soul) +gar_porchy_bolshe_na_davati% nil"
+        },
+        -- The older of the two candle boxes was never given the gate its twin carries, so the candles can be lit
+        -- before the ghost has ever been spoken to. The second conversation asks only for the candles, and both
+        -- ghosts share one profile whose start dialog is that second conversation - so a player holding matches
+        -- takes the task, buries the af_soul and closes the quest without the curse it is about ever existing.
+        {
+            owner = "grar_grsvecha", section = "ph_idle1", field = "on_use",
+            broken = [[{=actor_has_item(item_spichki)}%=play_snd(new\spichki)]] ..
+                [[=play_snd(anomaly\emi_blowout)+gar_gg_svechy_podjeg_s_magilu%ph_idle2]],
+            repaired = [[{+gar_dialog_s_prizrakom =actor_has_item(item_spichki)} %=play_snd(new\spichki) ]] ..
+                [[=play_snd(anomaly\emi_blowout) +gar_gg_svechy_podjeg_s_magilu% ph_idle2]]
+        },
+        -- The restrictor that keeps af_porcha on the belt destroys it and creates it again every thirty seconds.
+        -- Its section is entered while the actor holds one, but the timer itself tests only the completion
+        -- portion, so an af_porcha put in a box inside that window is not the one removed: the pair leaves the
+        -- stashed artefact where it is and adds a second. The removal is given the condition the section's own
+        -- entry already uses, and a fallback back to that entry so the check is not repeated every frame.
+        {
+            owner = "grar_porcha_perezagryzka_spacer", section = "sr_idle2", field = "on_timer",
+            broken = "30000|{-gar_porchy_bolshe_na_davati}%=remove_item(af_porcha)=mne_porchy_art%sr_idle1",
+            repaired = "30000 | {-gar_porchy_bolshe_na_davati =actor_has_item(af_porcha)} " ..
+                "%=remove_item(af_porcha) =mne_porchy_art% sr_idle1, sr_idle1"
+        },
+        -- The stash that hides the quest's af_soul is the only lock in the mod whose failed pick says nothing at
+        -- all: the other six all answer with device\xrysti. A lockpick that disappears in silence reads as a dead
+        -- box, and this is the one box the quest cannot be finished without. Only the missing answer is added;
+        -- how often the lock resists is the mod's own and is left exactly as it was written.
+        {
+            owner = "gar_tainik_dvyx_s_artami", by_section = true, section = "ph_idle", field = "on_use",
+            broken = [[{=actor_has_item(otmuchki)~20}%=minys_otmuchka%,]] ..
+                [[{=actor_has_item(otmuchki)~40}%=minys_otmuchka=play_snd(device\klyuch)%nil,]] ..
+                [[{=actor_has_item(otmuchki)~60}%=play_snd(device\klyuch)%nil]],
+            repaired = [[{=actor_has_item(otmuchki) ~20} %=minys_otmuchka =play_snd(device\xrysti)%, ]] ..
+                [[{=actor_has_item(otmuchki) ~40} %=minys_otmuchka =play_snd(device\klyuch)% nil, ]] ..
+                [[{=actor_has_item(otmuchki) ~60} %=play_snd(device\klyuch)% nil]]
+        }
+    }
+
+    local function soul_quest_repair(npc, section, field, source)
+        if not npc or type(source) ~= "string" then return nil end
+        local stripped
+        for _, line in ipairs(soul_quest_lines) do
+            if line.field == field and line.section == section then
+                stripped = stripped or string.gsub(source, "%s+", "")
+                if stripped == line.broken then
+                    local known, owner = pcall(function()
+                        if line.by_section then return npc:section() end
+                        return npc:name()
+                    end)
+                    if known and owner == line.owner then return line.repaired end
+                end
+            end
+        end
+        return nil
+    end
+
     local original_parse = xr_logic.parse_condlist
     xr_logic.parse_condlist = function(npc, section, field, source)
         -- Inline all.spawn logic contains extra damage triggers that must remain untouched.
@@ -1884,6 +1956,7 @@ function install()
         if fox_condition(section, field, source) then source = fox_repaired end
         if grate_condition(npc, section, field, source) then source = grate_repaired end
         if sniper_condition(npc, section, field, source) then source = sniper_repaired end
+        source = soul_quest_repair(npc, section, field, source) or source
         return original_parse(npc, section, field, source)
     end
     local menu = ui_main_menu.main_menu
