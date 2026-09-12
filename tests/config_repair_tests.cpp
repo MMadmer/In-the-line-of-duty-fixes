@@ -49,7 +49,10 @@ int main(int argc, char** argv)
     const std::string wish = "<phrase id=\"17\">\r\n<text>b_nac_mex_bazar_17</text>\r\n"
         "<give_info>bar_nac_mexik_bazar2</give_info>\r\n<next>2</next>\r\n</phrase>\r\n"
         "<phrase id=\"18\">\r\n<next>2</next>\r\n</phrase>\r\n";
-    std::string skat = skat_phrases + detector + wish;
+    // The added dialog is paid for out of indentation, so the source needs some to lend, as the real file has.
+    std::string room;
+    for (int line = 0; line < 40; ++line) room += "                    <phrase id=\"9\"></phrase>\r\n";
+    std::string skat = skat_phrases + detector + wish + room;
     const auto skat_size = skat.size();
     if (!ild::repair_config_text(skat, ConfigRepair::skat_upgrade) || skat.size() != skat_size ||
         skat.find("b_mne_mod_skat5<") == std::string::npos ||
@@ -61,6 +64,24 @@ int main(int argc, char** argv)
         skat.find("<action>dialogs.break_dialog</action>") == std::string::npos) return 25;
     if (skat.find("<give_info>bar_nac_mexik_bazar2</give_info>\r\n<next>4</next>") == std::string::npos ||
         skat.find("<phrase id=\"18\">\r\n<next>2</next>") == std::string::npos) return 33;
+    // Bronevik's missing hand-over: gated on holding both halves, so it closes itself once they are spent.
+    if (skat.find("<dialog id=\"ild_bronevik_detektor_gotov\">") == std::string::npos ||
+        skat.find("<precondition>ild_script_repairs.detector_parts_ready</precondition>") == std::string::npos ||
+        skat.find("<action>ild_script_repairs.repair_detector</action>") == std::string::npos ||
+        skat.find("<has_info>bar_bronevik_pochini_detektor</has_info>") == std::string::npos) return 34;
+    // A source that already carries it is not the file the repair was written for.
+    std::string already_added = skat;
+    if (ild::repair_config_text(already_added, ConfigRepair::skat_upgrade)) return 35;
+    // Bronevik's own topic list, in the character file, is what puts the conversation in front of the player.
+    std::string profile = "\t\t<actor_dialog>b_bronevik_modern</actor_dialog>\r\n"
+        "\t\t<actor_dialog>bar_bronevik_pochini_detektor</actor_dialog>\r\n" + room;
+    const auto profile_size = profile.size();
+    if (!ild::repair_config_text(profile, ConfigRepair::bronevik_profile) || profile.size() != profile_size ||
+        profile.find("<actor_dialog>ild_bronevik_detektor_gotov</actor_dialog>") == std::string::npos ||
+        profile.find("<actor_dialog>bar_bronevik_pochini_detektor</actor_dialog>") == std::string::npos) return 36;
+    if (ild::repair_config_text(profile, ConfigRepair::bronevik_profile)) return 37;
+    std::string no_bronevik = "\t\t<actor_dialog>someone_else</actor_dialog>\r\n" + room;
+    if (ild::repair_config_text(no_bronevik, ConfigRepair::bronevik_profile)) return 38;
     // Without the detector dialog this is not the file the repair was written for.
     std::string skat_only = skat_phrases;
     unchanged = skat_only;

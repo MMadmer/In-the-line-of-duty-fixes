@@ -679,3 +679,43 @@ One real defect did come out of the search, in exactly that path:
 | Defect | Consequence | Repair |
 | --- | --- | --- |
 | `escape_tasks.script:149-155` — the two Cordon spots the mod added to `process_info_portion` read `alife():story_object(093)` and use `obj.id` immediately. Every other spot call in that file and in `level_tasks.script` guards the lookup first, and story 93 is `Escape_stoim_dejyrim_mu_zone`, a restrictor the mod can release | `process_info_portion` runs inside the actor's info callback, where a raise is fatal, so a released restrictor turns granting `esc_post_pianka_tolik` or `ia_dejyrq_za_volka` into a crash | Both portions are checked for the object first and skipped when it is gone, which is what the guard every neighbouring call has would have decided. The rest of the chain is untouched and still sees every other portion |
+### The detector job, finished
+
+A player reported paying Bronevik five thousand for nothing. The author confirmed the shape of it: the chip "вроде
+есть в файлах", he meant to hide it in the children's cache, and the branch never got written.
+
+Both halves of that are true in the data. The job starts and stops like this:
+
+| Step | State in the mod |
+| --- | --- |
+| Find the broken detector | Works. `gar_lomanui_detektor` is spawned in the Garbage swamp by `gar_scriptu.spawn_gar_bolota_detektor` at `(147, -1.8, -135.6)` |
+| Pay Bronevik to look at it | Works. `bar_bronevik_pochini_detektor` charges 5 000 through `pochinka.b_killer_komb_give_dengy` |
+| He names the part | Works, and it is the whole setup: "специальная военно-научная микросхема EVA-1400... Без этой схемы этот детектор - фуфло полное", ending on "если найдёшь микросхему - приноси, починю его тогда" |
+| Find the chip | **Nothing.** `esc_mikro_sxema_koordinatu_tp` is declared in `quest_items.ltx:2917` and referenced by not one other line in the whole mod - no spawn, no stash, no dialog |
+| Bring it back | **Nothing.** `bar_bronevik_pochini_detektor` is the portion the last phrase grants, and nothing anywhere waits for it |
+| Get a working detector | **Nothing.** No dialog hands one over |
+
+So the five thousand bought a sentence, and the portion the conversation grants is a dead end with no consumer.
+
+### The repair
+
+The pack finishes the branch along the line the author drew, and adds nothing beyond it.
+
+- **The chip is placed where he meant to hide it.** The first time `agro_tainik_detei3` starts its scheme - the
+  children's cache on Agroprom that already holds the rifle parts and the lockpicks - the chip is created inside
+  it, once, remembered in the actor's pstor so a reload cannot stack a second.
+- **The hand-over is the conversation that was missing.** `ild_bronevik_detektor_gotov` is inserted into
+  `dialogs_bar.xml` and into Bronevik's own topic list in `character_desc_bar.xml`, both at the files' exact
+  length, paid for out of their indentation. It is gated on `bar_bronevik_pochini_detektor` - he has to have
+  looked at the detector first - and on a precondition that tests for both halves in the rucksack. That is the
+  whole gate: the topic appears only when the exchange can happen and disappears the moment it has, because the
+  two items it needs are gone. No info portion of ours enters the registry.
+- **The reward is the elite detector.** The broken one's own description says it is "лучший детектор аномалий в
+  мире" and shows "абсолютно все аномалии", which is `detector_elite` exactly; no trader sells it, so the job
+  stays the only way to hold one.
+- **The two lines Bronevik and the actor say** ship in the pack's own string file,
+  `gamedata/config/text/rus/ild_fixes_text.xml`. SoC reads every file in the language folder rather than a list,
+  so a new file of our own is loaded with no patch at all - and with the depot hint and the Garbage PDA line,
+  this is the third and last place the pack puts words in anyone's mouth.
+
+Nothing about the price, the broken detector, the cache or its other loot is changed.

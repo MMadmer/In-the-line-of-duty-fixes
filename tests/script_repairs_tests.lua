@@ -2383,4 +2383,40 @@ do
     equal(#calls.escape_info, 2, "neither branch reached the mod's unguarded code")
 end
 
+-- Bronevik's detector job: the chip the mod never placed, and the hand-over it never wrote.
+do
+    local env, calls, _, module, actor = fixture()
+    module.install()
+    env.db.actor = actor()
+
+    equal(module.detector_parts_ready(), false, "the topic stays shut with neither half in the rucksack")
+    env.db.actor.items["esc_mikro_sxema_koordinatu_tp"] = {}
+    equal(module.detector_parts_ready(), false, "and with only the chip")
+    env.db.actor.items["gar_lomanui_detektor"] = {}
+    equal(module.detector_parts_ready(), true, "both halves open it")
+
+    module.repair_detector(nil, "bronevik")
+    equal(calls.taken[1], "esc_mikro_sxema_koordinatu_tp", "the chip is handed over")
+    equal(calls.taken[2], "gar_lomanui_detektor", "and so is the broken detector")
+    equal(calls.given[#calls.given].section, "detector_elite", "the elite detector comes back")
+    equal(calls.given[#calls.given].direction, "in", "into the player's hands")
+
+    -- The scheme hook drops the chip into the third children's cache the first time that box starts.
+    local box = {section = function() return "agro_tainik_detei3" end, position = function() return "at" end,
+        level_vertex_id = function() return 7 end, game_vertex_id = function() return 8 end}
+    local cache = make_physic(820, nil, box)
+    env.ph_idle.set_scheme(cache, "ini", "ph_idle", "ph_idle")
+    equal(#calls.created, 1, "the cache is given the chip the author meant to hide there")
+    equal(calls.created[1][1], "esc_mikro_sxema_koordinatu_tp", "the chip itself")
+    equal(calls.pstor.ild_detector_chip_placed, 1, "and the save remembers it")
+    env.ph_idle.set_scheme(cache, "ini", "ph_idle", "ph_idle")
+    equal(#calls.created, 1, "a reload never stacks a second one")
+    local elsewhere = {}
+    for key, value in pairs(box) do elsewhere[key] = value end
+    elsewhere.section = function() return "agro_tainik_detei1" end
+    local other = make_physic(821, nil, elsewhere)
+    env.ph_idle.set_scheme(other, "ini", "ph_idle", "ph_idle")
+    equal(#calls.created, 1, "and no other cache is touched")
+end
+
 print("script_repairs_tests: " .. tests .. " checks passed")

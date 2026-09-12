@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="windows-1251" ?>
+<string_table>
+	<string id="ild_bronevik_detektor_gotov_0">
+		<text>Броневик, я нашёл ту микросхему. EVA-1400, как ты и говорил.</text>
+	</string>
+	<string id="ild_bronevik_detektor_gotov_1">
+		<text>Ну-ка... она самая, осколки целы. Давай сюда и детектор, посиди пока... Всё, готово, держи. Честно скажу - такую машинку я в руках первый раз держу. Все аномалии на карте, как на ладони. Не урони больше в болото.</text>
+	</string>
+</string_table>

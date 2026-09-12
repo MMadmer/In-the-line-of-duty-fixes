@@ -280,9 +280,22 @@ local function unseal_online_box(story_id)
 end
 
 local function install_stash_repairs()
+    -- The author's own plan for the chip was one of the children's caches on Agroprom. It goes into the third,
+    -- the one that already holds rifle parts and lockpicks, the first time that box starts its scheme, and the
+    -- actor's pstor remembers that it has so a reload cannot stack a second one.
+    local function place_detector_chip(npc)
+        local known, section = pcall(function() return npc:section() end)
+        if not known or section ~= "agro_tainik_detei3" or not db.actor then return end
+        local stored, placed = pcall(xr_logic.pstor_retrieve, db.actor, "ild_detector_chip_placed", 0)
+        if not stored or (placed or 0) ~= 0 then return end
+        xr_logic.pstor_store(db.actor, "ild_detector_chip_placed", 1)
+        alife():create("esc_mikro_sxema_koordinatu_tp", npc:position(), npc:level_vertex_id(),
+            npc:game_vertex_id(), npc:id())
+    end
     local original_scheme = ph_idle.set_scheme
     ph_idle.set_scheme = function(npc, ini, scheme, section, gulag_name)
         local result = original_scheme(npc, ini, scheme, section, gulag_name)
+        pcall(place_detector_chip, npc)
         if logic_config(npc) == sealed_box_config then
             local server = alife():object(npc:id())
             local storage = db.storage[npc:id()]
@@ -1854,6 +1867,29 @@ local function install_mob_death_repair()
         end
         xr_logic.try_switch_to_another_section(victim, self.st, db.actor)
     end
+end
+
+-- Bronevik's detector job stops where the mod stopped writing it. He looks the broken detector over for five
+-- thousand, names the part it needs - a military-scientific EVA-1400 microchip - and says to bring it. Nothing
+-- after that exists: the chip is declared in quest_items.ltx and spawned nowhere, no dialog ever takes it, and
+-- no repaired detector is handed out, so the five thousand buys a sentence. These two are called from the
+-- dialog the pack adds, so they are globals of this namespace rather than locals of the chunk.
+function detector_parts_ready()
+    if not db.actor then return false end
+    return db.actor:object("esc_mikro_sxema_koordinatu_tp") ~= nil and
+        db.actor:object("gar_lomanui_detektor") ~= nil
+end
+
+function repair_detector(first_speaker, second_speaker)
+    -- Both halves must still be in the rucksack, so the topic shows only when the exchange can happen and
+    -- closes itself the moment it has: nothing else gates it and no portion of ours is needed.
+    if not detector_parts_ready() then return end
+    sak.out_item_namber("esc_mikro_sxema_koordinatu_tp", 1)
+    sak.out_item_namber("gar_lomanui_detektor", 1)
+    -- The broken one calls itself the best detector in the world and says it shows every anomaly, which is the
+    -- elite detector exactly. No trader sells it, so the job stays the only way to hold one.
+    dialogs.relocate_item_section(second_speaker, "detector_elite", "in", 1)
+    report_line("detector repaired")
 end
 
 function install()

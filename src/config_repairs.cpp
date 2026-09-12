@@ -37,7 +37,9 @@ constexpr std::array sources{
     ConfigRepairSource{L"gamedata/config/ui/maingame.xml", 3830,
         "E36AE22F91A0BDBBB61FD718686222B7C2D3DB8D4B2930F64D1A4B8DF2994454", ConfigRepair::counter_normal},
     ConfigRepairSource{L"gamedata/config/gameplay/dialogs_darkvalley.xml", 128073,
-        "3614CFA556724034B31399AF2A8CEDC9E6643B1274B11F483F75014D7517D535", ConfigRepair::trader_refusal}
+        "3614CFA556724034B31399AF2A8CEDC9E6643B1274B11F483F75014D7517D535", ConfigRepair::trader_refusal},
+    ConfigRepairSource{L"gamedata/config/gameplay/character_desc_bar.xml", 114740,
+        "E796FBC317FA9309E3697C06DBA484A045871E34DEDD5E05C4A8F7DC75620BA4", ConfigRepair::bronevik_profile}
 };
 
 // Replace a unique expression with an equal-length one, padding the remainder with spaces.
@@ -135,6 +137,44 @@ constexpr std::string_view counter_normal_at = R"(<static_pda_online x="138" y="
 constexpr std::string_view counter_normal_fix = R"(<static_pda_online x="135" y="148")";
 static_assert(counter_wide_at.size() == counter_wide_fix.size());
 static_assert(counter_normal_at.size() == counter_normal_fix.size());
+
+// Bronevik looks the broken detector over for five thousand, names the EVA-1400 microchip it needs and says to
+// bring it. The mod stops there: the chip is declared and spawned nowhere, no dialog takes it back and no
+// repaired detector exists, so the money buys a sentence. The pack spawns the chip where the author meant to
+// hide it and adds the one conversation that was missing. The topic is gated on holding both halves, so it
+// appears only when the exchange can happen and closes itself once it has - no info portion of ours is needed.
+constexpr std::string_view detector_dialog =
+    "<dialog id=\"ild_bronevik_detektor_gotov\">"
+    "<has_info>bar_bronevik_pochini_detektor</has_info>"
+    "<precondition>ild_script_repairs.detector_parts_ready</precondition>"
+    "<phrase_list>"
+    "<phrase id=\"0\"><text>ild_bronevik_detektor_gotov_0</text><next>1</next></phrase>"
+    "<phrase id=\"1\"><text>ild_bronevik_detektor_gotov_1</text>"
+    "<action>ild_script_repairs.repair_detector</action></phrase>"
+    "</phrase_list></dialog>";
+
+bool add_detector_dialog(std::string& text)
+{
+    if (text.find("ild_bronevik_detektor_gotov") != text.npos) return false;
+    const auto owner = block(text, "dialog", "bar_bronevik_pochini_detektor");
+    if (!owner) return true;
+    const auto size = text.size();
+    text.insert(owner->end, detector_dialog);
+    return borrow_indentation(text, text.size() - size) && text.size() == size;
+}
+
+// The dialog reaches the player only from Bronevik's own topic list.
+bool add_detector_topic(std::string& text)
+{
+    constexpr std::string_view anchor = "<actor_dialog>bar_bronevik_pochini_detektor</actor_dialog>";
+    constexpr std::string_view added = "<actor_dialog>ild_bronevik_detektor_gotov</actor_dialog>\r\n\t\t";
+    if (text.find("ild_bronevik_detektor_gotov") != text.npos) return false;
+    const auto at = text.find(anchor);
+    if (at == text.npos || text.find(anchor, at + anchor.size()) != text.npos) return false;
+    const auto size = text.size();
+    text.insert(at, added);
+    return borrow_indentation(text, text.size() - size) && text.size() == size;
+}
 
 // The ransom dialog hands over the artefact case without the 250 000 roubles that its own lines, its task and
 // the mod's check and charge functions all describe; those two functions are simply never referenced. The
@@ -277,6 +317,11 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
         const auto jump = patched.find(wish_jump, wish);
         if (jump == patched.npos || jump - wish > 200) return false;
         patched[jump + wish_jump.find('2')] = '4';
+        if (!add_detector_dialog(patched)) return false;
+    }
+    else if (repair == ConfigRepair::bronevik_profile)
+    {
+        if (!add_detector_topic(patched)) return false;
     }
     else if (repair == ConfigRepair::trader_refusal)
     {

@@ -2,12 +2,13 @@
 
 ## Тема
 
-Вылет в диалоге с механиком, бесконечные тушканы в депо и квест с Порчей
+Детектор аномалий, вылет в диалоге, бесконечные тушканы и квест с Порчей
 
 ## Изменения
 
 * Разговор с механиком в баре больше не вылетает. Ветка про исполнителя желаний после ответа механика вела обратно на одноразовую реплику «вот тебе водка», которая к тому моменту уже недоступна — и ветка оставалась без единого продолжения прямо в открытом окне диалога. Теперь она возвращается в общий круг тем, как все остальные ветки этого разговора.
 * Засада в депо на Свалке больше не выглядит сломанным квестом. Тушканов бесконечно подгоняет карлик, и пока он жив, спавн не кончится — про это игра не говорила ничего. Через двадцать секунд после начала боя ГГ отмечает про себя, что мутантами кто-то управляет и стоит поискать вокруг. Один раз, и только если карлик ещё жив. Сам бой, карлик и награда не тронуты.
+* Квест с починкой детектора аномалий доведён до конца. Раньше Броневик брал пять тысяч за осмотр, называл нужную деталь — микросхему EVA-1400 — и на этом всё кончалось: микросхема в файлах была, но нигде не лежала, вернуться к нему было не с чем и не за чем. Теперь микросхема лежит там, где её и задумывали спрятать — в тайнике детей на Агропроме, — а Броневик, если принести её вместе со сломанным детектором, собирает из них рабочий элитный детектор. Цена осмотра, сам сломанный детектор и содержимое тайника не тронуты.
 * Две метки на карте Кордона больше не могут уронить игру. Мод читал у объекта-ориентира идентификатор, не проверив, что объект вообще есть, — а делается это внутри обработчика инфопоршней, где ошибка фатальна. Теперь метка просто не ставится, если ставить её не на что.
 * Побочный квест с Порчей и Душой на Свалке больше нельзя загубить. У могилы призрака лежат две одинаковые кучи земли, и раскопка не той уничтожала Душу, оставляла задачу «В поисках души» в КПК навсегда и меньше чем через минуту возвращала Порчу. Теперь закапывание срабатывает на любой из них: задача закрывается, проклятие снимается.
 * Свечи на той же могиле больше не зажигаются раньше времени. Один из двух подсвечников не ждал разговора с призраком, и со спичками в кармане квест проходился в обход Порчи — то есть в обход того, ради чего он есть.
@@ -24,12 +25,13 @@
 
 ## Theme
 
-A dialogue crash, the endless tushkans and the Garbage curse quest
+The detector job, a dialogue crash, the endless tushkans and the curse quest
 
 ## Changes
 
 * The drinking talk with the Bar mechanic no longer crashes. After his answer about the wish-granter the branch pointed back at the one-shot "here, take the vodka" reply, which is gone by then, leaving the branch with no reachable continuation while the talk window was still open on it. It now returns to the hub every other branch of that conversation returns to.
 * The depot ambush on the Garbage no longer reads as a broken quest. The endless tushkans are the karlik's doing and they stop when he does, and nothing in the game said so. Twenty seconds into the fight the player notes to himself that something is driving the mutants and it is worth looking around. Once, and only while the karlik is alive. The fight, the karlik and the reward are untouched.
+* The anomaly detector repair job now finishes. Bronevik used to take five thousand for the inspection, name the part he needed - an EVA-1400 microchip - and that was the end of it: the chip existed in the files but lay nowhere, and there was nothing to bring back and no one to bring it to. The chip is now in the children's cache on Agroprom where it was meant to be hidden, and bringing it to Bronevik together with the broken detector gets it rebuilt into a working elite detector. The price, the broken detector and the cache's other loot are untouched.
 * Two Cordon map spots can no longer bring the game down. The mod read an id off the landmark they mark without checking the landmark is there, inside the info-portion callback where a raise is fatal. The spot is now simply not placed when there is nothing to place it on.
 * The Garbage side quest about Порча and Душа can no longer be ruined. Two identical mounds of earth lie at the ghost's grave, and digging the wrong one destroyed the Душа, left the "В поисках души" task in the PDA for good and handed the curse back in under a minute. Digging either mound now closes the task and lifts the curse.
 * The candles at that grave can no longer be lit too early. One of the two candle boxes did not wait for the conversation with the ghost, so a player carrying matches finished the quest without ever receiving the curse the quest is about.
