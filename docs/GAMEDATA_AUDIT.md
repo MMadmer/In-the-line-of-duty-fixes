@@ -658,3 +658,24 @@ where it was.
 
 The lesson stands on its own: a report that names two versions is not proof that everything which changed between
 them is a candidate. The first thing to do with one is to find what closed it, and check whether *that* moved.
+
+### The PDA map spots a player asked about
+
+A second comment asked how to get the PDA map spots back, saying there had been none since the start of the game.
+The spot machinery is intact and was checked end to end: `map_spots.xml` declares 37 spot types and every one of
+them carries a `<level_map>` entry; `ui_common.dds` is the ordinary 1024x1024 atlas the rects are cut from;
+`bind_stalker.script` still wires `callback.inventory_info` to `actor_binder:info_callback` and that still calls
+`level_tasks.process_info_portion`, exactly as vanilla; `add_lchanger_location` is still called from the same
+place, and the level-changer story ids it names are all present. Across the mod 115 tasks carry 125
+`<map_location_type>` entries, so markers are not stripped mod-wide.
+
+What is true is that the starting level is the thin one: `tasks_escape.xml` holds 26 tasks and only 8
+`map_location_type` entries between them, and the mod's own side quests are mostly written without a marker -
+the same decision recorded for the soul quest in the eighth pass. That is content, not a defect, and it is left
+alone. Nothing was found that would remove every spot for every player, and it could not be reproduced here.
+
+One real defect did come out of the search, in exactly that path:
+
+| Defect | Consequence | Repair |
+| --- | --- | --- |
+| `escape_tasks.script:149-155` — the two Cordon spots the mod added to `process_info_portion` read `alife():story_object(093)` and use `obj.id` immediately. Every other spot call in that file and in `level_tasks.script` guards the lookup first, and story 93 is `Escape_stoim_dejyrim_mu_zone`, a restrictor the mod can release | `process_info_portion` runs inside the actor's info callback, where a raise is fatal, so a released restrictor turns granting `esc_post_pianka_tolik` or `ia_dejyrq_za_volka` into a crash | Both portions are checked for the object first and skipped when it is gone, which is what the guard every neighbouring call has would have decided. The rest of the chain is untouched and still sees every other portion |

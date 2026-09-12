@@ -2026,6 +2026,23 @@ function install()
         report_line("hint " .. depo_hint.flag)
     end
 
+    -- The two Cordon map spots the mod added to escape_tasks.process_info_portion read story object 93 and use
+    -- its id straight away, without the guard every other spot call in that file and in level_tasks.script has.
+    -- The object is a restrictor the mod can release, and process_info_portion runs inside the actor's info
+    -- callback, where a raise is fatal. A story object that is gone is nothing to put a spot on, which is what
+    -- the guard would have decided; the rest of the chain is untouched and still sees every other portion.
+    local original_escape_info = escape_tasks.process_info_portion
+    escape_tasks.process_info_portion = function(info_id, ...)
+        if info_id == "esc_post_pianka_tolik" or info_id == "ia_dejyrq_za_volka" then
+            local simulator = alife()
+            if not simulator or not simulator:story_object(93) then
+                report_line("spot " .. info_id)
+                return
+            end
+        end
+        return original_escape_info(info_id, ...)
+    end
+
     local binder = bind_stalker.actor_binder
     local original_load = binder.load
     binder.load = function(self, ...)

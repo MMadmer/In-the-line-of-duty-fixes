@@ -14,7 +14,7 @@ local function fixture()
     local calls = {tutorials = {}, events = {}, spots = {}, food = {}, spawned = {}, removed = {}, detector = {},
         released = {}, init_btn = {}, on_info = {}, menu_toggles = {}, given = {}, taken = {}, news = {},
         amk_spawns = {}, treasure = {}, looks = {}, infos = {}, sounds = {}, statics = {}, tips = {},
-        created = {}, task_states = {}, news = {}, played = {}, object_queries = 0}
+        created = {}, task_states = {}, news = {}, played = {}, escape_info = {}, object_queries = 0}
     local objects = {}
     local clock = 100
     local env = setmetatable({}, {__index = _G})
@@ -166,6 +166,15 @@ local function fixture()
         bloodsuckers_dead = function() return false end,
         lukash_job_fail = function() return false end
     }
+    -- The mod's own Cordon spot branch: it reads the story object and uses its id with no guard at all.
+    env.escape_tasks = {process_info_portion = function(info_id)
+        calls.escape_info[#calls.escape_info + 1] = info_id
+        if info_id == "esc_post_pianka_tolik" or info_id == "ia_dejyrq_za_volka" then
+            local server = env.alife():story_object(93)
+            return server.id
+        end
+        return nil
+    end}
     env.gulag_military = {checkStalker = function(community, kind)
         -- What the mod ships: the job lists still name freedom, the table was re-skinned to monolith.
         return community == "monolith"
@@ -2353,6 +2362,25 @@ do
     again.bind_stalker.actor_binder.update(binder2, 1)
     equal(#calls2.news, 0, "a karlik already dead needs no hint")
     equal(calls2.pstor.ild_depo_karlik_hint, nil, "and nothing is written for him")
+end
+
+-- The two Cordon spots the mod added read story object 93 with no guard, inside the actor's info callback.
+do
+    local env, calls, objects, module = fixture()
+    module.install()
+    calls.story = calls.story or {}
+    equal(env.escape_tasks.process_info_portion("esc_tutorial_secret_place"), nil,
+        "every other portion still reaches the mod's own chain")
+    equal(calls.escape_info[1], "esc_tutorial_secret_place", "unchanged")
+    objects[93] = {id = 93}
+    calls.story[93] = objects[93]
+    equal(env.escape_tasks.process_info_portion("esc_post_pianka_tolik"), 93,
+        "the spot is placed while the object it names is there")
+    calls.story[93] = nil
+    equal(env.escape_tasks.process_info_portion("esc_post_pianka_tolik"), nil,
+        "and a released object is no longer read for an id it cannot have")
+    equal(env.escape_tasks.process_info_portion("ia_dejyrq_za_volka"), nil, "the removal is guarded the same way")
+    equal(#calls.escape_info, 2, "neither branch reached the mod's unguarded code")
 end
 
 print("script_repairs_tests: " .. tests .. " checks passed")
