@@ -2106,12 +2106,18 @@ function install()
         end
         return nil
     end
-    local function detector_step(job, index, entry, id)
+    -- Both targets are spawned by info portions of their own levels, so in an ordinary playthrough they are
+    -- long since there when Bronevik asks. A save where one of them is not gets the step anyway, without a
+    -- spot: an entry that never appears would be worse than an entry that does not point anywhere.
+    local function detector_step(job, index, entry, now)
         local step = SGameTaskObjective(job, index)
         step:set_description("ild_detector_task_" .. index)
-        step:set_map_hint(entry.hint)
-        step:set_map_location("green_location")
-        step:set_object_id(id)
+        local id = detector_object(entry, now)
+        if id then
+            step:set_map_hint(entry.hint)
+            step:set_map_location("green_location")
+            step:set_object_id(id)
+        end
         job:add_objective(step)
     end
     -- 0 not given, 1 looking for the chip, 2 carrying it back, 3 finished.
@@ -2121,13 +2127,10 @@ function install()
         if not known then return end
         stage = stage or 0
         if stage == 0 then
-            local cache = detector_object(detector_guide.cache, now)
-            local owner = detector_object(detector_guide.owner, now)
-            if not cache or not owner then return end
             local job = CGameTask()
             job:load("ild_detector_task")
-            detector_step(job, 1, detector_guide.cache, cache)
-            detector_step(job, 2, detector_guide.owner, owner)
+            detector_step(job, 1, detector_guide.cache, now)
+            detector_step(job, 2, detector_guide.owner, now)
             db.actor:give_task(job, 0, false)
             xr_logic.pstor_store(db.actor, "ild_detector_task", 1)
             report_line("task ild_detector_task")

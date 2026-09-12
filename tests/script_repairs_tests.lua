@@ -2472,12 +2472,24 @@ do
     equal(#job.objectives, 2, "with the two steps the job actually has")
     equal(job.objectives[1].description, "ild_detector_task_1", "find the chip")
     equal(job.objectives[1].object, 900, "pointing at the children's cache")
+    equal(job.objectives[1].hint, "ild_detector_cache_hint", "with its own hint")
     equal(job.objectives[1].location, "green_location", "as a map spot of its own")
     equal(job.objectives[2].description, "ild_detector_task_2", "then take it back")
     equal(job.objectives[2].object, 901, "pointing at Bronevik")
     equal(calls.pstor.ild_detector_task, 1, "and the stage is remembered")
     pass(4)
     equal(#calls.tasks, 1, "the entry is given once")
+
+    -- A save where neither target is spawned yet still gets the entry, just without spots on its steps.
+    local bare, bare_calls, _, bare_module, bare_actor = fixture()
+    bare_module.install()
+    bare.db.actor = bare_actor()
+    bare_calls.infos.bar_bronevik_pochini_detektor = true
+    bare.clock_ms = bare.clock_ms + 4000
+    bare.bind_stalker.actor_binder.update({object = bare.db.actor, first_update = false}, 1)
+    equal(#bare_calls.tasks, 1, "the entry appears whether or not the targets are there")
+    equal(#bare_calls.tasks[1].objectives, 2, "with both steps")
+    equal(bare_calls.tasks[1].objectives[1].object, nil, "and no spot it cannot point at")
 
     local function closed(objective)
         for _, state in ipairs(calls.task_states) do
