@@ -43,7 +43,33 @@ constexpr std::array sources{
     ConfigRepairSource{L"gamedata/config/gameplay/tasks_bar.xml", 21473,
         "6AE66AE92EB2520CE038E90CB9ED983D4CE8D9D0A56C78A16B490EE8001E9140", ConfigRepair::detector_task},
     ConfigRepairSource{L"gamedata/config/text/rus/stable_dialogs_bar.xml", 150407,
-        "225271086B8F02FB8EC5E7D09C114087DAA7EFBC3BECCF22E02F8A920A5B9577", ConfigRepair::detector_text}
+        "225271086B8F02FB8EC5E7D09C114087DAA7EFBC3BECCF22E02F8A920A5B9577", ConfigRepair::detector_text},
+    ConfigRepairSource{L"gamedata/config/gameplay/character_desc_garbage.xml", 65593,
+        "9EB30777A590201A45A1B62443BD0635A438C8169E9A859B0B5F5CE904BA0E3D", ConfigRepair::seryi_portrait},
+    ConfigRepairSource{L"gamedata/config/gameplay/info_portions.xml", 6471,
+        "35F34B7432DB14F5BC09FD15C0F06655CF774636CFC5BBF333E7ACB37AA3DE60", ConfigRepair::doctor_task},
+    ConfigRepairSource{L"gamedata/config/gameplay/character_desc_escape.xml", 211684,
+        "F0E4CB80D6CCD7CB29D8D29DDE3F023CC88F1B0E6E5DA2E651B90F587C224B45", ConfigRepair::guide_shotgun},
+    ConfigRepairSource{L"gamedata/config/gameplay/dialogs_yantar.xml", 31271,
+        "E1AA3BD1C18D12E2A878497EF60F2EFA42333DE0464B43E5A4495EF47FF092EA", ConfigRepair::monolith_task},
+    ConfigRepairSource{L"gamedata/spawns/all.spawn", 4731415,
+        "8BC5F2C733BA8006457753BF791164453BDFB9006423EB3720E8F7FA4A31A23D", ConfigRepair::dead_city_exit},
+    ConfigRepairSource{L"gamedata/config/gameplay/dialogs_garbage.xml", 71704,
+        "204307CD9EDCE43F14EAF142026B820462247E2F6854619D5BB60F3A151FEA06", ConfigRepair::abram_pistol},
+    ConfigRepairSource{L"gamedata/config/gameplay/tasks_darkvalley.xml", 12001,
+        "3FE21D4E4BD4848157560C32A10BBDD87F22F841CB3DB77B9FDC4EAB9D1A75AB", ConfigRepair::samogon_task},
+    ConfigRepairSource{L"gamedata/config/scripts/agr/agro_kotelnui_ybiica.ltx", 1608,
+        "7D0DCC9BFE518A4DC45D02DBFAFDF67A4F2B36FAB47AD70EB46E0CCDE9E4F83D", ConfigRepair::killer_surrender},
+    ConfigRepairSource{L"gamedata/config/text/rus/stable_dialogs_darkvalley.xml", 98716,
+        "82AD412A73B50A1FDED9B5DB32619294D39EB829F44CCB4E3A6D20EE97960358", ConfigRepair::propysk_text},
+    ConfigRepairSource{L"gamedata/config/text/rus/stable_storyline_info_escape.xml", 11546,
+        "C7AF6D401B3AF40AE0EAF1605FD77410F7F85C0A6B4F3DF22426DC39B94FB140", ConfigRepair::skill_banner},
+    ConfigRepairSource{L"gamedata/config/misc/quest_items.ltx", 149319,
+        "9BFF52163E2AF65B4A3B1F99E75D1B7EB3CEF4747A17DF313767F16B11AF5740", ConfigRepair::yantar_sensor},
+    ConfigRepairSource{L"gamedata/config/weapons/w_mp40.ltx", 8131,
+        "5C5728E2B18581137A00F25B2022296E4DCC935D43F682998EBA29A5796A4BEA", ConfigRepair::german_smg_names},
+    ConfigRepairSource{L"gamedata/config/weapons/w_b94.ltx", 4865,
+        "B85845AB46F2F98958DCEF9A17EFDB5A6D5310316E435875C510774C40969196", ConfigRepair::b94_binding}
 };
 
 // Replace a unique expression with an equal-length one, padding the remainder with spaces.
@@ -319,6 +345,185 @@ bool is_config_repair_size(std::size_t size)
     return false;
 }
 
+// Overwrite one fixed-width field of a binary record, and only while the bytes there are still the ones this
+// repair was written against. The width never changes, so the file's size cannot move.
+bool poke(std::string& text, std::size_t at, std::string_view expected, std::string_view value)
+{
+    if (expected.size() != value.size() || at > text.size() - expected.size()) return false;
+    if (text.compare(at, expected.size(), expected) != 0) return false;
+    text.replace(at, value.size(), value);
+    return true;
+}
+
+// Dead City's way out. The level's own spawn ends with a level changer the designer named level_changer_to_radar
+// and left unfinished, and the compiler never carried it into all.spawn: of the 41 level changers the file
+// holds, not one sits on a Dead City graph vertex, so a player who walks in can never leave. The mod parks the
+// doors it disables far off the map, and its Military to Radar one is parked at y = +130666; that dead record is
+// what this repair moves onto the spot the designer marked. It already names the destination his stub wanted, so
+// only its own placement changes, and every field is fixed width.
+constexpr char parked_radar_exit_bytes[] =
+    "\x01\x00" "level_changer" "\x00" "exit_to_radar_01" "\x00\x00\xFE"
+    "\x97\x1F\xCD\x42" "\x68\x35\xFF\x47" "\x48\x11\xCA\x43";
+constexpr std::string_view parked_radar_exit{parked_radar_exit_bytes, sizeof(parked_radar_exit_bytes) - 1};
+static_assert(parked_radar_exit.size() == 47);
+
+struct SpawnField { std::size_t offset; std::string_view expected, value; };
+constexpr std::array dead_city_exit_fields{
+    // Position: (102.56, 130666.81, 404.14) becomes the designer's own (144.32478, 1.1692853, -137.48528).
+    SpawnField{35, std::string_view{"\x97\x1F\xCD\x42" "\x68\x35\xFF\x47" "\x48\x11\xCA\x43", 12},
+                   std::string_view{"\x27\x53\x10\x43" "\x24\xAB\x95\x3F" "\x3B\x7C\x09\xC3", 12}},
+    // Angles: the designer's yaw for that doorway, byte for byte out of the level's own spawn.
+    SpawnField{47, std::string_view{"\x7F\x91\x38\x3D" "\x25\xB9\x43\x3F" "\xDD\x19\x51\xBD", 12},
+                   std::string_view{"\x00\x00\x00\x00" "\xE2\x0B\x53\xBF" "\x00\x00\x00\x80", 12}},
+    // Game vertex: 1808 (Military Warehouses) becomes 2864 (Dead City), the vertex the entrance already names.
+    SpawnField{79, std::string_view{"\x10\x07", 2}, std::string_view{"\x30\x0B", 2}},
+    // Level vertex: 396782 (Military) becomes 475959, the level vertex the graph stores for vertex 2864.
+    SpawnField{89, std::string_view{"\xEE\x0D\x06\x00", 4}, std::string_view{"\x37\x43\x07\x00", 4}},
+    // Trigger box: the parked record carries a 4.59 x 50 x 164 slab. The door keeps the designer's 3 x 6
+    // footprint and takes its height from the mod's own Dead City entrance, whose 4.839 is known to trigger.
+    SpawnField{159,
+        std::string_view{"\x48\xE1\x92\x40" "\x00\x00\x00\x00" "\x00\x00\x00\x00" "\x00\x00\x00\x00"
+                         "\x00\x00\x48\x42" "\x00\x00\x00\x00" "\x00\x00\x00\x00" "\x00\x00\x00\x00"
+                         "\x79\x14\x24\x43" "\x00\x00\x00\x00" "\x00\x00\x00\x00" "\x00\x00\x00\x00", 48},
+        std::string_view{"\x00\x00\x40\x40" "\x00\x00\x00\x00" "\x00\x00\x00\x00" "\x00\x00\x00\x00"
+                         "\xCF\xD5\x9A\x40" "\x00\x00\x00\x00" "\x00\x00\x00\x00" "\x00\x00\x00\x00"
+                         "\x00\x00\xC0\x40" "\x00\x00\x00\x00" "\x00\x00\x00\x00" "\x00\x00\x00\x00", 48}}
+};
+
+// A reply list that lost one of its entries. The branch it should name is written, gated and wired to logic;
+// nothing else can reach it, so the phrases behind it are dead text. The missing next goes in beside the
+// sibling it belongs with and is paid for out of the dialog's own indentation, the way the detector task entry
+// is, so the file keeps its exact length.
+bool add_missing_reply(std::string& text, std::string_view dialog, std::string_view phrase,
+    std::string_view sibling, std::string_view added)
+{
+    const auto owner = block(text, "dialog", dialog);
+    // A source without the dialog has no reply list to repair, the way an absent dialog has no action to
+    // remove. Every file this runs on is pinned by size and digest, so absence means a fixture, not a release.
+    if (!owner) return true;
+    auto contents = text.substr(owner->begin, owner->end - owner->begin);
+    const auto size = contents.size();
+    const auto hub = block(contents, "phrase", phrase);
+    if (!hub || contents.find(added) != contents.npos) return false;
+    const auto at = contents.find(sibling, hub->begin);
+    if (at == contents.npos || at >= hub->end ||
+        contents.find(sibling, at + sibling.size()) < hub->end) return false;
+    contents.insert(at + sibling.size(), added);
+    if (!borrow_indentation(contents, contents.size() - size) || contents.size() != size) return false;
+    text.replace(owner->begin, size, contents);
+    return true;
+}
+
+// The moonshine job's header objective - the one the whole task completes on - was left with an empty
+// infoportion_complete, so it could never match a known portion and the job stayed in the PDA for the rest of
+// the game. Its own last step already names the portion that line grants; the header takes the same one, which
+// is how every neighbouring task in this file is built.
+bool close_samogon_task(std::string& text)
+{
+    constexpr std::string_view empty = "<infoportion_complete></infoportion_complete>";
+    constexpr std::string_view portion = "val_kom_mazai_6";
+    const auto owner = block(text, "game_task", "val_kvest_mazai_samogon");
+    if (!owner) return false;
+    auto contents = text.substr(owner->begin, owner->end - owner->begin);
+    const auto size = contents.size();
+    const auto at = contents.find(empty);
+    if (at == contents.npos || contents.find(empty, at + empty.size()) != contents.npos) return false;
+    contents.insert(at + empty.find('>') + 1, portion);
+    if (!borrow_indentation(contents, contents.size() - size) || contents.size() != size) return false;
+    text.replace(owner->begin, size, contents);
+    return true;
+}
+
+// The Dark Valley toll gate. Its eight lines are filed under ids that carry an extra "chr_", while the dialog
+// names them without it, so nothing resolves and the player reads the identifiers off the screen. The string
+// ids are the side that moves: dropping four bytes is paid for with spaces on the same line, where renaming the
+// dialog's own text would have added four bytes eight times.
+bool rename_propysk_strings(std::string& text)
+{
+    for (char index = '0'; index <= '7'; ++index)
+    {
+        const std::string declared = std::string("<string id=\"val_chr_band_oxra_dai_propysk_") + index + "\">";
+        const std::string named = std::string("<string id=\"val_band_oxra_dai_propysk_") + index + "\">";
+        if (!blank_to(text, declared, named)) return false;
+    }
+    return true;
+}
+
+// The Bar string table declares bar_iahik_nac_2_1_0 twice, and the second block holds what the dialog calls
+// bar_iahik_nac_2_1_1. The table keeps the last entry of a duplicate id, so the player's own topic line printed
+// the courier's reply and the reply itself printed its id raw. Only the second declaration is renamed.
+bool split_crate_reply(std::string& text)
+{
+    constexpr std::string_view declaration = "<string id=\"bar_iahik_nac_2_1_0\">";
+    if (text.find("bar_iahik_nac_2_1_1") != text.npos) return false;
+    const auto first = text.find(declaration);
+    // A source that never declared it, or declared it once, has no duplicate to split - the same contract the
+    // absent-action repair keeps. A third declaration is not the file this was written for.
+    if (first == text.npos) return true;
+    const auto second = text.find(declaration, first + declaration.size());
+    if (second == text.npos) return true;
+    if (text.find(declaration, second + declaration.size()) != text.npos) return false;
+    text[second + declaration.size() - 3] = '1';
+    return true;
+}
+
+// The guide who leaves with Yegor is spawned from a profile whose supplies name wpn_spas. No such section
+// exists - the shotgun the mod ships is wpn_spas12 - and a trader's supplies are built inside the spawn call,
+// before any script can see the object, so the missing section is an outright fatal. The name gains two
+// characters; they are paid for out of the leading blanks of the line below, which the parser trims anyway.
+constexpr std::string_view guide_shotgun_at = "\t\t\twpn_spas \\n\r\n       \t\t\tammo_9x39_pab9";
+constexpr std::string_view guide_shotgun_fix = "\t\t\twpn_spas12 \\n\r\n     \t\t\tammo_9x39_pab9";
+static_assert(guide_shotgun_at.size() == guide_shotgun_fix.size());
+
+// The mechanic skill banners. The Cordon storyline file declares the level-1 id three times and the third block
+// carries the level-2 caption, so the last-one-wins string table gave the level-1 banner the level-2 text, and
+// the level-2 id was declared nowhere and reached the player raw. Only the block holding the level-2 caption is
+// renamed: the caption is what identifies it.
+constexpr std::string_view mechanic_level_two =
+    "<string id=\"stalkerok_navuk_mex_lvl1\">\r\n\t\t<text>\""
+    "\xD1\xD3\xCF\xC5\xD0-\xCC\xC5\xD5\xC0\xCD\xC8\xCA\"";
+constexpr std::string_view mechanic_level_two_fixed =
+    "<string id=\"stalkerok_navuk_mex_lvl2\">\r\n\t\t<text>\""
+    "\xD1\xD3\xCF\xC5\xD0-\xCC\xC5\xD5\xC0\xCD\xC8\xCA\"";
+static_assert(mechanic_level_two.size() == mechanic_level_two_fixed.size());
+
+// The Yantar sensor stalkers carry on four levels lost both halves of its inventory entry: the grid keys hold a
+// pixel position instead of a cell index, which the engine multiplies by fifty again, and the name was cut down
+// to one letter no string table can translate. Vanilla's own cell comes back together with the string id the
+// neighbouring short name already uses; the padding around the equals signs pays for it.
+constexpr std::string_view yantar_sensor_at =
+    "inv_name\t\t\t= i\r\n"
+    "inv_name_short\t\t= item_detector_yantar_name\r\n"
+    "inv_weight\t\t\t= 0\r\n"
+    "\r\n"
+    "inv_grid_width\t\t= 1\r\n"
+    "inv_grid_height\t\t= 1\r\n"
+    "inv_grid_x\t\t\t= 4000\r\n"
+    "inv_grid_y\t\t\t= 1950\r\n"
+    "cost\t\t\t\t= 30";
+constexpr std::string_view yantar_sensor_fix =
+    "inv_name= item_detector_yantar_name\r\n"
+    "inv_name_short= item_detector_yantar_name\r\n"
+    "inv_weight= 0\r\n"
+    "\r\n"
+    "inv_grid_width= 1\r\n"
+    "inv_grid_height= 1\r\n"
+    "inv_grid_x= 5\r\n"
+    "inv_grid_y= 14\r\n"
+    "cost= 30";
+static_assert(yantar_sensor_fix.size() <= yantar_sensor_at.size());
+
+// The two German submachine guns hold each other's name, and neither value is a string table id. The mod names
+// its other war-era weapons with plain CP1251 text in this very field, and the file carries no byte order mark,
+// so the names are written the same way. The MP-41 inherits from the MP-40 and never declared a short name of
+// its own, so the line it needs is paid for out of the blanks around the following visual's equals sign.
+constexpr std::string_view mp40_name_at = "inv_name\t\t\t\t= mp41\r\ninv_name_short\t\t\t= mp41";
+constexpr std::string_view mp40_name_fix = "inv_name\t\t\t= \xCC\xCF-40\r\ninv_name_short\t\t= \xCC\xCF-40";
+constexpr std::string_view mp41_name_at = "inv_name\t\t\t\t= mp40\r\n\r\nvisual                  = ";
+constexpr std::string_view mp41_name_fix = "inv_name=\xCC\xCF-41\r\ninv_name_short=\xCC\xCF-41\r\n\r\nvisual= ";
+static_assert(mp40_name_at.size() == mp40_name_fix.size());
+static_assert(mp41_name_at.size() == mp41_name_fix.size());
+
 bool repair_config_text(std::string& text, ConfigRepair repair)
 {
     auto patched = text;
@@ -390,7 +595,93 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
     }
     else if (repair == ConfigRepair::detector_text)
     {
-        if (!add_detector_lines(patched)) return false;
+        if (!split_crate_reply(patched) || !add_detector_lines(patched)) return false;
+    }
+    else if (repair == ConfigRepair::seryi_portrait)
+    {
+        // Seryi's portrait id is in none of the descriptor files the system config names, so the texture master
+        // hands the id itself to the renderer as a path and searching his body aborts on a texture it cannot
+        // find. The neighbouring green-stalker face is one the atlas really holds; one digit, so the length
+        // stays exactly what it was.
+        if (!replace_one(patched, "<icon>ui_npc_u_green_stalker_9</icon>",
+            "<icon>ui_npc_u_green_stalker_8</icon>")) return false;
+    }
+    else if (repair == ConfigRepair::doctor_task)
+    {
+        // The Cordon guide's portion still asks for the doctor_meet task, which the mod's rewritten Cordon task
+        // file dropped. The engine looks the id up, gets nothing back and reads a title off the null node it
+        // stored anyway - a fatal on the last line of a linear conversation. The element is blanked rather than
+        // pointed elsewhere: the beat already has a PDA entry of the mod's own.
+        if (!blank_to(patched, "<task>doctor_meet</task>", "")) return false;
+    }
+    else if (repair == ConfigRepair::guide_shotgun)
+    {
+        if (!replace_one(patched, guide_shotgun_at, guide_shotgun_fix)) return false;
+    }
+    else if (repair == ConfigRepair::monolith_task)
+    {
+        // The professor's optional suit errand closes on its own portion and then grants a second one that
+        // belongs to another quest entirely, dropping a permanently dead task into the PDA. Only that one grant
+        // goes; the handover and the spawn that follows it are untouched.
+        constexpr std::string_view closing = "<give_info>monolit_done</give_info>";
+        constexpr std::string_view stray = "<give_info>yan_find_scientist_semenov_start</give_info>";
+        const auto at = patched.find(closing);
+        if (at == patched.npos || patched.find(closing, at + closing.size()) != patched.npos) return false;
+        const auto grant = patched.find(stray, at);
+        if (grant == patched.npos || grant - at > 80) return false;
+        std::fill_n(patched.begin() + grant, stray.size(), ' ');
+    }
+    else if (repair == ConfigRepair::dead_city_exit)
+    {
+        const auto at = patched.find(parked_radar_exit);
+        if (at == patched.npos ||
+            patched.find(parked_radar_exit, at + parked_radar_exit.size()) != patched.npos) return false;
+        for (const auto& field : dead_city_exit_fields)
+            if (!poke(patched, at + field.offset, field.expected, field.value)) return false;
+    }
+    else if (repair == ConfigRepair::abram_pistol)
+    {
+        // Abram begs for a pistol and the mod writes both answers, numbering them in their own text, but the
+        // phrase that asks names only the first. The second is the one the Garbage logic waits for.
+        if (!add_missing_reply(patched, "gar_stalk_baraxol3_k_baraxolke", "6",
+            "<next>7</next>", "<next>8</next>")) return false;
+    }
+    else if (repair == ConfigRepair::samogon_task)
+    {
+        if (!close_samogon_task(patched)) return false;
+    }
+    else if (repair == ConfigRepair::killer_surrender)
+    {
+        // The remark section carries on_info twice and the ini loader overwrites a repeated key instead of
+        // keeping both, so the surrender line is the one that disappears. The second key takes the numbered name
+        // the switch reader already looks for, and the extra byte comes out of the blank before its own equals.
+        if (!replace_one(patched, "on_info = {+agro_ybiica_start} camper2",
+            "on_info2 ={+agro_ybiica_start} camper2")) return false;
+    }
+    else if (repair == ConfigRepair::propysk_text)
+    {
+        if (!rename_propysk_strings(patched)) return false;
+    }
+    else if (repair == ConfigRepair::skill_banner)
+    {
+        if (patched.find("stalkerok_navuk_mex_lvl2") != patched.npos ||
+            !replace_one(patched, mechanic_level_two, mechanic_level_two_fixed)) return false;
+    }
+    else if (repair == ConfigRepair::yantar_sensor)
+    {
+        if (!blank_to(patched, yantar_sensor_at, yantar_sensor_fix)) return false;
+    }
+    else if (repair == ConfigRepair::german_smg_names)
+    {
+        if (!replace_one(patched, mp40_name_at, mp40_name_fix) ||
+            !replace_one(patched, mp41_name_at, mp41_name_fix)) return false;
+    }
+    else if (repair == ConfigRepair::b94_binding)
+    {
+        // The rifle asks to be bound to a script module that exists nowhere, so the lookup fails silently on
+        // every spawn. The line is commented out at its exact length.
+        if (!replace_one(patched, "script_binding  = bind_wpn.init", ";cript_binding  = bind_wpn.init"))
+            return false;
     }
     else if (repair == ConfigRepair::trader_refusal)
     {
@@ -473,8 +764,17 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
         {
             // Retain every implemented reward and state transition; remove only absent legacy action references.
             const auto ransom_present = block(patched, "dialog", "esc_dengi_rebe").has_value();
+            // Sidorovich's topic list offers 11, 31, 41 and 51 and skips 21, so the one topic that asks him
+            // for work - and the eight phrases of the chemical-anomaly errand behind it - had no producer. The
+            // acid puddle that errand is about is spawned at game start and sits in a state only this branch's
+            // portion can leave, so the content is live and only the link was missing. The branch's own last
+            // phrase then calls a function the shipped scripts do not contain, which goes the way the other two
+            // absent actions above it did.
             if (!remove_absent_action(patched, "esc_sidor_artu_dolgy_ne_dal", "new_life.sidor_nagrada_1_6", 2) ||
                 !remove_absent_action(patched, "esc_post_pianka", "new_life.give_albom", 1) ||
+                !add_missing_reply(patched, "esc_sidor_ia_sprositi", "1", "<next>11</next>", "<next>21</next>") ||
+                !remove_absent_action(patched, "esc_sidor_ia_sprositi",
+                    "new_life.sidor_dop_kvest_mne_banky", 1) ||
                 !add_ransom_check(patched) || !add_tikhon_share(patched, ransom_present)) return false;
         }
     }

@@ -11,7 +11,7 @@ local function equal(actual, expected, message)
 end
 
 local function fixture(with_qa)
-    local calls = {subscribed = {}, added = {}, qa = 0, repairs = 0}
+    local calls = {subscribed = {}, added = {}, qa = 0, repairs = 0, mod_repairs = 0, quest_repairs = 0}
     local env = setmetatable({}, {__index = _G})
     env._G = env
     -- luabind's class "name" registers a callable table in the script's environment.
@@ -23,6 +23,8 @@ local function fixture(with_qa)
         end})
     end
     env.ild_script_repairs = {install = function() calls.repairs = calls.repairs + 1 end}
+    env.ild_mod_repairs = {install = function() calls.mod_repairs = calls.mod_repairs + 1 end}
+    env.ild_quest_repairs = {install = function() calls.quest_repairs = calls.quest_repairs + 1 end}
     if with_qa then env.ild_qa = {install = function() calls.qa = calls.qa + 1 end} end
     env.ph_door = {add_to_binder = function(object)
         calls.added[#calls.added + 1] = object
@@ -59,6 +61,8 @@ do
     module.install()
     module.install()
     equal(calls.repairs, 1, "script repairs install once")
+    equal(calls.mod_repairs, 1, "the forum-report repairs install once")
+    equal(calls.quest_repairs, 1, "the quest repairs install once")
     equal(calls.qa, 0, "no QA probe runs when ild_qa is absent")
     local table_object = make_object("esc_tixona_xyinia4", "scripts\\door_logic.ltx")
     local storage = {}

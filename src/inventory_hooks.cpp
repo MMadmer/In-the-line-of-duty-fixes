@@ -109,7 +109,10 @@ const char* keep_description(std::string_view original, std::string repaired)
 const char* __fastcall read_string(void* ini, void*, const char* section, const char* key)
 {
     const auto value = original_read_string(ini, section, key);
-    if (!value || !section || !key || std::strcmp(key, "description") != 0) return value;
+    if (!value || !section || !key) return value;
+    // A line the mod never gave text to at all; the replacement is a literal and needs no stable storage.
+    if (const auto supplied = supplied_item_text(section, key)) return supplied;
+    if (std::strcmp(key, "description") != 0) return value;
     if (auto repaired = repaired_description(section, value)) return keep_description(value, std::move(*repaired));
     constexpr std::array knives{"wpn_knife_6x2", "wpn_knife_6x4", "wpn_knife_nkvd", "wpn_knife_tip30", "wpn_knify"};
     bool knife{};

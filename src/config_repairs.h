@@ -9,7 +9,9 @@ namespace ild
 {
 enum class ConfigRepair { mechanic_dialog, prince_dialog, skill_text, info_root, camp_condition,
     burer_dialog, psi_sound, car_text, skat_upgrade, mutant_sounds, vodka_task, counter_wide,
-    counter_normal, trader_refusal, bronevik_profile, detector_task, detector_text };
+    counter_normal, trader_refusal, bronevik_profile, detector_task, detector_text, seryi_portrait,
+    doctor_task, guide_shotgun, monolith_task, dead_city_exit, abram_pistol, samogon_task,
+    killer_surrender, propysk_text, skill_banner, yantar_sensor, german_smg_names, b94_binding };
 struct ConfigRepairSource
 {
     std::wstring_view relative;

@@ -42,7 +42,9 @@ local recipes = {
         lr300_zapchasti4 = 1, lr300_zapchasti5 = 1
     }},
     {module = "stanok", class = "sborka", index = 2, parts = {
-        vntrz_zapchasti1 = 1, vntrz_zapchasti2 = 1, vntrz_zapchasti3 = 1, wpn_addon_scope = 1
+        -- The two parts the mod's own bench asks for by a name no item carries; the recipe now spells them
+        -- the way unique_items.ltx does, so the Vintorez button can actually be earned.
+        vntrz_zapchast1 = 1, vntrz_zapchast2 = 1, vntrz_zapchasti3 = 1, wpn_addon_scope = 1
     }},
     {module = "stanok", class = "sborka", index = 3, parts = {
         svd_zapchasti1 = 1, svd_zapchasti2 = 1, svd_zapchasti3 = 1, svd_zapchasti4 = 1, wpn_addon_scope = 1

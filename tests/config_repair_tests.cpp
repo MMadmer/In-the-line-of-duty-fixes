@@ -18,10 +18,33 @@ int main(int argc, char** argv)
         mechanic.find("<action>second</action>") == mechanic.npos) return 1;
     auto unchanged = mechanic;
     if (ild::repair_config_text(mechanic, ConfigRepair::mechanic_dialog) || mechanic != unchanged) return 2;
+    // The Cordon dialog file carries four repairs at once, so this fixture holds only what the first two
+    // need; the reply list Sidorovich lost is checked on its own below, where the indentation it is paid
+    // out of can be part of the fixture.
     std::string prince = "<dialog id=\"esc_princ_persii_start\"><phrase id=\"1\">A</phrase>"
         "<phrase id=\"2\">B</phrase><phrase id=\"1\">A</phrase><phrase id=\"2\">B</phrase></dialog>";
     if (!ild::repair_config_text(prince, ConfigRepair::prince_dialog) ||
         prince.find("id=\"1\"", prince.find("id=\"1\"") + 1) != prince.npos) return 3;
+    // A reply list that lost one of its entries: Abram asks for a pistol, the mod writes both answers and
+    // numbers them in their own text, and the phrase that asks names only the first. The reply goes back in
+    // beside its sibling, paid for out of the block's own indentation, so the file keeps its length.
+    std::string abram = "<dialog id=\"gar_stalk_baraxol3_k_baraxolke\">" "\r\n"
+        "        <phrase id=\"6\">\r\n"
+        "          <next>7</next>\r\n"
+        "        </phrase>\r\n"
+        "        <phrase id=\"8\"></phrase>\r\n"
+        "      </dialog>";
+    const auto abram_size = abram.size();
+    if (!ild::repair_config_text(abram, ConfigRepair::abram_pistol)) return 41;
+    if (abram.size() != abram_size) return 44;
+    if (abram.find("<next>7</next><next>8</next>") == abram.npos) return 45;
+    if (abram.find("<next>8</next>") != abram.rfind("<next>8</next>")) return 46;
+    // A source that already offers the reply is not the file the repair was written for.
+    if (ild::repair_config_text(abram, ConfigRepair::abram_pistol)) return 42;
+    // A source without the dialog at all is left alone rather than failed, the way an absent action is.
+    std::string other = "<dialog id=\"someone_else\"><phrase id=\"6\"></phrase></dialog>";
+    const auto other_copy = other;
+    if (!ild::repair_config_text(other, ConfigRepair::abram_pistol) || other != other_copy) return 43;
     std::string info = "<game_information_portions><info_portion id=\"x\"/>" + std::string(51, '\n');
     if (!ild::repair_config_text(info, ConfigRepair::info_root) || info.find("</game_information_portions>") == info.npos)
         return 4;
@@ -92,13 +115,22 @@ int main(int argc, char** argv)
             "\xE4\xE5\xF2\xE5\xEA\xF2\xEE\xF0\xE0</title>") == std::string::npos) return 39;
     if (ild::repair_config_text(tasks, ConfigRepair::detector_task)) return 40;
     // The two lines that dialog names live in the Bar's own string table, the file the engine really opens.
-    std::string lines = "<string_table>\r\n" + room;
+    // That same file declares the crate courier's reply under the previous phrase's id, so one line printed
+    // the wrong text and the next printed its identifier raw; the duplicate is split in the same pass.
+    std::string lines = "<string_table>\r\n"
+        "        <string id=\"bar_iahik_nac_2_1_0\"><text>A</text></string>\r\n"
+        "        <string id=\"bar_iahik_nac_2_1_0\"><text>B</text></string>\r\n"
+        + room;
     const auto lines_size = lines.size();
-    if (!ild::repair_config_text(lines, ConfigRepair::detector_text) || lines.size() != lines_size ||
-        lines.find("<string id=\"ild_bronevik_detektor_gotov_0\">") == std::string::npos ||
+    if (!ild::repair_config_text(lines, ConfigRepair::detector_text) || lines.size() != lines_size) return 47;
+    if (lines.find("<string id=\"ild_bronevik_detektor_gotov_0\">") == std::string::npos ||
         lines.find("<string id=\"ild_bronevik_detektor_gotov_1\">") == std::string::npos ||
-        lines.find("EVA-1400") == std::string::npos) return 41;
-    if (ild::repair_config_text(lines, ConfigRepair::detector_text)) return 42;
+        lines.find("EVA-1400") == std::string::npos) return 48;
+    // The courier's reply now carries the id the dialog points at, and only the second block moved.
+    if (lines.find("bar_iahik_nac_2_1_1") == std::string::npos ||
+        lines.find("bar_iahik_nac_2_1_0") == std::string::npos ||
+        lines.find("bar_iahik_nac_2_1_0") != lines.rfind("bar_iahik_nac_2_1_0")) return 49;
+    if (ild::repair_config_text(lines, ConfigRepair::detector_text)) return 50;
     // Without the detector dialog this is not the file the repair was written for.
     std::string skat_only = skat_phrases;
     unchanged = skat_only;

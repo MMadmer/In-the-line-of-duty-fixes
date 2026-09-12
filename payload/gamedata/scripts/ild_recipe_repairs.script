@@ -35,7 +35,10 @@ local weapon_recipes = {
         lr300_zapchasti1 = 1, lr300_zapchasti2 = 1, lr300_zapchasti3 = 1,
         lr300_zapchasti4 = 1, lr300_zapchasti5 = 1
     },
-    {vntrz_zapchasti1 = 1, vntrz_zapchasti2 = 1, vntrz_zapchasti3 = 1, wpn_addon_scope = 1},
+    -- stanok.script asks for vntrz_zapchasti1/2, and no such item exists: unique_items.ltx spells the two
+    -- parts vntrz_zapchast1 and vntrz_zapchast2, without the i. The recipe is the author's, in his own
+    -- section names, so the button can be earned.
+    {vntrz_zapchast1 = 1, vntrz_zapchast2 = 1, vntrz_zapchasti3 = 1, wpn_addon_scope = 1},
     {svd_zapchasti1 = 1, svd_zapchasti2 = 1, svd_zapchasti3 = 1, svd_zapchasti4 = 1, wpn_addon_scope = 1},
     {vsk_zapchasti1 = 1, vsk_zapchasti2 = 1, vsk_zapchasti3 = 1, vsk_zapchasti4 = 1}
 }
@@ -99,9 +102,183 @@ local function wrap_window(window_class, recipes)
     for index, recipe in ipairs(recipes) do wrap_handler(window_class, index, recipe) end
 end
 
+-- APPEND VERBATIM to D:\Games\In-the-line-of-duty-fixes\payload\gamedata\scripts\ild_recipe_repairs.script
+-- (it is the pack script that already owns this window and runs at load time alongside ild_script_repairs.script;
+-- the block needs its file-locals weapon_recipes / inventory_counts / has_ingredients and its install()).
+
+-- ---------------------------------------------------------------------------------------------------------
+-- Weapon assembly: the benches that could never be finished.
+--
+-- sborka:InitControls asks for vntrz_zapchasti1 and vntrz_zapchasti2. config\misc\unique_items.ltx defines
+-- vntrz_zapchast1 (the stock) and vntrz_zapchast2 (the receiver): the trailing "i" is a typo in stanok.script,
+-- not a missing item. Those two spellings occur nowhere else in the mod, so the recipe is corrected here and
+-- amk.remove_items is taught both of them, which leaves the mod's own btn2 free to pay with the parts it
+-- always meant.
+--
+-- The second half of the defect is the parts themselves. Sixteen part sections are named by the four recipes
+-- and all sixteen are defined, but nine of them are placed nowhere: not in all.spawn, not in
+-- treasure_manager.ltx, not in any stash ini, not in a trader's supply. They are seeded once per save into the
+-- four boxes the mod already uses as weapon-part stashes, at most one part of a weapon per box, so every
+-- recipe stays a hunt across several stashes and no single box ever finishes a weapon by itself.
+-- ---------------------------------------------------------------------------------------------------------
+
+local original_install = install
+
+-- The two spellings that exist only inside stanok.script, and the sections the mod actually defines.
+local part_aliases = {
+    vntrz_zapchasti1 = "vntrz_zapchast1",
+    vntrz_zapchasti2 = "vntrz_zapchast2"
+}
+
+
+-- The mod's four weapon-part stashes, by the names all.spawn gives them; each name occurs exactly once there.
+local orphan_parts = {
+    -- Garbage, the bidon in the Duty blockpost camp: already svd_zapchasti2 and a scope.
+    grar_povst_lagerdkr19 = {"lr300_zapchasti1", "vsk_zapchasti1"},
+    -- Agroprom, the box that already holds lr300_zapchasti3.
+    agrop_nachinaem_mozgoeblq_dekorom113 = {"vntrz_zapchast1", "vsk_zapchasti2"},
+    -- Agroprom, the small safe up the tower: already wpn_aps and svd_zapchasti4.
+    agr_physic_destroyable_object_0020 = {"lr300_zapchasti2", "vntrz_zapchasti3", "vsk_zapchasti3"},
+    -- X18, the author's own "super stash": already vntrz_zapchast2 and a scope.
+    labx_tainik_syper = {"lr300_zapchasti4", "vsk_zapchasti4"}
+}
+
+local seed_flag = "ild_weapon_parts"
+local seed_version = 1
+-- actor_binder:load carries the pstor; a new game never calls it, so the grace period covers that case only.
+local seed_grace = 10000
+local seed_pending, save_loaded, seed_since = false, false, nil
+local bridge_present
+
+local function bridge_ready()
+    -- A command the console does not know is logged as an error on every call, so it is looked up once.
+    if bridge_present == nil then
+        local known, value = pcall(function() return get_console():get_string("ild_update") end)
+        bridge_present = known and value ~= nil
+    end
+    return bridge_present
+end
+
+local function report_line(text)
+    if not bridge_ready() then return end
+    pcall(function() get_console():execute("ild_update watchdog " .. text) end)
+end
+
+-- Hoisted so the sweep below does not build two closures for every server object in the simulation.
+local function object_name(server) return server:name() end
+local function object_section(server) return server:section_name() end
+
+local function seed_orphan_parts()
+    local actor, simulator = db.actor, alife()
+    if not actor or not simulator then return end
+    -- The actor's own pstor, the key/value table the unmodified mod saves and loads as it is.
+    local known, done = pcall(xr_logic.pstor_retrieve, actor, seed_flag, 0)
+    if not known then return end
+    if (tonumber(done) or 0) >= seed_version then
+        seed_pending = false
+        return
+    end
+    local wanted = {}
+    for _, list in pairs(orphan_parts) do
+        for _, section in ipairs(list) do wanted[section] = false end
+    end
+    -- One sweep collects the boxes and every wanted section that is already somewhere in the world, so a save
+    -- seeded by an earlier build, or a part a console handed out, can never be given a second copy.
+    local boxes = {}
+    for id = 1, 65534 do
+        local server = simulator:object(id)
+        if server then
+            local named, name = pcall(object_name, server)
+            local list = named and name and orphan_parts[name]
+            if list then boxes[#boxes + 1] = {object = server, list = list} end
+            local typed, section = pcall(object_section, server)
+            if typed and section and wanted[section] == false then wanted[section] = true end
+        end
+    end
+    seed_pending = false
+    xr_logic.pstor_store(actor, seed_flag, seed_version)
+    local placed = 0
+    local function put(box, section)
+        if wanted[section] then return end
+        local created = pcall(function()
+            return simulator:create(section, box.position, box.m_level_vertex_id,
+                box.m_game_vertex_id, box.id)
+        end)
+        if created then
+            wanted[section] = true
+            placed = placed + 1
+        end
+    end
+    for _, entry in ipairs(boxes) do
+        for _, section in ipairs(entry.list) do put(entry.object, section) end
+    end
+    -- A box a save no longer has must not take a part down with it: whatever is still owed goes to the first
+    -- of the four that is there, so the recipe stays completable even on a save that lost one of them.
+    if boxes[1] then
+        for _, list in pairs(orphan_parts) do
+            for _, section in ipairs(list) do put(boxes[1].object, section) end
+        end
+    end
+    report_line("parts " .. placed)
+end
+
+local function install_part_aliases()
+    if not amk or type(amk.remove_items) ~= "function" then return end
+    local original_remove = amk.remove_items
+    amk.remove_items = function(section, count, ...)
+        return original_remove(part_aliases[section] or section, count, ...)
+    end
+end
+
+local function install_vintorez_button()
+    local window = stanok and stanok.sborka
+    if not window then return end
+    local original_init = window.InitControls
+    window.InitControls = function(self, ...)
+        local result = original_init(self, ...)
+        -- btn_2 is the one button the original can never switch on, because it reads two section names no
+        -- item ever carried. Its state here is the author's own condition, spelled the way his items are.
+        local button = self.btn_2
+        if button then button:Enable(has_ingredients(inventory_counts(), weapon_recipes[2])) end
+        return result
+    end
+end
+
+local function install_part_seeding()
+    local binder = bind_stalker and bind_stalker.actor_binder
+    if not binder then return end
+    local original_spawn = binder.net_spawn
+    binder.net_spawn = function(self, ...)
+        local result = original_spawn(self, ...)
+        seed_pending, save_loaded, seed_since = true, false, nil
+        return result
+    end
+    local original_load = binder.load
+    binder.load = function(self, ...)
+        local result = original_load(self, ...)
+        save_loaded = true
+        return result
+    end
+    local original_update = binder.update
+    binder.update = function(self, ...)
+        local result = original_update(self, ...)
+        if seed_pending and db.actor then
+            local now = time_global()
+            if not seed_since then seed_since = now end
+            if save_loaded or now - seed_since >= seed_grace then pcall(seed_orphan_parts) end
+        end
+        return result
+    end
+end
+
 function install()
     if installed then return end
     for name, recipe in pairs(vehicle_recipes) do wrap_window(avtodroch[name], {recipe}) end
     wrap_window(stanok.sborka, weapon_recipes)
+    pcall(install_part_aliases)
+    pcall(install_vintorez_button)
+    pcall(install_part_seeding)
+    -- install() runs from the actor binder, so this actor's net_spawn has already gone by.
+    if db.actor then seed_pending, save_loaded, seed_since = true, false, nil end
     installed = true
 end

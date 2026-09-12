@@ -1,0 +1,1241 @@
+-- The quest half of the repairs the forum audit turned up: jobs that could not start, could not finish, or
+-- handed the player nothing. Its sibling ild_mod_repairs.script carries the engine-level damage, and the two
+-- are separate files only because the engine compiles a script with a fixed budget of module locals.
+--
+-- Every repair installs behind its own guard and is started through pcall, so a repair that cannot find what
+-- it expects on a given save leaves the rest of the file working.
+local installed = false
+
+-- ---------- yura-stuck ----------
+----------------------------------------------------------------------------------------------------------------------
+-- Yura in the tunnel: a chain whose two waits have no way out
+--
+-- scripts\kordon\esc_qra2.ltx switches Yura through fourteen sections. Twelve of them end on a timer or on a
+-- dialog the player can always open. Two end on nothing but the death of monsters:
+--
+--   [remark1]  waits for +esc_tonnel_psidog1_death and +esc_tonnel_psidog2_death, and the dialog that would
+--              move him on (esc_qra2_posle_psisobak) asks for the same two portions, so a portion that never
+--              arrives leaves him crouched in "hide" beside the dead dog with nothing to say.
+--   [walker45] waits for all five +esc_kaban_tainika1_dead*, in def_state_standing = search and meet = no_meet,
+--              so he searches the black digger's stash for the rest of the game and cannot even be talked to.
+--              The author wrote the way out himself - [walker5], the same two paths, the digging state and a
+--              25-second timer that plays the same line and hands out the same +esc_qra_dostal_xabar_tainika1 -
+--              and then named it after a ';' at the end of walker45's on_info, which the ini reader drops as a
+--              comment. Nothing in the file can reach [walker5].
+--
+-- The pack's generic repairs do not cover this. install_ai_watchdog only acts on a movement manager that is
+-- walking and getting nowhere, on a wait the state manager armed and never began, and on a stalled team signal;
+-- Yura in remark1 or walker45 has arrived, reached his animation and armed nothing, so the watchdog sees a
+-- healthy NPC - and it refuses by construction to force a section that ends on a portion from elsewhere.
+-- install_death_repairs delivers a death portion the callback lost, but only for a mob whose net_spawn it saw
+-- while the portion was still missing; a corpse alife released before the player noticed, or a monster that
+-- never came online at all, was never registered. Both holes are closed from the chain's own side below.
+----------------------------------------------------------------------------------------------------------------------
+
+local yura_installed = false
+local yura_bridge
+
+local function yura_report(text)
+    -- Same console verb the pack's other watchdogs write through, and the same single probe for a build
+    -- without the native bridge, where an unknown command would be logged as an error on every call.
+    if yura_bridge == nil then
+        local known, value = pcall(function() return get_console():get_string("ild_update") end)
+        yura_bridge = known and value ~= nil
+    end
+    if not yura_bridge then return end
+    pcall(function() get_console():execute("ild_update watchdog " .. text) end)
+end
+
+-- Each leg is open between the portion that spawns its monsters and the portion the chain sets once it is past
+-- them. Outside that window nothing here does any work at all.
+local yura_legs = {
+    {
+        opens = "esc_qra2_start_v_tonnele",
+        closes = "esc_qra2_posle_psisobak",
+        mobs = {
+            {section = "esc_tonnel_psevdodog1", portion = "esc_tonnel_psidog1_death"},
+            {section = "esc_tonnel_psevdodog2", portion = "esc_tonnel_psidog2_death"}
+        }
+    },
+    {
+        opens = "esc_qra_pered_tainikom1",
+        closes = "esc_qra_dostal_xabar_tainika1",
+        mobs = {
+            {section = "esc_kaban_na_tainik11", portion = "esc_kaban_tainika1_dead1"},
+            {section = "esc_kaban_na_tainik12", portion = "esc_kaban_tainika1_dead2"},
+            {section = "esc_kaban_na_tainik13", portion = "esc_kaban_tainika1_dead3"},
+            {section = "esc_kaban_na_tainik14", portion = "esc_kaban_tainika1_dead4"},
+            {section = "esc_kaban_na_tainik15", portion = "esc_kaban_tainika1_dead5"}
+        }
+    }
+}
+
+local yura_check_period = 3000
+local yura_scan_period = 10000
+local yura_absent_grace = 90000
+local yura_checked = 0
+local yura_scanned = 0
+
+-- One pass over the simulator resolves every monster of the leg that is still unknown. Offline objects are in
+-- it too, so an id a completed pass cannot find is genuinely not in the world any more.
+local function yura_resolve(leg, simulator, now)
+    local pending = false
+    for _, mob in ipairs(leg.mobs) do
+        if not mob.id and not has_alife_info(mob.portion) then pending = true end
+    end
+    if not pending or now - yura_scanned < yura_scan_period then return end
+    yura_scanned = now
+    local wanted = {}
+    for _, mob in ipairs(leg.mobs) do
+        if not mob.id then wanted[mob.section] = mob end
+    end
+    for id = 1, 65534 do
+        local server = simulator:object(id)
+        local known, name = pcall(function() return server and server:section_name() end)
+        local mob = known and name and wanted[name]
+        if mob then mob.id = id end
+    end
+    leg.swept = now
+end
+
+local function yura_settle_leg(leg, now)
+    if not has_alife_info(leg.opens) or has_alife_info(leg.closes) then return end
+    local simulator = alife()
+    if not simulator then return end
+    leg.opened = leg.opened or now
+    yura_resolve(leg, simulator, now)
+    for _, mob in ipairs(leg.mobs) do
+        if not has_alife_info(mob.portion) then
+            local server = mob.id and simulator:object(mob.id)
+            -- Ids are reused, so a remembered one is trusted only while it still names the same section.
+            if server then
+                local known, name = pcall(function() return server:section_name() end)
+                if not known or name ~= mob.section then mob.id, server = nil, nil end
+            end
+            if server then
+                local known, alive = pcall(function() return server:alive() end)
+                if known and alive == false then
+                    -- The section's own portion, handed out for the death its callback lost.
+                    db.actor:give_info_portion(mob.portion)
+                    yura_report("yura dead " .. mob.section)
+                end
+            elseif mob.id or (leg.swept and now - leg.opened > yura_absent_grace) then
+                -- Either the corpse an earlier pass had found is gone, or a completed sweep cannot find the
+                -- monster at all. Nothing is left for the player to kill, so nothing is being stepped over.
+                mob.id = nil
+                db.actor:give_info_portion(mob.portion)
+                yura_report("yura gone " .. mob.section)
+            end
+        end
+    end
+end
+
+local function yura_settle(now)
+    if not db.actor or now - yura_checked < yura_check_period then return end
+    yura_checked = now
+    for _, leg in ipairs(yura_legs) do yura_settle_leg(leg, now) end
+end
+
+local yura_stall = {}
+local yura_stall_period = 2000
+local yura_stall_grace = 150000
+
+-- The file is recognised by the section pair only esc_qra2.ltx has: walker45 on the stash path, and the
+-- walker5 the same file writes and never reaches.
+local function yura_stash_logic(storage)
+    local ini = storage and storage.ini
+    if not ini or not ini:section_exist("walker45") or not ini:section_exist("walker5") then return false end
+    if not ini:line_exist("walker45", "path_walk") then return false end
+    return ini:r_string("walker45", "path_walk") == "esc_qra_k_tainiky1_walk2"
+end
+
+local function yura_watch(npc)
+    local id = npc:id()
+    local storage = db.storage[id]
+    if not storage or not storage.active_scheme or storage.active_section ~= "walker45" or not npc:alive() or
+        not yura_stash_logic(storage) then
+        yura_stall[id] = nil
+        return
+    end
+    local now = time_global()
+    local record = yura_stall[id]
+    if not record then
+        yura_stall[id] = {tm = now, waited = 0}
+        return
+    end
+    if now - record.tm < yura_stall_period then return end
+    local step = now - record.tm
+    record.tm = now
+    -- Only time the NPC actually spent updating is counted, so a gap - going offline, a load - never shortens
+    -- the wait, and a player who walked away does not come back to a stash that opened itself.
+    if step > yura_stall_period * 4 or npc:is_talking() then return end
+    record.waited = record.waited + step
+    if record.waited < yura_stall_grace then return end
+    yura_stall[id] = nil
+    -- The mod's own fallback section, entered the way the mod's own condlists enter one. walker5 then runs its
+    -- 25-second timer, plays frazu\loot_bad_1, gives +esc_qra_dostal_xabar_tainika1 and goes to remark3 - the
+    -- exact ending walker45 promises. Any boar still alive is left exactly where it is.
+    xr_logic.switch_to_section(npc, storage[storage.active_scheme], "walker5")
+    yura_report("yura stash " .. npc:name())
+end
+
+function install_yura_chain()
+    if yura_installed then return end
+    yura_installed = true
+    local binder = xr_motivator.motivator_binder
+    local original_update = binder.update
+    binder.update = function(self, ...)
+        local result = original_update(self, ...)
+        -- A stall check must never be able to take the game down with it.
+        pcall(yura_watch, self.object)
+        return result
+    end
+    local actor = bind_stalker.actor_binder
+    local original_actor_update = actor.update
+    actor.update = function(self, ...)
+        local result = original_actor_update(self, ...)
+        pcall(yura_settle, time_global())
+        return result
+    end
+end
+
+-- (the file CMakeLists.txt line 105 and ild_gameplay.script line 18 already expect) and add one line,
+--     install_yura_chain()
+-- to that file's install(). It adds 17 module locals and one global, install_yura_chain; nothing else here is
+-- visible outside the chunk, and every name it reads as a global is one the engine already provides
+-- (alife, bind_stalker, db, get_console, has_alife_info, ipairs, pcall, time_global, xr_logic, xr_motivator).
+
+-- ---------- rg6-anomaly ----------
+-- Voronin's RG-6 job sends the actor to a cache in the Army Warehouses that no longer holds a weapon.
+-- In the mod's all.spawn the object kept its vanilla name mil_wpn_rg-6, its story id 706 (Mil_RG6) and the vanilla
+-- coordinates, but its section was rewritten from wpn_rg-6 to fireball_zone with a 3 m sphere over the spot - the
+-- same rewrite two ammo boxes got. Nothing else in the mod spawns, sells or hands out a wpn_rg-6, so
+-- bar_dialogs.have_rg6 is never true, the task never reaches bar_svoboda_rg6_done, and trade_dolg.ltx keeps Duty's
+-- trader on dolg_start_sell/supplies_start for the rest of the game. One weapon goes back at the cache, on the AI
+-- mesh and outside the anomaly, once per save.
+local rg6_story_id = 706
+local rg6_graph_vertex = 1545
+local rg6_point = {x = -274.5523, y = -27.4724, z = 245.4136}
+local rg6_clearance = 4
+local rg6_reach = 6
+local rg6_flag = "ild_rg6_cache"
+local rg6_period = 2000
+local rg6_no_vertex = 4294967295
+local rg6_placed = false
+local rg6_checked = 0
+local rg6_rings = {4.5, 6, 8}
+local rg6_steps = {
+    {1, 0}, {0.7071, 0.7071}, {0, 1}, {-0.7071, 0.7071},
+    {-1, 0}, {-0.7071, -0.7071}, {0, -1}, {0.7071, -0.7071}
+}
+
+-- The nearest node that is still outside the sphere the anomaly occupies and on the cache's own floor rather than
+-- a storey above or below it.
+local function rg6_consider(best, vertex, anchor)
+    if not vertex or vertex == rg6_no_vertex then return best end
+    local known, point = pcall(level.vertex_position, vertex)
+    if not known or not point then return best end
+    local distance = point:distance_to(anchor)
+    if distance < rg6_clearance or math.abs(point.y - anchor.y) > 2 then return best end
+    if best and best.distance <= distance then return best end
+    return {vertex = vertex, point = point, distance = distance}
+end
+
+local function rg6_spot(anchor)
+    local best
+    -- Walking the mesh outwards from the cache's own node keeps the weapon somewhere the actor can reach.
+    local known, center = pcall(level.vertex_id, anchor)
+    if known and center and center ~= rg6_no_vertex then
+        for _, step in ipairs(rg6_steps) do
+            local walked, vertex = pcall(level.vertex_in_direction, center, vector():set(step[1], 0, step[2]),
+                rg6_reach)
+            if walked then best = rg6_consider(best, vertex, anchor) end
+        end
+    end
+    if best then return best end
+    -- A cache the mesh does not run under still has floor around it; sample rings of positions instead.
+    for _, radius in ipairs(rg6_rings) do
+        for _, step in ipairs(rg6_steps) do
+            local probe = vector():set(anchor.x + step[1] * radius, anchor.y, anchor.z + step[2] * radius)
+            local seen, vertex = pcall(level.vertex_id, probe)
+            if seen then best = rg6_consider(best, vertex, anchor) end
+        end
+        if best then return best end
+    end
+    return best
+end
+
+-- pstor carries the one-shot, but a save that lost the flag must not end up with two of them either.
+local function rg6_exists(simulator)
+    if db.actor:object("wpn_rg-6") then return true end
+    local known, found = pcall(function()
+        for id = 1, 65534 do
+            local server = simulator:object(id)
+            if server and server:section_name() == "wpn_rg-6" then return true end
+        end
+        return false
+    end)
+    return known and found
+end
+
+-- The anomaly still carries the cache's own game vertex; the spawn's value is the fallback if it was released.
+local function rg6_vertex(simulator)
+    local server = simulator:story_object(rg6_story_id)
+    local known, vertex = pcall(function() return server and server.m_game_vertex_id end)
+    if known and vertex then return vertex end
+    return rg6_graph_vertex
+end
+
+local function rg6_here(simulator, vertex)
+    local graph = game_graph()
+    if not graph then return false end
+    local known, id = pcall(function() return graph:vertex(vertex):level_id() end)
+    return known and id == simulator:level_id()
+end
+
+local function rg6_restore(now)
+    if rg6_placed or not db.actor or now - rg6_checked < rg6_period then return end
+    rg6_checked = now
+    if not (has_alife_info("mil_freedom_rg6_task") or has_alife_info("bar_svoboda_rg6_start")) then return end
+    local known, placed = pcall(xr_logic.pstor_retrieve, db.actor, rg6_flag, 0)
+    if not known then return end
+    if (placed or 0) ~= 0 or has_alife_info("bar_svoboda_rg6_done") then
+        rg6_placed = true
+        return
+    end
+    local simulator = alife()
+    if not simulator then return end
+    local vertex = rg6_vertex(simulator)
+    -- The AI mesh answers only for the level that is loaded, so the weapon goes in when the actor is there.
+    if not rg6_here(simulator, vertex) then return end
+    local anchor = vector():set(rg6_point.x, rg6_point.y, rg6_point.z)
+    local spot = rg6_spot(anchor)
+    if not spot then return end
+    -- In memory first: a pstor write that raised must not let the next update place a second weapon.
+    rg6_placed = true
+    if not rg6_exists(simulator) then
+        simulator:create("wpn_rg-6", vector():set(spot.point.x, spot.point.y + 0.2, spot.point.z), spot.vertex,
+            vertex)
+    end
+    xr_logic.pstor_store(db.actor, rg6_flag, 1)
+end
+
+local function install_rg6_cache()
+    local binder = bind_stalker and bind_stalker.actor_binder
+    if not binder then return end
+    local original_update = binder.update
+    binder.update = function(self, ...)
+        local result = original_update(self, ...)
+        pcall(rg6_restore, time_global())
+        return result
+    end
+end
+
+--     function install()
+--         if installed then return end
+--         installed = true
+--         install_console_quiet()
+--         install_rg6_cache()
+--     end
+-- The file must stay pure ASCII (it is today) and the block adds 12 module locals, well under the engine's 182.
+
+-- ---------- yantar-scientists ----------
+-- The mod's all.spawn gives the three Yantar scientists a [spawner] section holding "cond = never", and
+-- se_stalker:can_switch_online reads exactly that condlist: pick_section_from_condlist answers nil for the
+-- word "never", so the engine is told the object may never come online and Kruglov, Semenov and Vasilyev's
+-- body exist nowhere. Vanilla carries no [spawner] section on any of the three. Everything the quest is built
+-- from is still in place around them - the yan_scientist smart terrain with capacity 2, all twenty-two of its
+-- patrol paths, the gulag jobs, the dialogs, the tasks, Sakharov's helmet scene - so only the veto is lifted,
+-- and only for these three names.
+local yantar_scientists = {
+    ["yan_scientist_help"] = true,       -- Kruglov, the scientist of the ordinary branch
+    ["yantar_semenov"] = true,           -- Semenov, the branch taken once the professor dies at the Bar
+    ["yantar_dead_scientist_01"] = true  -- Vasilyev's body, whose [known_info] closes the laboratory task
+}
+
+-- The same edit dropped Kruglov's story id. game_story_ids.ltx still calls 900 "yan_ecolog_help", and every
+-- yan_scientist job of his in gulag_yantar.script is chosen by "obj_info.story_id == 900", so without it he
+-- joins the smart terrain and is handed no job at all: no escort, no antenna, no return to the bunker.
+-- Semenov (905) and Vasilyev (903) kept theirs and are left alone.
+local kruglov_name = "yan_scientist_help"
+local kruglov_story_id = 900
+local kruglov_story_restored = false
+
+-- The engine builds its story registry when an object registers, so a value written now is in the registry on
+-- the next load - which is what the task's own <object_story_id>yan_ecolog_help</object_story_id> map spots
+-- need. The job predicate below does not wait for it, and if the binding refuses the write the quest still
+-- runs, with exactly the marker the mod ships today.
+local function restore_kruglov_story(server)
+    if kruglov_story_restored then return end
+    kruglov_story_restored = true
+    local simulator = alife()
+    if not simulator or simulator:story_object(kruglov_story_id) then return end
+    server.m_story_id = kruglov_story_id
+end
+
+local function install_yantar_scientists()
+    if not se_stalker or not se_stalker.se_stalker then return end
+    local native_switch = se_stalker.se_stalker.can_switch_online
+    -- self.spawner is parsed once, in se_stalker:get_ini, and read only here. Clearing it before the native
+    -- method runs leaves every other gate that method applies exactly as it is: dont_spawn_online, the smart
+    -- terrain's own job_online flag and the engine's distance test all still decide when these three are up.
+    se_stalker.se_stalker.can_switch_online = function(self, ...)
+        if self.spawner and yantar_scientists[self:name()] then self.spawner = nil end
+        return native_switch(self, ...)
+    end
+    if not smart_terrain or not smart_terrain.se_smart_terrain then return end
+    local native_fill = smart_terrain.se_smart_terrain.fill_npc_info
+    -- The smart terrain copies obj.m_story_id into its own record and the gulag's predicates read that record.
+    -- It is filled when an object registers and again from get_se_objs on every load, so the id is right for
+    -- every pass the gulag makes, whatever the object itself still carries.
+    smart_terrain.se_smart_terrain.fill_npc_info = function(self, obj, npc_info, ...)
+        local info = native_fill(self, obj, npc_info, ...)
+        if info and info.name == kruglov_name then
+            info.story_id = kruglov_story_id
+            pcall(restore_kruglov_story, obj)
+        end
+        return info
+    end
+end
+
+-- wiring: add exactly this one line inside the existing install() of ild_mod_repairs.script
+--     install_yantar_scientists()
+
+-- ---------- deadcity-trap ----------
+-- Dead City's way out. levels\dead_city\level.spawn ends with a level changer the designer named
+-- level_changer_to_radar and never finished - no destination level, no destination point, graph and level
+-- vertices left at -1 - and it was never compiled into all.spawn, so the shipped level holds no changer at
+-- all. The repaired all.spawn moves the mod's own parked Military -> Radar record onto that spot. This block
+-- does the two things a spawn record cannot: it puts the door on the PDA map, and on a save started before
+-- the repair - where the door really is absent, because all.spawn only creates objects for a new game - it
+-- says so once instead of leaving the player to work it out.
+
+local dead_city_installed = false
+local dead_city_ready = false        -- this level load is settled, nothing more to do
+local dead_city_next = 0             -- next time_global() at which a scan is allowed
+local dead_city_deadline = 0         -- before this, a missing door only means "not online yet"
+local dead_city_flag = "ild_dead_city_no_exit"
+-- CP1251, which is how the engine reads this file: "Выхода из Мёртвого города в этом сохранении нет:
+-- загрузите сохранение, сделанное до перехода сюда."
+local dead_city_warning =
+    "\xC2\xFB\xF5\xEE\xE4\xE0 \xE8\xE7 \xCC\xB8\xF0\xF2\xE2\xEE\xE3\xEE \xE3\xEE\xF0\xEE\xE4\xE0 \xE2 " ..
+    "\xFD\xF2\xEE\xEC \xF1\xEE\xF5\xF0\xE0\xED\xE5\xED\xE8\xE8 \xED\xE5\xF2: \xE7\xE0\xE3\xF0\xF3\xE7" ..
+    "\xE8\xF2\xE5 \xF1\xEE\xF5\xF0\xE0\xED\xE5\xED\xE8\xE5, \xF1\xE4\xE5\xEB\xE0\xED\xED\xEE\xE5 \xE4" ..
+    "\xEE \xEF\xE5\xF0\xE5\xF5\xEE\xE4\xE0 \xF1\xFE\xE4\xE0."
+
+-- Every level changer in the game is in the alife registry, but only the ones on the loaded level have a
+-- client object, so object_by_id picks out the Dead City door without it needing a story id of its own.
+local function dead_city_exit()
+    local simulator = alife()
+    if not simulator then return nil end
+    for id = 1, 65534 do
+        local server = simulator:object(id)
+        if server then
+            local known, section = pcall(function() return server:section_name() end)
+            if known and section == "level_changer" and level.object_by_id(id) then return id end
+        end
+    end
+    return nil
+end
+
+local function check_dead_city(now)
+    if dead_city_ready or not db.actor then return end
+    local known, here = pcall(level.name)
+    if not known or here ~= "dead_city" then return end
+    if dead_city_deadline == 0 then
+        -- The level's objects come online over the first frames; give them time before calling the door gone.
+        dead_city_deadline = now + 15000
+        dead_city_next = now
+    end
+    if now < dead_city_next then return end
+    dead_city_next = now + 2000
+    local id = dead_city_exit()
+    if id then
+        dead_city_ready = true
+        -- "to_radar" is the mod's own level tip, the one level_tasks hangs on every other Radar door.
+        if level.map_has_object_spot(id, "level_changer") == 0 then
+            level.map_add_object_spot(id, "level_changer", "to_radar")
+        end
+        return
+    end
+    if now < dead_city_deadline then return end
+    dead_city_ready = true
+    -- The actor's pstor, which the unmodified mod saves and loads as is, so a reload does not repeat the line.
+    local stored, shown = pcall(xr_logic.pstor_retrieve, db.actor, dead_city_flag, 0)
+    if not stored or (shown or 0) ~= 0 then return end
+    xr_logic.pstor_store(db.actor, dead_city_flag, 1)
+    db.actor:give_game_news(dead_city_warning, [[ui\ui_npc_monster]], Frect():set(0, 215, 163, 105), 0, 20000)
+end
+
+function install_dead_city_exit()
+    if dead_city_installed then return end
+    dead_city_installed = true
+    local binder = bind_stalker.actor_binder
+    local original_spawn = binder.net_spawn
+    binder.net_spawn = function(self, ...)
+        -- Every level load starts the check again; the spot belongs to the level, not to the save.
+        dead_city_ready = false
+        dead_city_deadline = 0
+        dead_city_next = 0
+        return original_spawn(self, ...)
+    end
+    local original_update = binder.update
+    binder.update = function(self, ...)
+        original_update(self, ...)
+        pcall(check_dead_city, time_global())
+    end
+end
+
+-- ---------- hellcar-gulag ----------
+-- The Garbage car graveyard. The mod's all.spawn dropped the smart terrain gar_hellcar_group and kept
+-- everything that hangs off it: Dymok, his two men, their waypoints, and every job section in
+-- misc\gulag_garbage.ltx. xr_gulag.getGulagPopulation answers 0 for a smart terrain that is not there, and
+-- garbage_tasks.script:25 reads that 0 as "the group is wiped", so gar_help_dymon is stamped FAILED in the
+-- same frame the player agrees to help. The same absence leaves the three of them with no job at all -
+-- nobody walks, nobody watches the road, and Dymok's death never reports itself, because on_death lives in
+-- the job section and not in his custom data.
+-- Both halves are repaired here. The population term is honoured only while the smart terrain really
+-- exists, so on this installation only the death portion the mod actually reports can fail the task. And
+-- the state-0 jobs the gulag would have handed out are configured on the three directly, out of the mod's
+-- own misc\gulag_tasks.ltx and with the gulag name as the path prefix - which is exactly what
+-- xr_gulag.gulag:setup_logic does, so nothing new is invented and the save keeps the same shape.
+
+local hellcar_gulag = "gar_hellcar_group"
+local hellcar_ltx_name = "misc\\gulag_tasks.ltx"
+local hellcar_restrictor = "gar_graveyard_car"
+local hellcar_task = "gar_help_dymon"
+local hellcar_objectives = {0, 1, 2}
+local hellcar_revive_flag = "ild_hellcar_task_revived"
+local hellcar_no_smart_terrain = 65535
+local hellcar_revive_period = 5000
+
+local hellcar_installed = false
+local hellcar_ltx
+local hellcar_settled = false
+local hellcar_checked_at = 0
+
+-- Dymok is pinned to his own job by the gulag profile predicate. The two escorts share the state-0 pair, and
+-- the gulag picks between equal candidates by distance to the job path, so this does too: the man who spawns
+-- three metres from the observer post takes the observer post.
+local hellcar_crew = {
+    ["gar_hellcar"] = {"logic@gar_hellcar_group_hellcar"},
+    ["gar_hellcar_group_1"] = {"logic@gar_hellcar_group_walker1", "logic@gar_hellcar_group_walker2"},
+    ["gar_hellcar_group_2"] = {"logic@gar_hellcar_group_walker1", "logic@gar_hellcar_group_walker2"}
+}
+
+local hellcar_job_path = {
+    ["logic@gar_hellcar_group_hellcar"] = "gar_hellcar_group_hellcar_walk",
+    ["logic@gar_hellcar_group_walker1"] = "gar_hellcar_group_observer_walk",
+    ["logic@gar_hellcar_group_walker2"] = "gar_hellcar_group_walk2"
+}
+
+local function hellcar_choose(npc, choices)
+    if #choices < 2 then return choices[1] end
+    local position = npc:position()
+    local best, best_distance
+    for _, section in ipairs(choices) do
+        local path = hellcar_job_path[section]
+        if path and level.patrol_path_exists(path) then
+            local distance = position:distance_to_sqr(patrol(path):point(0))
+            if not best_distance or distance < best_distance then
+                best, best_distance = section, distance
+            end
+        end
+    end
+    return best or choices[1]
+end
+
+-- The out restriction is the one the job carries. The engine keeps it on the server object, so it must not be
+-- added a second time when the level is entered again.
+local function hellcar_hold(npc)
+    local known, current = pcall(npc.out_restrictions, npc)
+    if known and type(current) == "string" and string.find(current, hellcar_restrictor, 1, true) then return end
+    pcall(npc.add_restrictions, npc, hellcar_restrictor, "")
+end
+
+local function hellcar_setup(npc)
+    local storage = db.storage[npc:id()]
+    -- A logic this run already restored from the save, or one the mod set itself, is left alone.
+    if not storage or storage.active_section then return end
+    local choices = hellcar_crew[npc:name()]
+    if not choices then return end
+    local simulator = alife()
+    local server = simulator and simulator:object(npc:id())
+    if not server then return end
+    -- An installation whose all.spawn still carries the smart terrain has a real gulag and must keep it.
+    local owner = server.smart_terrain_id and server:smart_terrain_id() or hellcar_no_smart_terrain
+    if owner ~= hellcar_no_smart_terrain then return end
+    hellcar_ltx = hellcar_ltx or ini_file(hellcar_ltx_name)
+    local section = hellcar_choose(npc, choices)
+    if not hellcar_ltx:section_exist(section) then return end
+    xr_logic.configure_schemes(npc, hellcar_ltx, hellcar_ltx_name, modules.stype_stalker, section, hellcar_gulag)
+    local active = xr_logic.determine_section_to_activate(npc, hellcar_ltx, section, db.actor)
+    xr_logic.activate_by_section(npc, hellcar_ltx, active, false)
+    hellcar_hold(npc)
+end
+
+-- A save made after the task was already stamped FAILED keeps that entry for good: the engine stops testing an
+-- objective the moment it leaves in_progress. Where the mod's own fail portion is absent - Dymok is not
+-- reported dead - the three objectives are put back once, and the repaired fail function keeps them there.
+local function hellcar_revive()
+    local actor = db.actor
+    if not actor or not has_alife_info("gar_hellcar_help") or has_alife_info("gar_hellcar_death") then return end
+    local known, done = pcall(xr_logic.pstor_retrieve, actor, hellcar_revive_flag, false)
+    if not known then return end
+    if done then
+        hellcar_settled = true
+        return
+    end
+    local read, state = pcall(function() return actor:get_task_state(hellcar_task, hellcar_objectives[1]) end)
+    if not read then return end
+    if state ~= task.fail then
+        hellcar_settled = true
+        return
+    end
+    for _, objective in ipairs(hellcar_objectives) do
+        pcall(function() level_tasks.set_task_state(task.in_progress, hellcar_task, objective) end)
+    end
+    xr_logic.pstor_store(actor, hellcar_revive_flag, true)
+    hellcar_settled = true
+end
+
+local function install_hellcar_task()
+    if type(garbage_tasks) ~= "table" or type(garbage_tasks.task_hellcar_fail) ~= "function" then return end
+    garbage_tasks.task_hellcar_fail = function()
+        if has_alife_info("gar_hellcar_death") then return true end
+        -- Only a smart terrain that exists can report a population; an absent one answers 0 for ever, and an
+        -- absent gulag is not a wiped squad.
+        local known, gulag = pcall(xr_gulag.get_gulag, hellcar_gulag)
+        if not known or not gulag then return false end
+        return xr_gulag.getGulagPopulation(hellcar_gulag) < 1
+    end
+end
+
+local function install_hellcar_jobs()
+    local binder = xr_motivator.motivator_binder
+    local original = binder.net_spawn
+    binder.net_spawn = function(self, ...)
+        local result = original(self, ...)
+        -- The binder answers true for a corpse as well, and a job must never be handed to one.
+        if result ~= false and self.object and self.object:alive() then pcall(hellcar_setup, self.object) end
+        return result
+    end
+end
+
+local function install_hellcar_watch()
+    local binder = bind_stalker.actor_binder
+    local original_spawn = binder.net_spawn
+    binder.net_spawn = function(self, ...)
+        hellcar_settled, hellcar_checked_at = false, 0
+        return original_spawn(self, ...)
+    end
+    local original_update = binder.update
+    binder.update = function(self, ...)
+        local result = original_update(self, ...)
+        if not hellcar_settled and db.actor then
+            local now = time_global()
+            if hellcar_checked_at == 0 or now - hellcar_checked_at >= hellcar_revive_period then
+                hellcar_checked_at = now
+                pcall(hellcar_revive)
+            end
+        end
+        return result
+    end
+end
+
+function install_hellcar_group()
+    if hellcar_installed then return end
+    hellcar_installed = true
+    pcall(install_hellcar_task)
+    pcall(install_hellcar_jobs)
+    pcall(install_hellcar_watch)
+end
+
+-- (ild_mod_repairs.script is the natural home) and add one line to that file's install():
+--     install_hellcar_group()
+-- If it goes into its own file instead, say ild_quest_repairs.script, add to ild_gameplay.install():
+--     ild_quest_repairs.install_hellcar_group()
+-- ild_gameplay.install() runs from the patched main menu and from actor_binder:net_spawn, both of them long
+-- before any of the three can spawn, so the wrappers are always in place first.
+
+-- ---------- community-gates ----------
+-- ---------------------------------------------------------------------------------------------------------
+-- Community gates. Two smart terrains filter on a community their own NPCs no longer carry, so the candidate
+-- is thrown out before the job list is ever read and the NPC never receives any logic at all.
+-- ---------------------------------------------------------------------------------------------------------
+local community_gates_installed = false
+local gate_bridge
+
+-- Rare by construction, and the only trace an intervention leaves. A build without the native bridge simply
+-- has nowhere to write it.
+local function gate_report(text)
+    if gate_bridge == nil then
+        local known, value = pcall(function() return get_console():get_string("ild_update") end)
+        gate_bridge = known and value ~= nil
+    end
+    if not gate_bridge then return end
+    pcall(function() get_console():execute("ild_update watchdog " .. text) end)
+end
+
+-- Cordon. The mod moved Lis's post to its own camp and re-skinned the camp's filter to last_day, but the only
+-- two profiles its job list names - esc_fox and esc_provodnik - are still <community>stalker</community>,
+-- which is what vanilla filtered on. Every job in that gulag is pinned to one of those two profiles by
+-- predicate, so accepting the community again cannot hand the camp to any other stalker on the level.
+local function install_escape_camp_gate()
+    local original = gulag_escape.checkStalker
+    gulag_escape.checkStalker = function(npc_community, gulag_type, ...)
+        if gulag_type == "esc_stalker_camp" and npc_community == "stalker" then return true end
+        return original(npc_community, gulag_type, ...)
+    end
+end
+
+-- Lis's own spawn carries the mod's blanket "[spawner] cond = never", and xr_logic resolves the section named
+-- never to nil, so se_stalker:can_switch_online refuses him for good. That marker only works for a job that
+-- carries an online field, and the camp job the mod kept from vanilla carries none - so the gate above would
+-- hand him a job he can never be present to do. Dropping the condition returns him to the engine's ordinary
+-- distance switch, which is exactly what the vanilla condition did once its portion was granted; that portion,
+-- escape_stalker_help, has no producer left anywhere in the mod.
+local function install_fox_spawner()
+    local stalker_class = se_stalker.se_stalker
+    local original = stalker_class.get_ini
+    stalker_class.get_ini = function(self)
+        local first = not self.ini_initialized
+        original(self)
+        if not first or not self.spawner then return end
+        local known, name = pcall(self.name, self)
+        if not known or name ~= "esc_fox" then return end
+        -- Pinned to the exact line the pack measured; any other condition is the mod's own and is left alone.
+        if not self.ini:line_exist("spawner", "cond") or self.ini:r_string("spawner", "cond") ~= "never" then
+            return
+        end
+        self.spawner = nil
+        gate_report("spawner esc_fox")
+    end
+end
+
+-- Dark Valley. character_desc_darkvalley.xml re-skinned the caged prisoner to <community>bandit</community>
+-- while both gates in front of his cell still name somebody else: checkStalker asks for vrag here. Both jobs
+-- of that gulag are pinned to story id 402 by predicate, so the cell cannot go to a passing bandit.
+local function install_prisoner_gate()
+    local original = gulag_dark_valley.checkStalker
+    gulag_dark_valley.checkStalker = function(npc_community, gulag_type, ...)
+        if gulag_type == "val_prisoner" and npc_community == "bandit" then return true end
+        return original(npc_community, gulag_type, ...)
+    end
+end
+
+-- The second gate is the smart terrain's own "communities = dolg", which lives in all.spawn custom data.
+-- read_params is the loader that turns that line into accepted_communities, and it runs again on every load,
+-- so a save that is already past this point is repaired the next time it is opened.
+local function install_prisoner_smart_terrain()
+    local terrain_class = smart_terrain.se_smart_terrain
+    local original = terrain_class.read_params
+    terrain_class.read_params = function(self)
+        original(self)
+        -- A smart terrain with no configuration returns early and leaves gparams unset.
+        local params = self.gparams
+        if not params or params.type ~= "val_prisoner" then return end
+        if not self.accepted_communities or self.accepted_communities.bandit then return end
+        self.accepted_communities.bandit = true
+        gate_report("terrain val_prisoner")
+    end
+end
+
+function install_community_gates()
+    if community_gates_installed then return end
+    community_gates_installed = true
+    -- Each gate fails closed on its own: one module the installation does not have must not cost the others.
+    pcall(install_escape_camp_gate)
+    pcall(install_fox_spawner)
+    pcall(install_prisoner_gate)
+    pcall(install_prisoner_smart_terrain)
+end
+
+-- ---------- crate-stack ----------
+-- Goes into the pack's payload\gamedata\scripts\ild_mod_repairs.script: the block below is inserted directly
+-- above that file's existing `function install()`, and that three-line install() is replaced by the version at
+-- the end of this block (one added line: `pcall(install_crate_stack)`). ild_gameplay.install() already calls
+-- ild_mod_repairs.install(), so no other wiring is needed. Nothing here is a top-level local beyond the six
+-- declared, all declared above every function that names them, so tests\script_globals.lua stays satisfied.
+
+-- The checkpoint quest hands the actor twenty 5 kg crates in ones and twos and takes them back one at a time.
+-- Its closing hand-over, bar_ckpint.daq_iashik_nac_two, removes a fixed ten - bar_ckpint.script:127 calls
+-- sak.out_item_namber("bar_iahik_nac", 10), and that helper stops at need_number. Seventeen crates are handed out
+-- after the last return the quest forces (bar_iahik_nac_4 through bar_iahik_nac_1920 in dialogs_bar.xml), and the
+-- only return in between, bar_iahik_nac_4_otdaq, is optional, so a player who carried the lot rather than walking
+-- each one back keeps up to seven. The crate is quest_item = true at 5 kg and cost 0, and the same phrase's
+-- bar_iahik_nac_1920_otdal shuts every dialog that could still take one: 35 kg that can never leave the rucksack.
+local crates = {section = "bar_iahik_nac", done = "bar_iahik_nac_1920_otdal", count = 0,
+    swept = 0, period = 5000, tries = 3, left = 3, installed = false}
+
+local function count_crate(owner, item)
+    if item and item.section and item:section() == crates.section then crates.count = crates.count + 1 end
+end
+
+local function crates_carried()
+    crates.count = 0
+    if not db.actor then return 0 end
+    pcall(db.actor.iterate_inventory, db.actor, count_crate, db.actor)
+    return crates.count
+end
+
+-- sak.out_item_namber removes at most need_number, so the number actually carried drains the stack and takes
+-- nothing else. The mod's own news line comes with it, once, exactly as it does on the unrepaired hand-over.
+local function drain_crates()
+    local carried = crates_carried()
+    if carried < 1 then return 0 end
+    sak.out_item_namber(crates.section, carried)
+    return carried
+end
+
+-- A save made before this repair still carries its orphans. Once the closing portion is set no dialog can take a
+-- crate any more, so whatever is left is dead weight and goes on the next update. The budget is only there so a
+-- stack that somehow refused to release could not spin a news line every five seconds; a rucksack with no crate
+-- in it refills the budget, which is also how a later load gets its own tries.
+local function sweep_crates(now)
+    if not db.actor or now - crates.swept < crates.period then return end
+    crates.swept = now
+    if not has_alife_info(crates.done) then return end
+    if not db.actor:object(crates.section) then crates.left = crates.tries return end
+    if crates.left < 1 then return end
+    crates.left = crates.left - 1
+    drain_crates()
+end
+
+local function install_crate_stack()
+    if crates.installed then return end
+    if not bar_ckpint or not bind_stalker or not sak then return end
+    if not bar_ckpint.daq_iashik_nac_two then return end
+    crates.installed = true
+    local original_hand_over = bar_ckpint.daq_iashik_nac_two
+    bar_ckpint.daq_iashik_nac_two = function(first_speaker, second_speaker)
+        -- An empty rucksack is the one case the mod already gets right; leave it to the original so the line it
+        -- writes there stays exactly what it was.
+        if drain_crates() > 0 then return end
+        return original_hand_over(first_speaker, second_speaker)
+    end
+    local binder = bind_stalker.actor_binder
+    local original_update = binder.update
+    binder.update = function(self, ...)
+        original_update(self, ...)
+        pcall(sweep_crates, time_global())
+    end
+end
+
+-- ---------- karabin-nemo ----------
+-- moa_agro.spawn_agro_nemo_tyt_vujivet is the only place that was ever going to put "Nemo" on the map, and it names
+-- the wrong section: info_l03agroprom.xml grants agro_karabin_strt, which runs that function right beside
+-- moa_agro.spawn_agro_nac_prosto_statist, and both of them create "agro_nac_prosto_statist". The nationalist camp
+-- therefore stands up with two identical statists five metres apart and no Nemo at all, although every piece of him
+-- ships with the mod: [agro_nemo_tyt_vujivet] in creatures\spawn_sections.ltx, the profile of that name in
+-- npc_profile.xml and character_desc_agroprom.xml, the logic scripts\agr\agro_nemo_tyt_vujivet.ltx, and the patrol
+-- pair agr_nac_nemo_pobeg_walk / agr_nac_nemo_pobeg_look, which are in all.spawn and which agro_karabin.ltx walks
+-- as well. Only the section string was wrong, so only the section string changes: position, level vertex and game
+-- vertex stay exactly as the author wrote them.
+local nemo = {
+    section = "agro_nemo_tyt_vujivet",
+    x = 120, y = 9.24, z = 163.18,
+    level_vertex = 354295,
+    game_vertex = 504,
+    start = "agro_karabin_strt",
+    -- The actor's own pstor, the key/value table the unmodified mod saves and loads as it is, so the retrofit takes
+    -- one decision per save and remembers it across a reload without a portion of our own in the registry.
+    flag = "ild_agro_nemo_restored",
+    -- His remark scheme leaves for the escape path only once all three of these are in, and they are produced by the
+    -- terrorist, by any one of the agr_bandt_sdelki_* bandits and by the statist - never by Nemo himself. Putting him
+    -- back does not move the gate that releases him, and the surviving single statist still hands out the third.
+    deaths = {"aro_pidr1_strelki_death", "aro_pidr2_strelki_death", "aro_pidr3_strelki_death"}
+}
+
+local function on_agroprom()
+    local known, name = pcall(level.name)
+    return known and (name == "l03_agroprom" or name == "l03_agroprom_ai2")
+end
+
+-- A build whose system.ltx does not carry the section is a build this repair has nothing to say about.
+local function section_known()
+    local known, ini = pcall(system_ini)
+    if not known or not ini then return false end
+    local readable, exists = pcall(ini.section_exist, ini, nemo.section)
+    return readable and exists == true
+end
+
+local function shootout_over()
+    for _, portion in ipairs(nemo.deaths) do
+        if not has_alife_info(portion) then return false end
+    end
+    return true
+end
+
+-- The same sweep moa_agro.metka_na_karaba_prosto runs, and for the same reason: an alife object is addressable only
+-- by id. Answering "present" when the simulator cannot be asked makes a blind second spawn impossible.
+local function nemo_present()
+    local simulator = alife()
+    if not simulator then return true end
+    for id = 1, 65534 do
+        local object = simulator:object(id)
+        if object and object:section_name() == nemo.section then return true end
+    end
+    return false
+end
+
+local function create_nemo()
+    local simulator = alife()
+    if not simulator then return false end
+    local created = false
+    pcall(function()
+        created = simulator:create(nemo.section, vector():set(nemo.x, nemo.y, nemo.z),
+            nemo.level_vertex, nemo.game_vertex) ~= nil
+    end)
+    return created
+end
+
+-- True means the camp has its Nemo and the mod's own call must not run; false means this build could not produce
+-- him and the original line is still the best thing left to do.
+local function ensure_nemo(reason)
+    if not section_known() then return false end
+    if nemo_present() then return true end
+    if not create_nemo() then return false end
+    log("ild: " .. nemo.section .. " " .. reason)
+    return true
+end
+
+-- The mod's info callback is what runs this action, and a raise inside it is fatal, so the body is guarded and the
+-- original function stays the fallback: a build that cannot create Nemo is left with exactly what it had before.
+local function install_nemo_spawn()
+    local original = moa_agro.spawn_agro_nemo_tyt_vujivet
+    moa_agro.spawn_agro_nemo_tyt_vujivet = function(...)
+        local known, handled = pcall(ensure_nemo, "spawned")
+        if known and handled then return end
+        if type(original) == "function" then return original(...) end
+    end
+end
+
+-- A save made before this repair carries the second statist and no Nemo. He is put back only while the scene he
+-- belongs to is still running: the actor on Agroprom, the quest started, the three deaths not yet all in. Once the
+-- shootout is over the moment has passed, and dropping an armed enemy into a finished scene reads worse than the gap.
+local function restore_nemo()
+    local actor = db.actor
+    if not actor or not has_alife_info(nemo.start) or not on_agroprom() then return end
+    local known, done = pcall(xr_logic.pstor_retrieve, actor, nemo.flag, 0)
+    if not known or (done or 0) ~= 0 then return end
+    local in_time = not shootout_over()
+    -- Decided either way and recorded before the spawn, so a refusal is never reconsidered frame after frame.
+    xr_logic.pstor_store(actor, nemo.flag, 1)
+    if in_time then ensure_nemo("restored on an old save") end
+end
+
+
+-- ---------------------------------------------------------------------------------------------------------------
+-- WIRING (three one-line edits to the pack's own files, no game/mod file is touched):
+--   1. save the block above as D:\Games\In-the-line-of-duty-fixes\payload\gamedata\scripts\ild_agro_nemo.script
+--      (pure ASCII, so CP1251 and UTF-8 are byte-identical here);
+--   2. in payload\gamedata\scripts\ild_gameplay.script, inside install(), after `ild_mod_repairs.install()`, add:
+--          ild_agro_nemo.install()
+--      X-Ray resolves an unreferenced module never, so this call is what loads the file;
+--   3. add the pair
+--          'gamedata/scripts/ild_agro_nemo.script' = 'payload\gamedata\scripts\ild_agro_nemo.script'
+--      to the manifest in tools\deploy\Deploy-FixPack.ps1 and its '/' twin in tools\package\Build-Package.ps1,
+--      beside the existing ild_gameplay.script rows.
+-- ---------------------------------------------------------------------------------------------------------------
+
+-- ---------- psy-antenna ----------
+-- APPLY: append this block to payload/gamedata/scripts/ild_mod_repairs.script immediately above its existing
+-- install(), and add the single call `install_psy_ceiling()` as the last line of that install(). That file is
+-- already the pack's overflow script, already runs at load time next to ild_script_repairs (ild_gameplay.install()
+-- chains it, and the engine reaches ild_gameplay.install() from bind_stalker's actor net_spawn via script_patch),
+-- and needs no build, manifest or deploy change. The final install() is reproduced at the bottom of this block.
+
+-- The Radar antenna field is on the only road north, and carrying Sakharov's psy helmet makes it worse instead
+-- of better. The mod lowered the bare-headed rows of two restrictors in all.spawn and left their helmet rows at
+-- the vanilla numbers, which were written against a bare-headed hit of 100:
+--   rad_antenna_rays_and_spot  no_helmet eff 10  hit 10   bad_helmet eff 100  hit 30   good_helmet eff 100  hit 20
+--   rad_space_restrictor_0008  no_helmet eff +10 hit +10  bad_helmet eff +100 hit +20  good_helmet eff +100 hit +20
+-- sr_psy_antenna scales both by 0.01, so a helmet in the belt buys a 0.20-0.30 wound hit every five seconds
+-- against 0.10 bare-headed, under a psi postprocess ten times stronger. The author's bare-headed row is left
+-- exactly as it stands and is read back from the object's own custom_data; nothing above it is let through.
+local psy_ceiling_installed = false
+local psy_ceiling_section = "sr_psy_antenna@no_helmet"
+-- Read from all.spawn as it ships; used only if the object arrives configured from somewhere that has no such
+-- section, so that a missing baseline still cannot raise the helmet above bare-headed.
+local psy_ceiling_objects = {
+    ["rad_antenna_rays_and_spot"] = {eff_intensity = 10, hit_intensity = 10},
+    ["rad_space_restrictor_0008"] = {eff_intensity = 10, hit_intensity = 10}
+}
+local psy_ceiling_reported = {}
+
+local function psy_ceiling_read(source, field)
+    if not source then return nil end
+    local known, value = pcall(function()
+        if source:section_exist(psy_ceiling_section) and source:line_exist(psy_ceiling_section, field) then
+            return source:r_float(psy_ceiling_section, field)
+        end
+    end)
+    if known then return value end
+end
+
+local function psy_ceiling_value(ini, object, field, fallback)
+    -- Both restrictors name no cfg file, so the ini the scheme was configured from is their own custom_data and
+    -- already carries the bare-headed row; the spawn ini is only a second look for a re-pointed logic file.
+    local value = psy_ceiling_read(ini, field)
+    if value then return value end
+    local known, spawn = pcall(function() return object:spawn_ini() end)
+    value = known and psy_ceiling_read(spawn, field)
+    if value then return value end
+    return fallback
+end
+
+local function install_psy_ceiling()
+    if psy_ceiling_installed then return end
+    -- Naming the module here is what makes the engine load it; a build without it has nothing to wrap.
+    if not sr_psy_antenna or type(sr_psy_antenna.set_scheme) ~= "function" then return end
+    psy_ceiling_installed = true
+    local original = sr_psy_antenna.set_scheme
+    sr_psy_antenna.set_scheme = function(object, ini, scheme, section, gulag_name)
+        local result = original(object, ini, scheme, section, gulag_name)
+        local known, name = pcall(function() return object:name() end)
+        local limits = known and name and psy_ceiling_objects[name]
+        if not limits then return result end
+        -- The scheme keeps one storage table per object and rewrites it on every section switch, so the ceiling
+        -- belongs where the numbers are produced rather than where zone_enter adds them up. xr_logic calls this
+        -- before it issues reset_scheme, so the clamped pair is what the zone is entered with.
+        local storage = db.storage and db.storage[object:id()]
+        local state = storage and storage[scheme]
+        if not state then return result end
+        local eff = psy_ceiling_value(ini, object, "eff_intensity", limits.eff_intensity) * 0.01
+        local hit = psy_ceiling_value(ini, object, "hit_intensity", limits.hit_intensity) * 0.01
+        local capped = false
+        if state.intensity and state.intensity > eff then state.intensity, capped = eff, true end
+        if state.hit_intensity and state.hit_intensity > hit then state.hit_intensity, capped = hit, true end
+        -- The section switches on every entry and exit of the field, so one line per object is all it writes.
+        if capped and not psy_ceiling_reported[name] then
+            psy_ceiling_reported[name] = true
+            pcall(log, "ild: " .. name .. " helmet psy values capped at its no-helmet row")
+        end
+        return result
+    end
+end
+
+-- ---------- map-and-logic-gaps ----------
+-- payload/gamedata/scripts/ild_map_repairs.script
+--     ild_map_repairs.install()
+-- The engine loads a script module only when something names it, so without that line this file never runs.
+
+-- Four gaps between the mod's map, its spawn and its logic files. Every repair below puts the mod's own data
+-- back where the mod's own code already looks for it; nothing is invented and no original file is touched.
+
+-- The mod parks an object it wants gone by moving it kilometres off the level rather than deleting it.
+local parked_depth = 2000
+local lchanger_section = "level_changer"
+local lchanger_spot = "level_changer"
+
+-- The Monolith jammer on the Military warehouses.
+local jammer = {
+    section = "mil_glyshilka_monolita",
+    spot = "green_location",
+    hint = "mtka_na_glyshky_mnlt",
+    portion = "mil_gg_nashel_v_drvn_rpg",
+    wanted = false,
+    settled = false
+}
+
+-- Two all.spawn NPCs whose logic never arrives, keyed by the name all.spawn gives them. Each is held exactly
+-- where the spawn put him, in the shape his own neighbours carry.
+local missing_schemes = {
+    -- gar_ammo_5.45x39_fmj_0002 is the stalker of profile gar_qrec_na_bochke - the man on the barrel whose
+    -- appearance ends Qra's chain. His custom_data names scripts\mysorka\gar_qrec_na_bochke.ltx, which is in
+    -- neither the loose tree nor the archives, so configure_schemes hands him an empty ini and he walks off.
+    -- The two paths below are the mod's own: gar_qra_na_bochke_walk is a single waypoint at (58.0, 18.4, 96.2),
+    -- his spawn position to the centimetre, and gar_qra_na_bochke_look is the point beside it. The rest is the
+    -- shape every standing mysorka NPC uses, gar_stal_baraxol1.ltx included.
+    ["gar_ammo_5.45x39_fmj_0002"] = {
+        logic = {active = "walker", combat_ignore = "combat_ignore"},
+        combat_ignore = {},
+        walker = {
+            path_walk = "gar_qra_na_bochke_walk",
+            path_look = "gar_qra_na_bochke_look",
+            def_state_standing = "sit",
+            combat_ignore_cond = "always"
+        }
+    },
+    -- bar_dolg_bunker_5 is assigned to the smart terrain bar_dolg_bunker. gulag_bar.ltx holds that gulag's job
+    -- sections, but no smart_terrain object of that name is in all.spawn, so he joins nothing, carries no inline
+    -- logic of his own and stands blank among the four posed guards. This is the logic his three remark
+    -- neighbours - bar_dolg_bunker_1, _3 and _4 - carry in their own custom_data.
+    bar_dolg_bunker_5 = {
+        logic = {active = "remark", combat_ignore = "combat_ignore"},
+        combat_ignore = {},
+        remark = {
+            anim = "patrol",
+            meet = "no_meet",
+            combat_ignore_cond = "{=fighting_dist_ge(10)} always"
+        }
+    }
+}
+
+local function parked_changer(server)
+    local known, parked = pcall(function()
+        return server:section_name() == lchanger_section and math.abs(server.position.y) >= parked_depth
+    end)
+    return known and parked
+end
+
+-- add_lchanger_location draws "to Yantar" on story object 608, exit_to_yantar_01, which the mod moved to
+-- y = -15000.76 and replaced with the tunnel pair. The icon stays on the Rostok map and sends the player to a
+-- transition that is not there. Every changer the mod parked the same way loses its icon; the live ones keep
+-- theirs, and no other spot type is touched.
+local function drop_parked_lchanger_spots()
+    local simulator = alife()
+    if not simulator then return end
+    for id = 1, 65534 do
+        local server = simulator:object(id)
+        if server and parked_changer(server) then
+            -- map_has_object_spot answers with a count, which is how level_tasks.remove_location_safe drains it.
+            for _ = 1, level.map_has_object_spot(id, lchanger_spot) do
+                level.map_remove_object_spot(id, lchanger_spot)
+            end
+        end
+    end
+end
+
+local function jammer_id()
+    local simulator = alife()
+    if not simulator then return nil end
+    for id = 1, 65534 do
+        local server = simulator:object(id)
+        local known, name = pcall(function() return server and server:section_name() end)
+        if known and name == jammer.section then return id end
+    end
+    return nil
+end
+
+-- Placed at most once. The mod asks for this marker from two different info portions and never checks, so an
+-- unconditional add would leave the player with the same icon twice over.
+local function place_jammer_spot()
+    local id = jammer_id()
+    if not id then return false end
+    if level.map_has_object_spot(id, jammer.spot) == 0 then
+        level.map_add_object_spot(id, jammer.spot, jammer.hint)
+    end
+    return true
+end
+
+-- mil_gg_nashel_v_drvn_rpg runs skladu.metka_na_glyshilky_mnlt as its first action and
+-- skladu.spawn_mil_y_strt_glyshilka_monolita eleven actions later, and info-portion actions run in file order.
+-- The marker call scans the simulation for an object that does not exist yet, finds nothing and says nothing,
+-- so until the much later mil_jora2_pred ydarom the player has no marker for the jammer at all. The request is
+-- remembered and the creation of the jammer honours it.
+local function install_jammer_spot()
+    skladu.metka_na_glyshilky_mnlt = function()
+        jammer.wanted = not place_jammer_spot()
+    end
+    local original_jammer_spawn = skladu.spawn_mil_y_strt_glyshilka_monolita
+    skladu.spawn_mil_y_strt_glyshilka_monolita = function(...)
+        local result = original_jammer_spawn(...)
+        if jammer.wanted and place_jammer_spot() then jammer.wanted = false end
+        return result
+    end
+end
+
+-- A save that was granted the portion before this repair existed never got the marker either. One look per
+-- level load, only once the portion is known, and only when no such spot is on the object already.
+local function settle_jammer_spot()
+    if jammer.settled or not db.actor or not has_alife_info(jammer.portion) then return end
+    jammer.settled = true
+    pcall(place_jammer_spot)
+end
+
+-- The engine can build an ini only from a file, and this pack ships no file of its own into the mod's config
+-- tree. It does not have to: every reader on the scheme path is Lua, and utils.cfg_get_string, cfg_get_bool and
+-- cfg_get_number between them ask an ini for exactly section_exist, line_exist and one typed read. A table that
+-- answers those is a complete stand-in for the section a missing file would have held.
+local function read_only_ini(sections)
+    local function value(section, line)
+        local fields = sections[section]
+        return fields and fields[line] or nil
+    end
+    local ini = {}
+    function ini.section_exist(_, section) return sections[section] ~= nil end
+    function ini.line_exist(_, section, line) return value(section, line) ~= nil end
+    function ini.line_count(_, section)
+        local count = 0
+        for _ in pairs(sections[section] or {}) do count = count + 1 end
+        return count
+    end
+    function ini.r_string(_, section, line) return value(section, line) end
+    function ini.r_bool(_, section, line) return value(section, line) == "true" end
+    function ini.r_float(_, section, line) return tonumber(value(section, line)) or 0 end
+    function ini.r_u32(_, section, line) return tonumber(value(section, line)) or 0 end
+    return ini
+end
+
+-- initialize_obj is the one place both NPCs pass through: neither belongs to a smart terrain - one says
+-- none = true, the other names a terrain that is not in the spawn - so setup_gulag_and_logic_on_spawn sends
+-- both here. The saved ini name stays the ordinary "<customdata>" the mod writes for every inline NPC, so a
+-- save made with the pack still loads without it: the mod's own path reads the spawn ini again and the NPC is
+-- blank exactly as he was before. A save made before the pack is repaired on load, because a blank NPC has no
+-- active section to resume and the scheme is then chosen from scratch.
+local function install_missing_schemes()
+    local original_initialize = xr_logic.initialize_obj
+    xr_logic.initialize_obj = function(object, storage, loaded, actor, stype, ...)
+        local known, name = pcall(function() return object:name() end)
+        local sections = known and missing_schemes[name] or nil
+        if not sections then
+            return original_initialize(object, storage, loaded, actor, stype, ...)
+        end
+        local ini = xr_logic.configure_schemes(object, read_only_ini(sections), "<customdata>", stype, "logic", nil)
+        -- load_obj turns an empty saved section into the string "nil", which is not a section to resume.
+        local resume = storage and storage.loaded_active_section
+        if resume == "nil" then resume = nil end
+        if loaded and resume then
+            xr_logic.activate_by_section(object, ini, resume, true)
+        else
+            xr_logic.activate_by_section(object, ini,
+                xr_logic.determine_section_to_activate(object, ini, "logic", actor), false)
+        end
+    end
+end
+
+local function install_lchanger_spots()
+    local original_lchanger = level_tasks.add_lchanger_location
+    level_tasks.add_lchanger_location = function(...)
+        local result = original_lchanger(...)
+        pcall(drop_parked_lchanger_spots)
+        return result
+    end
+end
+
+function install()
+    if installed then return end
+    installed = true
+    pcall(install_yura_chain)
+    pcall(install_rg6_cache)
+    pcall(install_yantar_scientists)
+    pcall(install_dead_city_exit)
+    pcall(install_hellcar_group)
+    pcall(install_community_gates)
+    pcall(install_crate_stack)
+    pcall(install_nemo_spawn)
+    pcall(install_psy_ceiling)
+    pcall(install_lchanger_spots)
+    pcall(install_jammer_spot)
+    pcall(install_missing_schemes)
+    -- Two repairs need the actor's own binder: the Karabin quest re-checks its NPC on update, and the jammer
+    -- map spot is retried until the object it points at exists. Both are per-level state.
+    pcall(function()
+        local binder = bind_stalker.actor_binder
+        local original_spawn = binder.net_spawn
+        binder.net_spawn = function(self, ...)
+            jammer.wanted = false
+            jammer.settled = false
+            return original_spawn(self, ...)
+        end
+        local original_update = binder.update
+        binder.update = function(self, ...)
+            local result = original_update(self, ...)
+            pcall(restore_nemo)
+            pcall(settle_jammer_spot)
+            return result
+        end
+    end)
+end

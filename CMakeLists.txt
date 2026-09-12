@@ -101,6 +101,10 @@ if(ILD_LUA51)
         ${CMAKE_CURRENT_SOURCE_DIR}/payload/gamedata/scripts/ild_script_repairs.script)
     add_test(NAME gameplay_repairs COMMAND ${ILD_LUA51} ${CMAKE_CURRENT_SOURCE_DIR}/tests/gameplay_tests.lua
         ${CMAKE_CURRENT_SOURCE_DIR}/payload/gamedata/scripts/ild_gameplay.script)
+    add_test(NAME mod_repairs COMMAND ${ILD_LUA51} ${CMAKE_CURRENT_SOURCE_DIR}/tests/mod_repairs_tests.lua
+        ${CMAKE_CURRENT_SOURCE_DIR}/payload/gamedata/scripts/ild_mod_repairs.script)
+    add_test(NAME quest_repairs COMMAND ${ILD_LUA51} ${CMAKE_CURRENT_SOURCE_DIR}/tests/quest_repairs_tests.lua
+        ${CMAKE_CURRENT_SOURCE_DIR}/payload/gamedata/scripts/ild_quest_repairs.script)
 endif()
 
 add_executable(ild_script_patch_tests

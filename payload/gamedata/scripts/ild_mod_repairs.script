@@ -1,0 +1,777 @@
+-- Repairs found by auditing the mod's own forum thread - 370 player reports across 39 pages - and by a second
+-- sweep of its gamedata. The earlier repairs live in ild_script_repairs.script; this file and its sibling
+-- ild_quest_repairs.script exist because that one is close to the engine's module-local budget. This half is
+-- the engine-level damage: crashes, sounds that are not there, doubled spawns, the detectors and the crows.
+--
+-- Every repair installs behind its own guard and is started through pcall, so a repair that cannot find what
+-- it expects on a given save leaves the rest of the file working.
+local installed = false
+
+-- ---------- ph-door-crash ----------
+-- decoration_action class, before install()). Plain functions only.
+
+local door_guard_installed = false
+
+-- A door whose model carries no hinge still gets a physics shell, so ph_door clears its own nil-shell guard
+-- and then indexes the joint it never got. This table stands in for that joint: the limits it reports keep
+-- the door reading as closed, and every force handed to it goes nowhere - a door that simply cannot swing.
+local dead_joint = {
+    get_limits = function(self, low, hi, axis) return 0, 0 end,
+    get_axis_angle = function(self, axis) return 0 end,
+    set_max_force_and_velocity = function(self, force, velocity, axis) end
+}
+
+function install_ph_door_joint_guard()
+    if door_guard_installed then return end
+    door_guard_installed = true
+    local action = ph_door.action_door
+    local original_reset = action.reset_scheme
+    action.reset_scheme = function(self, loading)
+        local shell = self.object:get_physics_shell()
+        -- A shell that is not there yet is the module's own early return and is left exactly as it was: the
+        -- binder only initialises logic from its first update, by which time a physics object always has one.
+        -- A door that does have its hinge runs the original body, untouched.
+        if not shell or shell:get_joint_by_bone_name("door") then
+            return original_reset(self, loading)
+        end
+        -- Below is the original body with its two joint lines replaced by the inert joint. Sounds, tips,
+        -- section switching and the save layout are all left exactly as the module writes them.
+        self.initialized = false
+        self.joint = dead_joint
+        self.low_limits, self.hi_limits = 0, 0
+        self.block = false
+        self.soundless_block = false
+        self.show_tips = self.st.show_tips
+        local disable_snd
+        if not self.st.script_used_more_than_once then
+            disable_snd = true
+            self.st.script_used_more_than_once = true
+        end
+        if self.st.closed then
+            -- The original silences the first close when the door already is closed. An inert one always is.
+            disable_snd = true
+            self:close_door(disable_snd)
+        else
+            self:open_door(disable_snd)
+        end
+        self.object:set_nonscript_usable(false)
+        self.initialized = true
+    end
+end
+
+-- The only change is the install_ph_door_joint_guard() call; everything else is
+-- the current body, verbatim.
+
+-- ---------- sound-crashes ----------
+-- Six sound paths in the mod name files that exist neither in the loose tree nor in any of the fourteen
+-- archives. A sound_object built on a name the file system cannot resolve ends in Debug.fatal inside the
+-- constructor, which no pcall catches, so each one is an instant crash the first time its theme is rolled.
+-- Three are typos with a real file behind them and are aliased onto it, two name nothing that exists anywhere
+-- and are dropped from their theme, and the sixth is a random range that runs past the last file on disk.
+
+-- Left hand side is exactly what the mod writes, in the lower case the engine puts a sound name into before it
+-- looks it up. ambient\\siren2 is not a typo of this file: it comes from a Lua LONG string, which processes no
+-- escapes, so the mod really does ask for a path with two separators. The file is ambient\siren2, which is how
+-- the mod's own "siren" theme spells it.
+local sound_aliases = {
+    [ [[ambient\\siren2]] ] = [[ambient\siren2]],
+    [ [[characters_voice\army_commander\drunk\comandir_song_2]] ] =
+        [[characters_voice\scenario\army_commander\drunk\comandir_song_2]],
+    [ [[music\scena_proshania]] ] = [[characters_voice\scenario\bar\scena_proshania]]
+}
+
+-- Nothing answers to these under any spelling, so there is nothing to alias them onto and the only repair is to
+-- stop their theme from ever picking them.
+local absent_sounds = {
+    [ [[characters_voice\scenario\escape\megafon_5]] ] = true,
+    [ [[characters_voice\scenario\val_kom_muz\sm9]] ] = true
+}
+
+-- The player's guitar. characters_voice\human_01\bandit\music\ carries guitar_1 .. guitar_7 and nothing above
+-- that, and the module rolled math.random(1, 11), so four strums in eleven were fatal. The reaction line rolls
+-- 1..7 over reaction_music_1 .. reaction_music_7, which is the whole set, and is left alone.
+local guitar_section = "guitar_b"
+local guitar_path = [[characters_voice\human_01\bandit\music\guitar_]]
+local guitar_tracks = 7
+local reaction_path = [[characters_voice\human_01\stalker\reactions\music\reaction_music_]]
+local reaction_tracks = 7
+local guitar_sound, guitar_reaction, guitar_idle = nil, nil, true
+
+local silent_sound
+
+local function make_silent_sound()
+    local function ignore() end
+    return {
+        play = ignore, play_at_pos = ignore, play_no_feedback = ignore, stop = ignore, stop_deffered = ignore,
+        set_position = ignore, set_frequency = ignore, set_volume = ignore, attach_tail = ignore,
+        playing = function() return false end, length = function() return 0 end
+    }
+end
+
+-- Every consumer of ph_snd_themes - ph_sound through xr_sound.get_sound_object, and sr_sound2d directly -
+-- reaches the engine through this one function, and so does every hand-written path in the mod's own scripts.
+-- Repairing it here covers the theme tables and any caller that spells one of these three paths itself.
+local function install_sound_object_alias()
+    if not (xr_sound and xr_sound.get_safe_sound_object) then return end
+    local original_get = xr_sound.get_safe_sound_object
+    xr_sound.get_safe_sound_object = function(path)
+        if type(path) ~= "string" then return original_get(path) end
+        local named = sound_aliases[string.lower(path)] or path
+        -- The fatal happens inside the constructor, before any caller can test the result, so a name with no
+        -- file must never reach it. A silent stub answers every method the mod's call sites use.
+        if absent_sounds[string.lower(named)] then
+            silent_sound = silent_sound or make_silent_sound()
+            return silent_sound
+        end
+        return original_get(named)
+    end
+end
+
+-- The tables themselves are repaired as well as the constructor, so that a theme never spends a roll on an
+-- entry that cannot be heard: dropping a dead entry is what turns "one strum in nine is silence" back into
+-- "the loudspeaker always says something".
+local function repair_themes()
+    local themes = sound_theme and sound_theme.ph_snd_themes
+    if type(themes) ~= "table" then return end
+    for name, files in pairs(themes) do
+        if type(files) == "table" then
+            local kept, changed = {}, false
+            for index = 1, table.getn(files) do
+                local path = files[index]
+                if type(path) == "string" then
+                    local real = sound_aliases[string.lower(path)]
+                    if real then
+                        path = real
+                        changed = true
+                    end
+                end
+                if type(path) == "string" and absent_sounds[string.lower(path)] then
+                    changed = true
+                else
+                    table.insert(kept, path)
+                end
+            end
+            -- An empty list is the same fatal by another road: get_sound_object would index past the end and
+            -- hand nil to the constructor. A theme that loses everything keeps what it had and is carried by
+            -- the silent stub instead.
+            if changed and table.getn(kept) > 0 then
+                themes[name] = kept
+            end
+        end
+    end
+end
+
+-- A whole-function replacement, the way the pack replaces other mod functions: bind_stalker calls
+-- xr_giditara.item_update() by name on every actor update, so the field is what has to change. The shape of
+-- the original is kept - the same idle latch, the same nearby-stalker reaction with its own odd argument list -
+-- and only the roll that walked off the end of the folder, plus the missing actor guard, are different.
+local function guitar_update()
+    local actor = db.actor
+    if not actor then return end
+    local item = actor:active_item()
+    if not (item and item:section() == guitar_section) then
+        if guitar_sound and guitar_sound:playing() then guitar_sound:stop() end
+        return
+    end
+    if not guitar_idle then
+        if not (guitar_sound and guitar_sound:playing()) then guitar_idle = true end
+        return
+    end
+    guitar_sound = sound_object(guitar_path .. tostring(math.random(1, guitar_tracks)))
+    guitar_sound:play_at_pos(actor, vector():set(0, 0, 0), 0, sound_object.s2d)
+    for id in pairs(db.storage) do
+        local stalker = level.object_by_id(id)
+        if stalker and IsStalker(stalker) then
+            if stalker:position():distance_to(actor:position()) < 10 then
+                if not guitar_sound:playing() then
+                    guitar_reaction = sound_object(reaction_path .. tostring(math.random(1, reaction_tracks)))
+                    guitar_reaction:play_at_pos(stalker, stalker:position(), sound_object.s2d)
+                    guitar_reaction.volume = 0.8
+                end
+            end
+        end
+    end
+    guitar_idle = false
+end
+
+local function install_guitar_repair()
+    if xr_giditara then xr_giditara.item_update = guitar_update end
+end
+
+-- ---------- duplicate-spawns ----------
+-- Scripted spawns the mod lists twice. Four info portions repeat a spawn action on the very next line, so each
+-- of the functions below puts a second body on top of the first one it just made. Every name here is the only
+-- caller of its function in the whole gamedata, and no portion that carries one is ever disabled again, so one
+-- call per save is the author's own count. The flag lives in the actor's pstor - the key/value table the
+-- unmodified mod already saves and loads as it is - so a reload cannot repeat a spawn, and a save taken before
+-- the portion fires carries no flag at all.
+
+local duplicated_spawns = {
+    -- info_l03agroprom.xml:194-195, und_prapor_dead: the first underground zombie, m_zombie_e on one point.
+    {module = "moa_agro", name = "spawn_und_zombi1", flag = "ild_spawn_und_zombi1"},
+    -- info_l03agroprom.xml:213-216, und_prap_nach: both snorks of the warrant officer's raid. The third,
+    -- spawn_snork_last, is listed once and is the only one whose death closes the scene; it is left alone.
+    {module = "moa_agro", name = "spawn_snork1", flag = "ild_spawn_und_snork1"},
+    {module = "moa_agro", name = "spawn_snork2", flag = "ild_spawn_und_snork2"},
+    -- info_l10military.xml:101-102, mil_spawn_deda_kontru: the sixth of the old man's guards.
+    {module = "skladu", name = "spawn_mil_zombi_deda6", flag = "ild_spawn_mil_deda6"},
+    -- info_l10military.xml:152-155, mil_gg_nashel_v_drvn_rpg: both SS bodies at the Monolith camp. Each is
+    -- created and killed on the spot, so the pair was two lootable copies of one corpse on one point.
+    {module = "skladu", name = "spawn_mil_na_strte_tryp_ss1", flag = "ild_spawn_mil_ss1"},
+    {module = "skladu", name = "spawn_mil_na_strte_tryp_ss2", flag = "ild_spawn_mil_ss2"}
+}
+
+-- Mirrors the pstor flags for the running session only. The actor's own storage is the authority; this is
+-- dropped whenever an actor spawns, so loading a save earlier than this session can never block a spawn that
+-- has not happened there yet.
+local spent = {}
+local wrapped = {}
+
+local function already_spawned(flag)
+    if spent[flag] then return true end
+    local actor = db.actor
+    if not actor then return false end
+    local known, value = pcall(xr_logic.pstor_retrieve, actor, flag, 0)
+    if known and (tonumber(value) or 0) ~= 0 then
+        spent[flag] = true
+        return true
+    end
+    return false
+end
+
+local function mark_spawned(flag)
+    spent[flag] = true
+    local actor = db.actor
+    if actor then pcall(xr_logic.pstor_store, actor, flag, 1) end
+end
+
+local function install_spawn_guards()
+    for _, entry in ipairs(duplicated_spawns) do
+        local owner = _G[entry.module]
+        local original = owner and owner[entry.name]
+        -- Wrap each function exactly once, so a second install pass cannot nest a guard inside a guard.
+        if not wrapped[entry] and type(original) == "function" then
+            wrapped[entry] = true
+            owner[entry.name] = function(...)
+                if already_spawned(entry.flag) then return end
+                -- The first call runs the mod's own function untouched; the flag is set only after it returns.
+                original(...)
+                mark_spawned(entry.flag)
+            end
+        end
+    end
+end
+
+local function install_session_reset()
+    local binder = bind_stalker.actor_binder
+    local original_spawn = binder.net_spawn
+    binder.net_spawn = function(self, ...)
+        spent = {}
+        return original_spawn(self, ...)
+    end
+end
+
+
+--     ild_spawn_repairs.install()
+
+-- ---------- detector-family ----------
+-- The artefact-detector chain. The mod builds its registry of artefact ids once, at actor spawn, out of a
+-- hardcoded list of seventeen sections; it never drops an entry, never re-reads a section, and throttles the
+-- cheap detector's beep by comparing squared metres against milliseconds. The four functions the pack's own
+-- detector.update wrapper calls by name are replaced below, so the three tiers stay exactly as distinct as they
+-- were - 16 m and sound only, 9 m with a plain spot, the whole level with a named spot.
+-- Ships as payload/gamedata/scripts/ild_detector_repairs.script and is reached with one line added to
+-- ild_gameplay.install(), right after ild_mod_repairs.install():    ild_detector_repairs.install()
+
+
+local spot_type = "artefact_location"
+local absent_parent = 65535
+local last_object_id = 65534
+
+-- The registry keys the mod already knew, kept exactly as they were, plus the seven its list dropped. Every
+-- anomaly family names three artefacts in its own zone_*.ltx "artefacts =" line and the list carried two of
+-- them, so the dearest drop of each family - af_soul, af_gold_fish, af_electra_moonlight, af_ameba_mica,
+-- af_rusty_sea-urchin, af_night_star, af_cristall - was invisible to all three detectors, the 100 000 RU one
+-- included. The two remaining members of the dummy family are here for the same reason.
+local known_artefacts = {
+    af_medusa = true, af_cristall_flower = true, af_night_star = true,
+    af_vyvert = true, af_gravi = true, af_gold_fish = true,
+    af_blood = true, af_mincer_meat = true, af_soul = true,
+    af_electra_sparkler = true, af_electra_flash = true, af_electra_moonlight = true,
+    af_rusty_thorn = true, af_rusty_kristall = true, ["af_rusty_sea-urchin"] = true,
+    af_ameba_slime = true, af_ameba_slug = true, af_ameba_mica = true,
+    af_drops = true, af_fireball = true, af_cristall = true,
+    af_dummy_battery = true, af_dummy_dummy = true, af_dummy_spring = true,
+    af_dummy_pellicle = true, af_dummy_glassbeads = true
+}
+
+local artefact_section = {}
+
+-- system.ltx includes misc\artefacts.ltx, so the engine's own answer to "is this an artefact" is one line away.
+-- Consulting it covers whatever a stash, a corpse or a script drops on the ground that no list could have named,
+-- and it is what tells a recycled id apart from the artefact that used to hold it. One read per section name.
+local function is_artefact(section)
+    if type(section) ~= "string" then return false end
+    local cached = artefact_section[section]
+    if cached ~= nil then return cached end
+    local result = known_artefacts[section] == true
+    if not result then
+        local known, class = pcall(function()
+            local ini = system_ini()
+            if ini and ini:section_exist(section) and ini:line_exist(section, "class") then
+                return string.gsub(ini:r_string(section, "class"), "%s", "")
+            end
+        end)
+        result = known and class == "ARTEFACT"
+    end
+    artefact_section[section] = result
+    return result
+end
+
+local function server_section(server)
+    local known, section = pcall(function() return server:section_name() end)
+    return known and section or nil
+end
+
+local function artefact_name(server)
+    local known, name = pcall(function()
+        local ini, section = system_ini(), server:section_name()
+        if ini and ini:section_exist(section) and ini:line_exist(section, "inv_name") then
+            return ini:r_string(section, "inv_name")
+        end
+    end)
+    return known and name or ""
+end
+
+-- The engine owns the spot list, the registry only remembers that it asked for one, and on every recycled id the
+-- two had drifted apart. The engine's own count is the truth on both sides of this.
+local function spot_count(id)
+    local known, count = pcall(level.map_has_object_spot, id, spot_type)
+    return known and count or 0
+end
+
+local function clear_spot(id, entry)
+    if entry then entry.spot = false end
+    for _ = 1, spot_count(id) do level.map_remove_object_spot(id, spot_type) end
+end
+
+local function add_spot(id, entry, text)
+    if not entry.spot and spot_count(id) == 0 then level.map_add_object_spot(id, spot_type, text) end
+    entry.spot = true
+end
+
+local function remember(id)
+    if not db.artefacts[id] then db.artefacts[id] = {spot = false, tim_beep = 0} end
+end
+
+local function forget(id, entry)
+    clear_spot(id, entry)
+    db.artefacts[id] = nil
+end
+
+-- Nothing tells a script that an anomaly has just discharged an artefact: zone_gravi spawns one on 14% of its
+-- discharges and zone_mincer, zone_mosquitobald and zone_teleport on 9%, all of it inside the engine, with no
+-- Lua call anywhere. The pack already reconciles the script-side periodic spawn; this walks the id space in
+-- slices instead, a full pass every forty-four updates, and that one pass both finds whatever appeared and drops
+-- whatever is gone. Clearing a key during pairs() is defined behaviour, and the sweep runs before the walk.
+local sweep_slice = 1500
+local sweep_cursor = 1
+
+local function sweep()
+    local simulator = alife()
+    if not simulator then return end
+    local last = sweep_cursor + sweep_slice - 1
+    if last > last_object_id then last = last_object_id end
+    for id = sweep_cursor, last do
+        local server = simulator:object(id)
+        local entry = db.artefacts[id]
+        if server and is_artefact(server_section(server)) then
+            if not entry then remember(id) end
+        elseif entry then
+            forget(id, entry)
+        end
+    end
+    sweep_cursor = last < last_object_id and last + 1 or 1
+end
+
+-- A registry entry is worth exactly as much as the object behind it. The mod added ids and never took one away,
+-- so a picked-up, used or script-released artefact kept its slot and the engine handed that id to the next thing
+-- it spawned - which is what put a green artefact spot on a crate or a car part.
+local function validate(simulator, id, entry)
+    local server = simulator:object(id)
+    if server and is_artefact(server_section(server)) then return server end
+    forget(id, entry)
+    return nil
+end
+
+local function on_current_level(simulator, server)
+    local known, here = pcall(function()
+        return game_graph():vertex(server.m_game_vertex_id):level_id() == simulator:level_id()
+    end)
+    return known and here == true
+end
+
+local beep_path = [[ambient\da_beep]]
+local beep_sound
+
+local function beep(actor, entry, now, period)
+    if beep_sound == nil then
+        local known, sound = pcall(xr_sound.get_safe_sound_object, beep_path)
+        beep_sound = known and sound or false
+    end
+    if not beep_sound or now < entry.tim_beep or beep_sound:playing() then return end
+    entry.tim_beep = now + period
+    beep_sound:play_no_feedback(actor, sound_object.s2d, 0, vector(), 1.0)
+end
+
+-- Отклик. Sound only, no map spot, 16 m.
+local indy_radius = 16
+local indy_fastest = 150
+local indy_slowest = 2500
+
+local function det_indy()
+    local actor = db.actor
+    local simulator = actor and alife()
+    if not simulator then return end
+    sweep()
+    local now, position = time_global(), actor:position()
+    for id, entry in pairs(db.artefacts) do
+        if validate(simulator, id, entry) then
+            -- This tier draws nothing; a spot standing here was left behind by a better detector put away.
+            if entry.spot then clear_spot(id, entry) end
+            local object = level.object_by_id(id)
+            if object and not object:parent() then
+                local square = position:distance_to_sqr(object:position())
+                if square <= indy_radius * indy_radius then
+                    -- The throttle the line was meant to be. The original compared the squared distance, at most
+                    -- 256, against milliseconds since the last beep, so every artefact inside the radius was due
+                    -- again a quarter of a second later and the pulse was simply continuous. The interval now
+                    -- shortens with the real distance, from the tier's own 2500 ms at the edge to 150 ms underfoot.
+                    beep(actor, entry, now, indy_fastest +
+                        (indy_slowest - indy_fastest) * math.sqrt(square) / indy_radius)
+                end
+            end
+        end
+    end
+end
+
+-- The mid tier. A plain spot and a fixed beep, 9 m.
+local normal_radius = 9
+local normal_period = 2500
+-- The engine reads scripts as CP1251 while this repository keeps its sources in UTF-8, so both labels carry the
+-- bytes the mod's own file carries: "артефакт" and "артефакт: ".
+local normal_label = string.char(224, 240, 242, 229, 244, 224, 234, 242)
+
+local function det_normal()
+    local actor = db.actor
+    local simulator = actor and alife()
+    if not simulator then return end
+    sweep()
+    local now, position = time_global(), actor:position()
+    for id, entry in pairs(db.artefacts) do
+        if validate(simulator, id, entry) then
+            local object = level.object_by_id(id)
+            local near = false
+            if object and not object:parent() then
+                near = position:distance_to_sqr(object:position()) < normal_radius * normal_radius
+            end
+            if near then
+                add_spot(id, entry, normal_label)
+                beep(actor, entry, now, normal_period)
+            else
+                clear_spot(id, entry)
+            end
+        end
+    end
+end
+
+-- The top tier. A named spot for every free artefact on the level, no beep, no radius.
+local super_label = string.char(224, 240, 242, 229, 244, 224, 234, 242, 58, 32)
+
+local function det_super()
+    local actor = db.actor
+    local simulator = actor and alife()
+    if not simulator then return end
+    sweep()
+    for id, entry in pairs(db.artefacts) do
+        local server = validate(simulator, id, entry)
+        if server then
+            -- The mod also tested "not sobj.is_day_night", which is no member of an artefact server object and is
+            -- therefore nil on every one of them. It only ever meant something on a class the section check above
+            -- now excludes, so the test is gone rather than left as a property read a recycled id could trip on.
+            if server.parent_id == absent_parent and on_current_level(simulator, server) then
+                if not entry.spot then
+                    add_spot(id, entry, super_label .. game.translate_string(artefact_name(server)))
+                end
+            else
+                clear_spot(id, entry)
+            end
+        end
+    end
+end
+
+local function iteration_del_spot()
+    for id, entry in pairs(db.artefacts) do clear_spot(id, entry) end
+end
+
+local function del_spot(id, entry)
+    clear_spot(id, entry)
+end
+
+-- Wrapped rather than replaced, so it does not matter whether this runs before or after the pack's own
+-- start_update wrapper: whichever installs second holds the other.
+local function install_registry()
+    local detector = bind_det_arts
+    local original_start = detector.start_update
+    detector.start_update = function(...)
+        local actor = db.actor
+        if not actor then return end
+        sweep_cursor = 1
+        if original_start then
+            original_start(...)
+        else
+            actor:set_fastcall(detector.update, actor)
+        end
+        -- The mod's own scan seeds its seventeen sections and registers the fastcall; this seeds everything else
+        -- in the same place, so the first frame with a detector in hand is already right.
+        local simulator = alife()
+        if not simulator then return end
+        for id = 1, last_object_id do
+            local server = simulator:object(id)
+            if server and is_artefact(server_section(server)) then remember(id) end
+        end
+    end
+end
+
+-- ---------- cnpp-and-monsters ----------
+-- Three half-wired set-pieces: the CNPP surge staging, the parasite swarm and the crow sound table.
+-- This file lives beside ild_script_repairs.script because that module is close to the engine's
+-- module-local budget. ild_gameplay.install() calls install() below, after ild_script_repairs.install().
+
+local function report(text)
+    -- One line per intervention, in the engine's own log. Rare by construction: the timer is re-armed
+    -- once per activation of its own section, and the other two repairs say nothing at all.
+    log("ild setpiece: " .. text)
+end
+
+----------------------------------------------------------------------------------------------------
+-- 1. The CNPP surge staging.
+--
+-- all.spawn gives aes_space_restrictor_timer a [sr_timer1] that counts 160000 ms down from the moment
+-- aes_actor_road lands, and the whole of its on_value line is commented out:
+--   ;on_value = 0 ;<!--| %+aes_activate_zone% | 8 | %+aes_timer_80000% | 7 | %+aes_timer_70000% |
+--    6| %aes_timer_60000% | 2 | %+aes_timer_20000 +aes_activate_zone% | 5 | %+aes_timer_5000%
+-- That timer is the only producer of aes_timer_8/7/6/5/2 and of aes_activate_zone, and it produces
+-- none of them. Four sound restrictors wait on them - aes_space_restrictor_sound_0050/0051/0052 for
+-- aes_blowout_1/2/3 and 0053 for anomaly\blowout - and so does the escalation on
+-- aes_space_restrictor_weather, whose sr_idle2..sr_idle5 carry one =start_small_reject each and end
+-- on =start_full_reject. So the road to the sarcophagus plays the single stage aes_actor_road itself
+-- starts and then goes silent, and the counter sits at zero on the HUD for the rest of the level.
+--
+-- The line below is that line with both halves of the mod's own half-finished rename carried through.
+-- The stock spawn inside gamedata.db2 has the same section with start_value = 360000 and
+--   on_value = 0 | %+aes_activate_zone% | 180000 | %+aes_timer_180000% | 120000 | ... | 5000 | ...
+-- so a threshold and the portion it grants always carry the same number. The mod halved the countdown
+-- to 160000 and renamed the portions in the producer to 80000/70000/60000/20000/5000, which is exactly
+-- what a 160000 countdown wants, then renamed the consumers to the leading digit of each and left the
+-- producer's thresholds as those bare digits. Taking the thresholds from the numbers the producer
+-- names and the portions from the restrictors that wait for them is the only reading in which both
+-- halves agree. The stock line's sixth entry is also missing its "+" (%aes_timer_60000%, which grants
+-- nothing at all); {+aes_timer_6} has two consumers here, so that sign is restored. The entry at zero
+-- carries the exit the section never had, so the scheme takes its own statics down. This supersedes
+-- the block in ild_script_repairs.install_level_repairs, whose guard (not state.on_value) can never be
+-- true, sr_timer.parse_data having answered with an empty table rather than nil.
+local aes_timer_name = "aes_space_restrictor_timer"
+local aes_on_value =
+    "0|%+aes_activate_zone% nil" ..
+    "|5000|%+aes_timer_5%" ..
+    "|20000|%+aes_timer_2 +aes_activate_zone%" ..
+    "|60000|%+aes_timer_6%" ..
+    "|70000|%+aes_timer_7%" ..
+    "|80000|%+aes_timer_8%"
+
+local function install_surge_staging()
+    if type(sr_timer) ~= "table" or type(sr_timer.set_scheme) ~= "function" then return end
+    local original = sr_timer.set_scheme
+    sr_timer.set_scheme = function(object, ini, scheme, section, gulag_name)
+        local result = original(object, ini, scheme, section, gulag_name)
+        local known, name = pcall(function() return object:name() end)
+        if not known or name ~= aes_timer_name then return result end
+        local storage = db.storage[object:id()]
+        local state = storage and storage[scheme]
+        -- sr_timer.parse_data always answers with a table, so an on_value the mod never wrote is an
+        -- EMPTY table and never nil. A build that does fill the line in is left exactly as it is.
+        if state and type(state.on_value) == "table" and not next(state.on_value) then
+            state.on_value = sr_timer.parse_data(object, aes_on_value)
+            report("timer " .. name)
+        end
+        return result
+    end
+end
+
+----------------------------------------------------------------------------------------------------
+-- 2. The parasite swarm.
+--
+-- bind_monster.script:62 matches one literal section name, zombie_parazite, while the mod spawns the
+-- parasite from five call sites and three of them use sections that merely inherit from it:
+-- dt_mytant_1_3 and dt_mytant_3_2 (spawn_sections.ltx:74,100, created by dik_ter.spawn_dt_mytant_1_3
+-- and dik_ter.spawn_dt_mytant_3_2) and gar_zasada_orda_zomb5 (spawn_sections.ltx:615, created by
+-- gar_scriptu.spawn_gar_depo_zasada_zombi5). Those three lose the signature mechanic outright.
+-- The binder's own branch already answers for zombie_parazite, so the membership test here holds
+-- exactly the sections it misses. A client object never changes section, so the test is paid once per
+-- binder instead of once per frame, and the effect itself is the binder's own three lines.
+local parasite_sections = {
+    dt_mytant_1_3 = true,
+    dt_mytant_3_2 = true,
+    gar_zasada_orda_zomb5 = true
+}
+local parasite_reach = 3
+
+local function install_parasite_swarm()
+    if type(bind_monster) ~= "table" then return end
+    local binder = bind_monster.generic_object_binder
+    if not binder or type(binder.update) ~= "function" then return end
+    local original = binder.update
+    binder.update = function(self, delta)
+        original(self, delta)
+        local object, actor = self.object, db.actor
+        if not object or not actor then return end
+        local swarm = self.ild_parasite
+        if swarm == nil then
+            local known, section = pcall(function() return object:section() end)
+            swarm = (known and parasite_sections[section]) or false
+            self.ild_parasite = swarm
+        end
+        if not swarm or not object:alive() then return end
+        if object:position():distance_to(actor:position()) >= parasite_reach then return end
+        level.add_pp_effector("dead_zone.ppe", 1001, true)
+        level.set_pp_effector_factor(1001, 0.0005)
+        ogsm_mutants.zombie_insect(object)
+    end
+end
+
+----------------------------------------------------------------------------------------------------
+-- 3. The crow sound table.
+--
+-- bind_crow.script keeps its table of voices in a chunk-level local (bind_crow.script:21), allocates
+-- one sound_object per crow id in crow_binder:__init (:32-34) and never gives it back: net_destroy
+-- (:69-71) only calls the base. Over a session - and across every level change, because the table is
+-- module state - one engine sound source accumulates for every distinct crow id that was ever online.
+--
+-- That table cannot be reached from outside. The engine wraps every script in
+--   local this = {} %s this %s setmetatable(this, {__index = _G}) setfenv(1, this)
+-- (the format string is in xrGame.dll), so a chunk-level local is an upvalue and not a field of the
+-- bind_crow namespace, and xrGame.dll imports luaopen_base/table/string/math/jit/coco from xrLUA.dll
+-- and not luaopen_debug, so there is no debug.getupvalue to reach it with either. So the binder is
+-- what gets replaced: m_crow.ltx:17 names bind_crow.init by name and the engine resolves that name at
+-- every spawn, so the crows get a binder of the pack's own, crow_binder is never constructed, and the
+-- table it would have filled stays empty for the life of the process. The class below is the mod's,
+-- line for line, plus the net_destroy that stops the voice and drops the entry.
+local crow_sounds = {
+    [[monsters\crow\crow_n_2]],
+    [[monsters\crow\crow_n_3]],
+    [[monsters\crow\crow_n_4]],
+    [[monsters\crow\crow_n_5]],
+    [[monsters\crow\crow_n_6]],
+    [[monsters\crow\crow_n_7]],
+    [[monsters\crow\crow_n_8]],
+    [[monsters\crow\crow_n_9]],
+    [[monsters\crow\crow_n_10]],
+    [[monsters\crow\crow_n_11]],
+    [[monsters\crow\crow_n_12]]
+}
+local crow_voices = {}
+
+local function crow_voice(id)
+    if not crow_voices[id] then
+        crow_voices[id] = sound_object(crow_sounds[math.random(1, table.getn(crow_sounds))])
+    end
+    return crow_voices[id]
+end
+
+local function drop_crow_voice(id)
+    local voice = crow_voices[id]
+    if not voice then return end
+    crow_voices[id] = nil
+    -- The client object is going away; a caw still in the air has nothing left to play from.
+    pcall(function() voice:stop() end)
+end
+
+class "ild_crow_binder" (object_binder)
+
+function ild_crow_binder:__init(obj) super(obj)
+    self.id = self.object:id()
+    crow_voice(self.id)
+    self.alive = true
+    self.new_pos = self.object:position()
+    self.corps = false
+    self.counter = math.random(5, 500)
+end
+
+function ild_crow_binder:reinit()
+    object_binder.reinit(self)
+end
+
+function ild_crow_binder:update(delta)
+    object_binder.update(self, delta)
+    self.alive = self.object:alive()
+    self.new_pos = self.object:position()
+    if self.alive then
+        self.counter = self.counter - 1
+        if self.counter <= 0 then
+            if db.actor then crow_voice(self.id):play_at_pos(db.actor, self.new_pos) end
+            self.counter = math.random(5000, 20000)
+        end
+    else
+        local simulator = alife()
+        if not simulator then return end
+        simulator:create("mutant_crow", self.new_pos, self.object:level_vertex_id(),
+            self.object:game_vertex_id())
+        local server = simulator:object(self.id)
+        if server then simulator:release(server, true) end
+    end
+end
+
+function ild_crow_binder:net_destroy()
+    drop_crow_voice(self.id)
+    object_binder.net_destroy(self)
+end
+
+function ild_crow_binder:net_save_relevant()
+    return true
+end
+
+local function install_crow_binder()
+    if type(bind_crow) ~= "table" or type(bind_crow.init) ~= "function" then return end
+    bind_crow.init = function(obj)
+        local new_binder = ild_crow_binder(obj)
+        obj:bind_object(new_binder)
+    end
+end
+
+----------------------------------------------------------------------------------------------------
+
+function install()
+    if installed then return end
+    installed = true
+    -- Three objects in the mod wear door logic on a model that has no hinge, and ph_door indexes the joint it
+    -- never got; the guard must be in place before any of them reaches its first binder update.
+    pcall(install_ph_door_joint_guard)
+    pcall(install_sound_object_alias)
+    pcall(repair_themes)
+    pcall(install_guitar_repair)
+    pcall(install_spawn_guards)
+    pcall(install_session_reset)
+    pcall(function()
+        local detector = bind_det_arts
+        detector.det_indy = det_indy
+        detector.det_normal = det_normal
+        detector.det_super = det_super
+        detector.iteration_del_spot = iteration_del_spot
+        detector.del_spot = del_spot
+        install_registry()
+    end)
+    pcall(install_surge_staging)
+    pcall(install_parasite_swarm)
+    pcall(install_crow_binder)
+end

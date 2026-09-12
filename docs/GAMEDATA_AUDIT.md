@@ -751,3 +751,63 @@ The entry is given from script rather than from the portion, so a save that alre
 receives it on the next update instead of never. The stage lives in the actor's pstor, so the entry is given
 once and a reload does not repeat it.
 
+
+
+## Eleventh pass: the mod's own forum thread, all 39 pages - 2026-09-12
+
+Sources: every post in the mod's release thread (370 distinct player reports, with the author's own replies),
+and a second static sweep of the gamedata in eighteen areas. What follows is only what a player can see.
+
+### The reports that were already closed
+
+Three of the loudest complaints in the thread were repaired in earlier passes and are recorded here so the
+next reading of the thread does not reopen them. The knife/crowbar crash is the inventory detour of the sixth
+pass, not a script fault: `CUIInventoryWnd::ToSlot` asks `GetSlotList` for slot 0, gets NULL and dereferences
+it, and the pack's own detour is what keeps the swap alive. The console that erases whatever the player types
+is the `printf` console line the script patch already blanks in `_g.script`. The Cordon-after-Agroprom crash
+the author describes in the thread header is the story-object abort of the fifth pass.
+
+### Repairs
+
+| Defect | Consequence | Repair |
+| --- | --- | --- |
+| `ph_door.script:28` takes the hinge of a model that has none and line 31 indexes it | Three objects wear door logic on a hingeless model - the table at Tikhon's and a table and a Lada body on the Bar autopark - and the level load ends in a Lua fatal players only escaped by changing `bin` | The scheme's own `reset_scheme` is replaced for exactly those objects with the original body over an inert joint, so the door reads as closed and cannot swing |
+| `character_desc_escape.xml:3429` supplies `wpn_spas`, a section that exists nowhere | A trader's supplies are built inside `alife():create`, so the guide who walks out with Yegor is a hard crash 2.75 s after the dialog | The name is corrected to the shotgun the mod ships, paid for out of the next line's indentation |
+| `info_portions.xml:99` still opens the `doctor_meet` task the rewritten `tasks_escape.xml` dropped | The Cordon guide's linear conversation kills the game on its last phrase | The `<task>` element is blanked; both articles and every condlist that reads the portion stay |
+| `character_desc_garbage.xml` gives Seryi a portrait id no descriptor declares | Searching his body aborts in `CRender::texture_load` | The id becomes the neighbouring face the atlas really holds |
+| Six sound paths in `sound_theme.script` and `xr_giditara.script` name files that exist nowhere | Every one is an instant "Can't open wave file": the Duty siren, the checkpoint loudspeaker, the drunk commander, the hangar tape, the garage radio and four strums in eleven on the guitar | Three are aliased onto the file the author meant, two are dropped from their theme, and the guitar's roll is replaced with the range the folder actually holds |
+| `[spawner] cond = never` on Kruglov and Semenov, while every dialog that needs them is untouched | «Найти учёного» can never be completed or failed, and the psi helmet, Vasilyev's body and three more tasks die with it | The two objects are restored in the spawn at the same byte width, and the monolith-suit errand stops granting a second, dead scientist task |
+| No level changer on Dead City: the designer's own `level_changer_to_radar` never reached `all.spawn` | A player who walks in can never leave, and Radar has no other road | The mod's parked Military-to-Radar record is moved onto the spot the designer marked, every field fixed width; script adds the map spot and warns once on a save made before the repair |
+| `garbage_tasks.task_hellcar_fail` asks a smart terrain the spawn no longer holds for its population | Helping Dymok is stamped failed in the same second it is accepted, and his three men stand with no logic | An absent gulag is no longer read as a wiped squad, and the three are given their jobs back |
+| `esc_stalker_camp` filters on `last_day` and `val_prisoner` on `dolg`, while the NPCs written for them are a stalker and a bandit | Fox never holds his sniper post and his death no longer turns the dog pack; the caged prisoner is a mute prop and his rescue sits in the PDA forever | Both community gates are widened to the community the profiles actually carry |
+| `mil_wpn_rg-6` was replaced by a fireball zone | Voronin's job cannot be finished and the Duty trader never opens his second stock | The launcher is created at the cache, clear of the anomaly, once per save |
+| `tasks_darkvalley.xml` leaves the moonshine task's own objective with an empty `<infoportion_complete>` | «Самогон для Мазая» never closes | The header takes the portion its own last step already grants |
+| `dialogs_escape.xml` and `dialogs_garbage.xml` each lost one `<next>` | Sidorovich's jarred-anomaly errand and Abram's refusal branch are written, wired and unreachable | The reply goes back beside its sibling, paid for out of the dialog's indentation |
+| `stanok.script:544` needs two part sections that are not defined, and three recipes' parts are placed nowhere | Three of the four level-2 recipes can never be built | The recipe takes the names `unique_items.ltx` really uses, and the orphan parts are seeded once into four stashes that already hold their siblings |
+| `bind_det_arts` builds its artefact registry once, never drops an id, and omits the expensive artefact of every family | Artefacts an anomaly drops in front of the player are invisible to every detector, recycled ids draw spots on crates, and the cheap detector beeps continuously | The registry is reconciled as the detector runs, stale ids are dropped, the five missing sections are added and the throttle is made a real one |
+| `moa_agro.script:67` spawns a second statist instead of the NPC the quest is about | "Nemo", his escape along his own path and his FN2000 are never seen | The function is replaced with the profile the logic, the path and the loot were all written for |
+| `bar_ckpint.daq_iashik_nac_two` removes exactly ten crates | A player who carried more is left with up to seven undroppable 5 kg quest crates | The whole stack drains, and a save already carrying spares is cleaned up |
+| The Radar antenna custom data raises the damage when a psy helmet is worn | The one field every playthrough crosses punishes the helmet Sakharov gives for it | The helmet can no longer make the field worse than bare-headed |
+| Four spawns fire twice and one `[remark]` carries `on_info` twice | Two zombies, two of each snork and four SS bodies on single points, doubled loot, and a surrender that never closes the shoot-him branch | One-shot guards on the three script spawns, and the repeated key takes the numbered name the switch reader already reads |
+| Raw identifiers on screen in four places | The Dark Valley toll gate reads as eight ids, the crate courier answers with one, the mechanic's second banner prints its own, and the 100 000 RU detector is named `det_art_super` | Three are size-neutral renames in the string tables; the detector's text is supplied at `CInifile::r_string`, because its file is parsed before any hook exists |
+| `quest_items.ltx` gives the PP-4a sensor a pixel position for a grid cell and a one-letter name; `w_mp40.ltx` swaps the two German names | Both are carried by NPCs on four levels and sold by four traders | Vanilla's cell and the neighbouring string id come back, and each gun takes its own name |
+| Half-wired staging on the CNPP road, a parasite hook matching one literal section, a crow sound per object id | One surge stage and then silence, three of five parasite fights without their mechanic, and a slow sound leak | The existing surge wrapper is extended, the hook becomes a membership test, and the crow binder releases its voice |
+| A false «to Yantar» icon on Rostok, a jammer spot placed before the jammer exists, two NPCs with no scheme | A transition that is not there, a missing marker, and two NPCs standing blank | Parked changers lose their spot, the marker is retried until its object resolves, and the two are held where the spawn put them |
+
+### Examined and deliberately not changed
+
+The Bar night-mutant attack starts on its own - the `[kamp]` section is reached, so «СВЯТО МЕСТО ПУСТО» was
+never blocked. The binoculars and the torch do come back from the fake item, so the hidden-slot path loses
+nothing. Both were reported as defects and are not.
+
+### Not closed
+
+The save corruption after the poltergeist at the professor's is not repaired: the thread has the author
+reproducing it on his own beta save with an empty log, and nothing in the shipped scripts on that path writes
+a value the loader cannot read back. It needs a save that has already broken to be worth another pass.
+
+The 302 vanilla Bar string ids the mod's own `stable_dialogs_bar.xml` shadows - Duty, the barman, the ecologists
+and the arena - still print raw where those dialogs are reachable. Restoring them costs 45 830 bytes and the
+whole loose language folder has 11 092 bytes of borrowable indentation, so no in-memory repair can carry them;
+a string file of the pack's own would have to be named in the archived `localization.ltx`, which is possible but
+would put a `text/rus` path back in the payload and strand every client below 1.0.8 again.
