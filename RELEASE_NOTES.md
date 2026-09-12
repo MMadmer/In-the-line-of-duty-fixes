@@ -22,7 +22,7 @@
 
 ## Установка
 
-Распакуйте архив в корень игры. Ни один оригинальный файл игры или мода не заменяется, сохранения остаются рабочими. Аддон можно удалить в любой момент по списку `.ild-fixes/managed-files.txt`. Если сейчас стоит 1.0.5, 1.0.6 или 1.0.7, обновиться из игры не выйдет — распакуйте архив руками один раз, дальше обновления снова ставятся сами.
+Распакуйте архив в корень игры. Ни один оригинальный файл игры или мода не заменяется, сохранения остаются рабочими. Аддон можно удалить в любой момент по списку `.ild-fixes/managed-files.txt`. Полный архив и патч — альтернативы, встроенный обновлятор выбирает патч сам. Если сейчас стоит 1.0.5, 1.0.6 или 1.0.7, обновиться из игры не выйдет — распакуйте полный архив руками один раз, дальше обновления снова ставятся сами.
 
 ---
 
@@ -50,4 +50,4 @@ Working through the mod's forum thread
 
 ## Installation
 
-Extract the archive into the game root. No original game or mod file is replaced and existing saves keep working. The addon can be removed at any time using `.ild-fixes/managed-files.txt`. If 1.0.5, 1.0.6 or 1.0.7 is installed, the in-game update cannot reach you - unpack this archive by hand once and updates install themselves again afterwards.
+Extract the archive into the game root. No original game or mod file is replaced and existing saves keep working. The addon can be removed at any time using `.ild-fixes/managed-files.txt`. The full archive and the patch are alternatives; the in-game updater picks the patch by itself. If 1.0.5, 1.0.6 or 1.0.7 is installed, the in-game update cannot reach you - unpack the full archive by hand once and updates install themselves again afterwards.
