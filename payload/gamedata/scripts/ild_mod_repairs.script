@@ -544,112 +544,9 @@ local function install_registry()
 end
 
 -- ---------- cnpp-and-monsters ----------
--- Three half-wired set-pieces: the CNPP surge staging, the parasite swarm and the crow sound table.
--- This file lives beside ild_script_repairs.script because that module is close to the engine's
--- module-local budget. ild_gameplay.install() calls install() below, after ild_script_repairs.install().
-
-local function report(text)
-    -- One line per intervention, in the engine's own log. Rare by construction: the timer is re-armed
-    -- once per activation of its own section, and the other two repairs say nothing at all.
-    log("ild setpiece: " .. text)
-end
-
-----------------------------------------------------------------------------------------------------
--- 1. The CNPP surge staging.
---
--- all.spawn gives aes_space_restrictor_timer a [sr_timer1] that counts 160000 ms down from the moment
--- aes_actor_road lands, and the whole of its on_value line is commented out:
---   ;on_value = 0 ;<!--| %+aes_activate_zone% | 8 | %+aes_timer_80000% | 7 | %+aes_timer_70000% |
---    6| %aes_timer_60000% | 2 | %+aes_timer_20000 +aes_activate_zone% | 5 | %+aes_timer_5000%
--- That timer is the only producer of aes_timer_8/7/6/5/2 and of aes_activate_zone, and it produces
--- none of them. Four sound restrictors wait on them - aes_space_restrictor_sound_0050/0051/0052 for
--- aes_blowout_1/2/3 and 0053 for anomaly\blowout - and so does the escalation on
--- aes_space_restrictor_weather, whose sr_idle2..sr_idle5 carry one =start_small_reject each and end
--- on =start_full_reject. So the road to the sarcophagus plays the single stage aes_actor_road itself
--- starts and then goes silent, and the counter sits at zero on the HUD for the rest of the level.
---
--- The line below is that line with both halves of the mod's own half-finished rename carried through.
--- The stock spawn inside gamedata.db2 has the same section with start_value = 360000 and
---   on_value = 0 | %+aes_activate_zone% | 180000 | %+aes_timer_180000% | 120000 | ... | 5000 | ...
--- so a threshold and the portion it grants always carry the same number. The mod halved the countdown
--- to 160000 and renamed the portions in the producer to 80000/70000/60000/20000/5000, which is exactly
--- what a 160000 countdown wants, then renamed the consumers to the leading digit of each and left the
--- producer's thresholds as those bare digits. Taking the thresholds from the numbers the producer
--- names and the portions from the restrictors that wait for them is the only reading in which both
--- halves agree. The stock line's sixth entry is also missing its "+" (%aes_timer_60000%, which grants
--- nothing at all); {+aes_timer_6} has two consumers here, so that sign is restored. The entry at zero
--- carries the exit the section never had, so the scheme takes its own statics down. This supersedes
--- the block in ild_script_repairs.install_level_repairs, whose guard (not state.on_value) can never be
--- true, sr_timer.parse_data having answered with an empty table rather than nil.
-local aes_timer_name = "aes_space_restrictor_timer"
-local aes_on_value =
-    "0|%+aes_activate_zone% nil" ..
-    "|5000|%+aes_timer_5%" ..
-    "|20000|%+aes_timer_2 +aes_activate_zone%" ..
-    "|60000|%+aes_timer_6%" ..
-    "|70000|%+aes_timer_7%" ..
-    "|80000|%+aes_timer_8%"
-
-local function install_surge_staging()
-    if type(sr_timer) ~= "table" or type(sr_timer.set_scheme) ~= "function" then return end
-    local original = sr_timer.set_scheme
-    sr_timer.set_scheme = function(object, ini, scheme, section, gulag_name)
-        local result = original(object, ini, scheme, section, gulag_name)
-        local known, name = pcall(function() return object:name() end)
-        if not known or name ~= aes_timer_name then return result end
-        local storage = db.storage[object:id()]
-        local state = storage and storage[scheme]
-        -- sr_timer.parse_data always answers with a table, so an on_value the mod never wrote is an
-        -- EMPTY table and never nil. A build that does fill the line in is left exactly as it is.
-        if state and type(state.on_value) == "table" and not next(state.on_value) then
-            state.on_value = sr_timer.parse_data(object, aes_on_value)
-            report("timer " .. name)
-        end
-        return result
-    end
-end
-
-----------------------------------------------------------------------------------------------------
--- 2. The parasite swarm.
---
--- bind_monster.script:62 matches one literal section name, zombie_parazite, while the mod spawns the
--- parasite from five call sites and three of them use sections that merely inherit from it:
--- dt_mytant_1_3 and dt_mytant_3_2 (spawn_sections.ltx:74,100, created by dik_ter.spawn_dt_mytant_1_3
--- and dik_ter.spawn_dt_mytant_3_2) and gar_zasada_orda_zomb5 (spawn_sections.ltx:615, created by
--- gar_scriptu.spawn_gar_depo_zasada_zombi5). Those three lose the signature mechanic outright.
--- The binder's own branch already answers for zombie_parazite, so the membership test here holds
--- exactly the sections it misses. A client object never changes section, so the test is paid once per
--- binder instead of once per frame, and the effect itself is the binder's own three lines.
-local parasite_sections = {
-    dt_mytant_1_3 = true,
-    dt_mytant_3_2 = true,
-    gar_zasada_orda_zomb5 = true
-}
-local parasite_reach = 3
-
-local function install_parasite_swarm()
-    if type(bind_monster) ~= "table" then return end
-    local binder = bind_monster.generic_object_binder
-    if not binder or type(binder.update) ~= "function" then return end
-    local original = binder.update
-    binder.update = function(self, delta)
-        original(self, delta)
-        local object, actor = self.object, db.actor
-        if not object or not actor then return end
-        local swarm = self.ild_parasite
-        if swarm == nil then
-            local known, section = pcall(function() return object:section() end)
-            swarm = (known and parasite_sections[section]) or false
-            self.ild_parasite = swarm
-        end
-        if not swarm or not object:alive() then return end
-        if object:position():distance_to(actor:position()) >= parasite_reach then return end
-        level.add_pp_effector("dead_zone.ppe", 1001, true)
-        level.set_pp_effector_factor(1001, 0.0005)
-        ogsm_mutants.zombie_insect(object)
-    end
-end
-
+-- bind_crow.script builds one sound_object per crow id and never releases it, and tbl_crow is never pruned:
+-- a slow engine-sound leak that grows for as long as the session runs. The binder below is the mod's own
+-- with the one thing it lacked - a net_destroy that drops the voice.
 ----------------------------------------------------------------------------------------------------
 -- 3. The crow sound table.
 --
@@ -680,6 +577,7 @@ local crow_sounds = {
     [[monsters\crow\crow_n_11]],
     [[monsters\crow\crow_n_12]]
 }
+
 local crow_voices = {}
 
 local function crow_voice(id)
@@ -771,7 +669,5 @@ function install()
         detector.del_spot = del_spot
         install_registry()
     end)
-    pcall(install_surge_staging)
-    pcall(install_parasite_swarm)
     pcall(install_crow_binder)
 end

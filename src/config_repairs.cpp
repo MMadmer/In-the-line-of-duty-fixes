@@ -44,16 +44,10 @@ constexpr std::array sources{
         "6AE66AE92EB2520CE038E90CB9ED983D4CE8D9D0A56C78A16B490EE8001E9140", ConfigRepair::detector_task},
     ConfigRepairSource{L"gamedata/config/text/rus/stable_dialogs_bar.xml", 150407,
         "225271086B8F02FB8EC5E7D09C114087DAA7EFBC3BECCF22E02F8A920A5B9577", ConfigRepair::detector_text},
-    ConfigRepairSource{L"gamedata/config/gameplay/character_desc_garbage.xml", 65593,
-        "9EB30777A590201A45A1B62443BD0635A438C8169E9A859B0B5F5CE904BA0E3D", ConfigRepair::seryi_portrait},
-    ConfigRepairSource{L"gamedata/config/gameplay/info_portions.xml", 6471,
-        "35F34B7432DB14F5BC09FD15C0F06655CF774636CFC5BBF333E7ACB37AA3DE60", ConfigRepair::doctor_task},
     ConfigRepairSource{L"gamedata/config/gameplay/character_desc_escape.xml", 211684,
         "F0E4CB80D6CCD7CB29D8D29DDE3F023CC88F1B0E6E5DA2E651B90F587C224B45", ConfigRepair::guide_shotgun},
     ConfigRepairSource{L"gamedata/config/gameplay/dialogs_yantar.xml", 31271,
         "E1AA3BD1C18D12E2A878497EF60F2EFA42333DE0464B43E5A4495EF47FF092EA", ConfigRepair::monolith_task},
-    ConfigRepairSource{L"gamedata/spawns/all.spawn", 4731415,
-        "8BC5F2C733BA8006457753BF791164453BDFB9006423EB3720E8F7FA4A31A23D", ConfigRepair::dead_city_exit},
     ConfigRepairSource{L"gamedata/config/gameplay/dialogs_garbage.xml", 71704,
         "204307CD9EDCE43F14EAF142026B820462247E2F6854619D5BB60F3A151FEA06", ConfigRepair::abram_pistol},
     ConfigRepairSource{L"gamedata/config/gameplay/tasks_darkvalley.xml", 12001,
@@ -345,51 +339,6 @@ bool is_config_repair_size(std::size_t size)
     return false;
 }
 
-// Overwrite one fixed-width field of a binary record, and only while the bytes there are still the ones this
-// repair was written against. The width never changes, so the file's size cannot move.
-bool poke(std::string& text, std::size_t at, std::string_view expected, std::string_view value)
-{
-    if (expected.size() != value.size() || at > text.size() - expected.size()) return false;
-    if (text.compare(at, expected.size(), expected) != 0) return false;
-    text.replace(at, value.size(), value);
-    return true;
-}
-
-// Dead City's way out. The level's own spawn ends with a level changer the designer named level_changer_to_radar
-// and left unfinished, and the compiler never carried it into all.spawn: of the 41 level changers the file
-// holds, not one sits on a Dead City graph vertex, so a player who walks in can never leave. The mod parks the
-// doors it disables far off the map, and its Military to Radar one is parked at y = +130666; that dead record is
-// what this repair moves onto the spot the designer marked. It already names the destination his stub wanted, so
-// only its own placement changes, and every field is fixed width.
-constexpr char parked_radar_exit_bytes[] =
-    "\x01\x00" "level_changer" "\x00" "exit_to_radar_01" "\x00\x00\xFE"
-    "\x97\x1F\xCD\x42" "\x68\x35\xFF\x47" "\x48\x11\xCA\x43";
-constexpr std::string_view parked_radar_exit{parked_radar_exit_bytes, sizeof(parked_radar_exit_bytes) - 1};
-static_assert(parked_radar_exit.size() == 47);
-
-struct SpawnField { std::size_t offset; std::string_view expected, value; };
-constexpr std::array dead_city_exit_fields{
-    // Position: (102.56, 130666.81, 404.14) becomes the designer's own (144.32478, 1.1692853, -137.48528).
-    SpawnField{35, std::string_view{"\x97\x1F\xCD\x42" "\x68\x35\xFF\x47" "\x48\x11\xCA\x43", 12},
-                   std::string_view{"\x27\x53\x10\x43" "\x24\xAB\x95\x3F" "\x3B\x7C\x09\xC3", 12}},
-    // Angles: the designer's yaw for that doorway, byte for byte out of the level's own spawn.
-    SpawnField{47, std::string_view{"\x7F\x91\x38\x3D" "\x25\xB9\x43\x3F" "\xDD\x19\x51\xBD", 12},
-                   std::string_view{"\x00\x00\x00\x00" "\xE2\x0B\x53\xBF" "\x00\x00\x00\x80", 12}},
-    // Game vertex: 1808 (Military Warehouses) becomes 2864 (Dead City), the vertex the entrance already names.
-    SpawnField{79, std::string_view{"\x10\x07", 2}, std::string_view{"\x30\x0B", 2}},
-    // Level vertex: 396782 (Military) becomes 475959, the level vertex the graph stores for vertex 2864.
-    SpawnField{89, std::string_view{"\xEE\x0D\x06\x00", 4}, std::string_view{"\x37\x43\x07\x00", 4}},
-    // Trigger box: the parked record carries a 4.59 x 50 x 164 slab. The door keeps the designer's 3 x 6
-    // footprint and takes its height from the mod's own Dead City entrance, whose 4.839 is known to trigger.
-    SpawnField{159,
-        std::string_view{"\x48\xE1\x92\x40" "\x00\x00\x00\x00" "\x00\x00\x00\x00" "\x00\x00\x00\x00"
-                         "\x00\x00\x48\x42" "\x00\x00\x00\x00" "\x00\x00\x00\x00" "\x00\x00\x00\x00"
-                         "\x79\x14\x24\x43" "\x00\x00\x00\x00" "\x00\x00\x00\x00" "\x00\x00\x00\x00", 48},
-        std::string_view{"\x00\x00\x40\x40" "\x00\x00\x00\x00" "\x00\x00\x00\x00" "\x00\x00\x00\x00"
-                         "\xCF\xD5\x9A\x40" "\x00\x00\x00\x00" "\x00\x00\x00\x00" "\x00\x00\x00\x00"
-                         "\x00\x00\xC0\x40" "\x00\x00\x00\x00" "\x00\x00\x00\x00" "\x00\x00\x00\x00", 48}}
-};
-
 // A reply list that lost one of its entries. The branch it should name is written, gated and wired to logic;
 // nothing else can reach it, so the phrases behind it are dead text. The missing next goes in beside the
 // sibling it belongs with and is paid for out of the dialog's own indentation, the way the detector task entry
@@ -597,23 +546,6 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
     {
         if (!split_crate_reply(patched) || !add_detector_lines(patched)) return false;
     }
-    else if (repair == ConfigRepair::seryi_portrait)
-    {
-        // Seryi's portrait id is in none of the descriptor files the system config names, so the texture master
-        // hands the id itself to the renderer as a path and searching his body aborts on a texture it cannot
-        // find. The neighbouring green-stalker face is one the atlas really holds; one digit, so the length
-        // stays exactly what it was.
-        if (!replace_one(patched, "<icon>ui_npc_u_green_stalker_9</icon>",
-            "<icon>ui_npc_u_green_stalker_8</icon>")) return false;
-    }
-    else if (repair == ConfigRepair::doctor_task)
-    {
-        // The Cordon guide's portion still asks for the doctor_meet task, which the mod's rewritten Cordon task
-        // file dropped. The engine looks the id up, gets nothing back and reads a title off the null node it
-        // stored anyway - a fatal on the last line of a linear conversation. The element is blanked rather than
-        // pointed elsewhere: the beat already has a PDA entry of the mod's own.
-        if (!blank_to(patched, "<task>doctor_meet</task>", "")) return false;
-    }
     else if (repair == ConfigRepair::guide_shotgun)
     {
         if (!replace_one(patched, guide_shotgun_at, guide_shotgun_fix)) return false;
@@ -630,14 +562,6 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
         const auto grant = patched.find(stray, at);
         if (grant == patched.npos || grant - at > 80) return false;
         std::fill_n(patched.begin() + grant, stray.size(), ' ');
-    }
-    else if (repair == ConfigRepair::dead_city_exit)
-    {
-        const auto at = patched.find(parked_radar_exit);
-        if (at == patched.npos ||
-            patched.find(parked_radar_exit, at + parked_radar_exit.size()) != patched.npos) return false;
-        for (const auto& field : dead_city_exit_fields)
-            if (!poke(patched, at + field.offset, field.expected, field.value)) return false;
     }
     else if (repair == ConfigRepair::abram_pistol)
     {
@@ -764,17 +688,8 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
         {
             // Retain every implemented reward and state transition; remove only absent legacy action references.
             const auto ransom_present = block(patched, "dialog", "esc_dengi_rebe").has_value();
-            // Sidorovich's topic list offers 11, 31, 41 and 51 and skips 21, so the one topic that asks him
-            // for work - and the eight phrases of the chemical-anomaly errand behind it - had no producer. The
-            // acid puddle that errand is about is spawned at game start and sits in a state only this branch's
-            // portion can leave, so the content is live and only the link was missing. The branch's own last
-            // phrase then calls a function the shipped scripts do not contain, which goes the way the other two
-            // absent actions above it did.
             if (!remove_absent_action(patched, "esc_sidor_artu_dolgy_ne_dal", "new_life.sidor_nagrada_1_6", 2) ||
                 !remove_absent_action(patched, "esc_post_pianka", "new_life.give_albom", 1) ||
-                !add_missing_reply(patched, "esc_sidor_ia_sprositi", "1", "<next>11</next>", "<next>21</next>") ||
-                !remove_absent_action(patched, "esc_sidor_ia_sprositi",
-                    "new_life.sidor_dop_kvest_mne_banky", 1) ||
                 !add_ransom_check(patched) || !add_tikhon_share(patched, ransom_present)) return false;
         }
     }
