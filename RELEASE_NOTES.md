@@ -2,7 +2,7 @@
 
 ## Тема
 
-Детектор аномалий, вылет в диалоге, бесконечные тушканы и квест с Порчей
+Фикс квестов
 
 ## Изменения
 
@@ -25,7 +25,7 @@
 
 ## Theme
 
-The detector job, a dialogue crash, the endless tushkans and the curse quest
+Quest fixes
 
 ## Changes
 
