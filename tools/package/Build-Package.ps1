@@ -23,7 +23,6 @@ $sourceMap = [ordered]@{
     'gamedata/scripts/ild_recipe_repairs.script' = 'payload/gamedata/scripts/ild_recipe_repairs.script'
     'gamedata/config/ui/ild_fixes_update.xml' = 'payload/gamedata/config/ui/ild_fixes_update.xml'
     'gamedata/config/ui/ild_fixes_options.xml' = 'payload/gamedata/config/ui/ild_fixes_options.xml'
-    'gamedata/config/text/rus/ild_fixes_text.xml' = 'payload/gamedata/config/text/rus/ild_fixes_text.xml'
     'README-InTheLineOfDutyFixes.txt' = 'packaging/README-InTheLineOfDutyFixes.txt'
 }
 # The manifest lives inside the owned .ild-fixes directory, so a manual install leaves nothing unmanaged.

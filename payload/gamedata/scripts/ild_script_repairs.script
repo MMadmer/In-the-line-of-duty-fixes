@@ -2088,9 +2088,25 @@ function install()
     -- gets it too. Its two steps carry the map spots, which is what ties them to the task - the engine shows the
     -- spot of an objective while it is open and takes it down when it closes. Neither the cache nor Bronevik has
     -- a story id, so the objectives are built in script where both can be looked up.
+    -- The engine builds its string table from a fixed list of file names it keeps in localization.ltx, not from
+    -- whatever the language folder holds, so a string file of the pack's own is never opened and an id it cannot
+    -- find is handed back unchanged. The four the player reads therefore carry their own CP1251 bytes, the way
+    -- the two hints further up do:
+    -- Тайник: микросхема для детектора / Броневик ждёт микросхему
+    -- Найти микросхему EVA-1400 / Отнести микросхему Броневику
     local detector_guide = {
-        cache = {section = "agro_tainik_detei3", hint = "ild_detector_cache_hint"},
-        owner = {section = "bar_bar_moder", hint = "ild_detector_bronevik_hint"},
+        cache = {section = "agro_tainik_detei3", hint = string.char(
+            210, 224, 233, 237, 232, 234, 58, 32, 236, 232, 234, 240, 238, 241, 245, 229, 236, 224, 32, 228, 235,
+            255, 32, 228, 229, 242, 229, 234, 242, 238, 240, 224)},
+        owner = {section = "bar_bar_moder", hint = string.char(
+            193, 240, 238, 237, 229, 226, 232, 234, 32, 230, 228, 184, 242, 32, 236, 232, 234, 240, 238, 241, 245,
+            229, 236, 243)},
+        step = {
+            string.char(205, 224, 233, 242, 232, 32, 236, 232, 234, 240, 238, 241, 245, 229, 236, 243, 32, 69, 86,
+                65, 45, 49, 52, 48, 48),
+            string.char(206, 242, 237, 229, 241, 242, 232, 32, 236, 232, 234, 240, 238, 241, 245, 229, 236, 243,
+                32, 193, 240, 238, 237, 229, 226, 232, 234, 243)
+        },
         period = 30000
     }
     local function detector_object(entry, now)
@@ -2111,7 +2127,7 @@ function install()
     -- spot: an entry that never appears would be worse than an entry that does not point anywhere.
     local function detector_step(job, index, entry, now)
         local step = SGameTaskObjective(job, index)
-        step:set_description("ild_detector_task_" .. index)
+        step:set_description(detector_guide.step[index])
         local id = detector_object(entry, now)
         if id then
             step:set_map_hint(entry.hint)

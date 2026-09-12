@@ -15,6 +15,13 @@ $utf8 = [Text.UTF8Encoding]::new($false)
 $manifestPath = '.ild-fixes/update-manifest.txt'
 $script:checks = 0
 
+# The applier owns a fixed set of namespaces, and nothing compared that set against what the packager actually
+# ships. A payload file outside it reaches a release and every installed updater rejects the whole archive, so
+# the target version below is built from the packager's own map instead of a hand-written list.
+$packaged = @([regex]::Matches((Get-Content -LiteralPath (Join-Path $repo 'tools\package\Build-Package.ps1') -Raw),
+    "(?m)^\s+'([^']+)'\s*=\s*'[^']+'") | ForEach-Object { $_.Groups[1].Value })
+if ($packaged.Count -lt 5) { throw 'Cannot read the packaged file map.' }
+
 function Assert-That([bool]$Condition, [string]$Message) {
     ++$script:checks
     if (-not $Condition) { throw "FAIL: $Message" }
@@ -45,9 +52,10 @@ function New-Version([string]$Path, [string]$Version, [bool]$Target, [bool]$With
     Write-Text (Join-Path $Path 'bin\ild_fixes_unchanged.txt') 'unchanged'
     Write-Text (Join-Path $Path 'bin\ild_fixes_changed.txt') "changed-$Version"
     if ($Target) {
-        Write-Text (Join-Path $Path 'gamedata\scripts\ild_gameplay.script') 'gameplay-fixes'
-        Write-Text (Join-Path $Path 'gamedata\scripts\ild_script_repairs.script') 'script-repairs'
-        Write-Text (Join-Path $Path 'gamedata\scripts\ild_recipe_repairs.script') 'recipe-repairs'
+        foreach ($relative in $packaged) {
+            if ($relative -in @('bin/dinput8.dll', 'InTheLineOfDutyFixesUpdater.exe')) { continue }
+            Write-Text (Join-Path $Path $relative.Replace('/', '\')) "shipped-$relative"
+        }
         Write-Text (Join-Path $Path 'bin\ild_fixes_added.txt') 'added'
     } else {
         Write-Text (Join-Path $Path 'bin\ild_fixes_dropped.txt') 'dropped'

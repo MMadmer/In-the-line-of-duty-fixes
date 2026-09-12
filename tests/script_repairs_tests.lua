@@ -2470,11 +2470,15 @@ do
     local job = calls.tasks[1]
     equal(job.id, "ild_detector_task", "loaded from the skeleton the pack adds to the task file")
     equal(#job.objectives, 2, "with the two steps the job actually has")
-    equal(job.objectives[1].description, "ild_detector_task_1", "find the chip")
+    -- The engine never opens a string file of the pack's own, so what a step carries is the text itself.
+    equal(job.objectives[1].description, string.char(205, 224, 233, 242, 232, 32, 236, 232, 234, 240, 238, 241,
+        245, 229, 236, 243, 32, 69, 86, 65, 45, 49, 52, 48, 48), "find the chip")
     equal(job.objectives[1].object, 900, "pointing at the children's cache")
-    equal(job.objectives[1].hint, "ild_detector_cache_hint", "with its own hint")
+    equal(job.objectives[1].hint, string.char(210, 224, 233, 237, 232, 234, 58, 32, 236, 232, 234, 240, 238, 241,
+        245, 229, 236, 224, 32, 228, 235, 255, 32, 228, 229, 242, 229, 234, 242, 238, 240, 224), "with its own hint")
     equal(job.objectives[1].location, "green_location", "as a map spot of its own")
-    equal(job.objectives[2].description, "ild_detector_task_2", "then take it back")
+    equal(job.objectives[2].description, string.char(206, 242, 237, 229, 241, 242, 232, 32, 236, 232, 234, 240,
+        238, 241, 245, 229, 236, 243, 32, 193, 240, 238, 237, 229, 226, 232, 234, 243), "then take it back")
     equal(job.objectives[2].object, 901, "pointing at Bronevik")
     equal(calls.pstor.ild_detector_task, 1, "and the stage is remembered")
     pass(4)

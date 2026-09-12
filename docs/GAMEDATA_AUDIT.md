@@ -726,10 +726,11 @@ The pack finishes the branch along the line the author drew, and adds nothing be
 - **A cache that was already looted still yields the chip.** It is placed when the box starts its scheme, which
   happens again on every entry to the level, so an old save gets it the next time the player is there - once,
   because the actor's pstor remembers it.
-- **The two lines Bronevik and the actor say** ship in the pack's own string file,
-  `gamedata/config/text/rus/ild_fixes_text.xml`. SoC reads every file in the language folder rather than a list,
-  so a new file of our own is loaded with no patch at all - and with the depot hint and the Garbage PDA line,
-  this is the third and last place the pack puts words in anyone's mouth.
+- **The two lines Bronevik and the actor say** carry their own CP1251 bytes, the way the depot hint and the
+  Garbage PDA line do. A string file of the pack's own was tried first and never worked: SoC does not read the
+  language folder, it opens the file names listed in `[string_table] files` in the archived `localization.ltx`,
+  and a name that is not on that list is never opened. An id the table cannot find is handed back unchanged, so
+  the text itself stands in for the id and the engine prints it as it is.
 
 Nothing about the price, the broken detector, the cache or its other loot is changed.
 

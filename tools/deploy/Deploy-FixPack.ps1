@@ -21,7 +21,6 @@ $sourceMap = @{
     'gamedata/scripts/ild_recipe_repairs.script' = 'payload\gamedata\scripts\ild_recipe_repairs.script'
     'gamedata/config/ui/ild_fixes_update.xml' = 'payload\gamedata\config\ui\ild_fixes_update.xml'
     'gamedata/config/ui/ild_fixes_options.xml' = 'payload\gamedata\config\ui\ild_fixes_options.xml'
-    'gamedata/config/text/rus/ild_fixes_text.xml' = 'payload\gamedata\config\text\rus\ild_fixes_text.xml'
     'README-InTheLineOfDutyFixes.txt' = 'packaging\README-InTheLineOfDutyFixes.txt'
 }
 $expected = @(@($sourceMap.Keys) + @('.ild-fixes/version.txt', '.ild-fixes/managed-files.txt', $manifestPath) | Sort-Object)
@@ -69,6 +68,9 @@ try {
     if (Compare-Object $expected $managed) { throw 'Unexpected payload ownership manifest.' }
     $ownedPath = "$GameRoot\.ild-fixes\managed-files.txt"
     $owned = if (Test-Path $ownedPath) { @(Get-Content $ownedPath) } else { @() }
+    # A payload that stops shipping a file has to take it off disk as well. The updater does that from the
+    # ownership manifest; a deployment that skipped it left the reference installation unlike any player's.
+    $dropped = @($owned | Where-Object { $_ -and $_ -notin $expected })
     $entries = @{}
     foreach ($line in (Get-Content "$payload\$manifestPath" | Select-Object -Skip 2)) {
         $parts = $line.Split("`t")
@@ -91,7 +93,7 @@ try {
     $savesBefore = @(Save-Snapshot)
     $backup = Join-Path $repo ('qa\deploy-backup-' + [Guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $backup | Out-Null
-    foreach ($relative in $expected) {
+    foreach ($relative in ($expected + $dropped)) {
         $target = Join-Path $GameRoot $relative
         if (Test-Path $target) {
             $copy = Join-Path $backup $relative
@@ -109,6 +111,12 @@ try {
             Copy-Atomic $source $target
             if ((Get-FileHash $target).Hash -ne (Get-FileHash $source).Hash) { throw "Deployment mismatch: $relative" }
         }
+        foreach ($relative in $dropped) {
+            $target = Join-Path $GameRoot $relative
+            if (-not (Test-Path $target)) { continue }
+            $changed.Add($relative)
+            Remove-Item -LiteralPath $target -Force
+        }
     }
     catch {
         $failure = $_
@@ -124,7 +132,8 @@ try {
         throw $failure
     }
     if (Compare-Object $savesBefore @(Save-Snapshot)) { throw 'Save tree changed during deployment.' }
-    Write-Output "Deployed $version to $GameRoot; all $($expected.Count) runtime hashes verified; saves unchanged."
+    $removed = if ($dropped) { "; $($dropped.Count) dropped file(s) removed" } else { '' }
+    Write-Output "Deployed $version to $GameRoot; all $($expected.Count) runtime hashes verified; saves unchanged$removed."
     Write-Output "Recoverable backup: $backup"
 }
 catch {

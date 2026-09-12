@@ -87,8 +87,18 @@ int main(int argc, char** argv)
     const auto tasks_size = tasks.size();
     if (!ild::repair_config_text(tasks, ConfigRepair::detector_task) || tasks.size() != tasks_size ||
         tasks.find("<game_task id=\"ild_detector_task\">") == std::string::npos ||
-        tasks.find("<title>ild_detector_task</title>") == std::string::npos) return 39;
+        // The title is the text itself, not an id: the engine never opens a string file of the pack's own.
+        tasks.find("<title>\xD0\xE5\xEC\xEE\xED\xF2\x20\xED\xE0\xF3\xF7\xED\xEE\xE3\xEE\x20"
+            "\xE4\xE5\xF2\xE5\xEA\xF2\xEE\xF0\xE0</title>") == std::string::npos) return 39;
     if (ild::repair_config_text(tasks, ConfigRepair::detector_task)) return 40;
+    // The two lines that dialog names live in the Bar's own string table, the file the engine really opens.
+    std::string lines = "<string_table>\r\n" + room;
+    const auto lines_size = lines.size();
+    if (!ild::repair_config_text(lines, ConfigRepair::detector_text) || lines.size() != lines_size ||
+        lines.find("<string id=\"ild_bronevik_detektor_gotov_0\">") == std::string::npos ||
+        lines.find("<string id=\"ild_bronevik_detektor_gotov_1\">") == std::string::npos ||
+        lines.find("EVA-1400") == std::string::npos) return 41;
+    if (ild::repair_config_text(lines, ConfigRepair::detector_text)) return 42;
     // Without the detector dialog this is not the file the repair was written for.
     std::string skat_only = skat_phrases;
     unchanged = skat_only;

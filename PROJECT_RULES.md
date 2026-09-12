@@ -220,6 +220,12 @@ reference installation.
   version matches the tag, the package contents and their hashes, and that a
   test application of the archive leaves original files and the save tree
   untouched.
+- **Run that test application with the updater the players already have, not
+  the one just built.** The installed helper is what validates the archive, so
+  a payload path the released binary does not own is rejected whole, and the
+  fault shows only against a previous release. Apply the candidate archive on
+  an installation unpacked from the previous release, and on the oldest release
+  a client may still be sitting on.
 - After publishing, verify the tag target, the release status, the name and
   SHA-256 of every asset, and the list the updater actually reads:
   `repos/MMadmer/In-the-line-of-duty-fixes/releases?per_page=30`. The client

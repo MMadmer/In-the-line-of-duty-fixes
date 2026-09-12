@@ -581,6 +581,10 @@ namespace IldFixes.Updater
             if (parts.Length == 4 && parts[0].Equals("gamedata", ignoreCase) && parts[1].Equals("config", ignoreCase) &&
                 parts[2].Equals("ui", ignoreCase))
                 return name.StartsWith("ild_fixes_", ignoreCase) && name.EndsWith(".xml", ignoreCase);
+            // The engine keeps its string tables one level deeper, under the language it was told to read.
+            if (parts.Length == 5 && parts[0].Equals("gamedata", ignoreCase) && parts[1].Equals("config", ignoreCase) &&
+                parts[2].Equals("text", ignoreCase))
+                return name.StartsWith("ild_fixes_", ignoreCase) && name.EndsWith(".xml", ignoreCase);
             return false;
         }
 

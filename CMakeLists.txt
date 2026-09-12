@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(InTheLineOfDutyFixes VERSION 1.0.7 LANGUAGES CXX)
+project(InTheLineOfDutyFixes VERSION 1.0.8 LANGUAGES CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "In the Line of Duty Fixes supports Windows only")

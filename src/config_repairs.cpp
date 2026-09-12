@@ -41,7 +41,9 @@ constexpr std::array sources{
     ConfigRepairSource{L"gamedata/config/gameplay/character_desc_bar.xml", 114740,
         "E796FBC317FA9309E3697C06DBA484A045871E34DEDD5E05C4A8F7DC75620BA4", ConfigRepair::bronevik_profile},
     ConfigRepairSource{L"gamedata/config/gameplay/tasks_bar.xml", 21473,
-        "6AE66AE92EB2520CE038E90CB9ED983D4CE8D9D0A56C78A16B490EE8001E9140", ConfigRepair::detector_task}
+        "6AE66AE92EB2520CE038E90CB9ED983D4CE8D9D0A56C78A16B490EE8001E9140", ConfigRepair::detector_task},
+    ConfigRepairSource{L"gamedata/config/text/rus/stable_dialogs_bar.xml", 150407,
+        "225271086B8F02FB8EC5E7D09C114087DAA7EFBC3BECCF22E02F8A920A5B9577", ConfigRepair::detector_text}
 };
 
 // Replace a unique expression with an equal-length one, padding the remainder with spaces.
@@ -155,6 +157,43 @@ constexpr std::string_view detector_dialog =
     "<action>ild_script_repairs.repair_detector</action></phrase>"
     "</phrase_list></dialog>";
 
+// The two lines the dialog above names have to be entries in the string table, because the file that holds the
+// dialog opens with a UTF-8 mark and is parsed as UTF-8: the mod's own CP1251 cannot be written into it. The
+// engine builds that table from a fixed list of file names in the archived localization.ltx rather than from the
+// language folder, so a string file of the pack's own is never opened - that is why every id of ours reached the
+// player raw. They go where the Bar's other lines already are:
+// - Броневик, я нашёл ту микросхему. EVA-1400, как ты и говорил.
+// - Ну-ка... она самая, осколки целы. Давай сюда и детектор, посиди пока... Всё, готово, держи. Честно скажу -
+//   такую машинку я в руках первый раз держу. Все аномалии на карте, как на ладони. Не урони больше в болото.
+constexpr std::string_view detector_lines =
+    "<string id=\"ild_bronevik_detektor_gotov_0\"><text>"
+    "\xC1\xF0\xEE\xED\xE5\xE2\xE8\xEA\x2C\x20\xFF\x20\xED\xE0\xF8\xB8\xEB\x20\xF2\xF3\x20\xEC\xE8\xEA"
+    "\xF0\xEE\xF1\xF5\xE5\xEC\xF3\x2E\x20\x45\x56\x41\x2D\x31\x34\x30\x30\x2C\x20\xEA\xE0\xEA\x20\xF2"
+    "\xFB\x20\xE8\x20\xE3\xEE\xE2\xEE\xF0\xE8\xEB\x2E"
+    "</text></string>"
+    "<string id=\"ild_bronevik_detektor_gotov_1\"><text>"
+    "\xCD\xF3\x2D\xEA\xE0\x2E\x2E\x2E\x20\xEE\xED\xE0\x20\xF1\xE0\xEC\xE0\xFF\x2C\x20\xEE\xF1\xEA\xEE"
+    "\xEB\xEA\xE8\x20\xF6\xE5\xEB\xFB\x2E\x20\xC4\xE0\xE2\xE0\xE9\x20\xF1\xFE\xE4\xE0\x20\xE8\x20\xE4"
+    "\xE5\xF2\xE5\xEA\xF2\xEE\xF0\x2C\x20\xEF\xEE\xF1\xE8\xE4\xE8\x20\xEF\xEE\xEA\xE0\x2E\x2E\x2E\x20"
+    "\xC2\xF1\xB8\x2C\x20\xE3\xEE\xF2\xEE\xE2\xEE\x2C\x20\xE4\xE5\xF0\xE6\xE8\x2E\x20\xD7\xE5\xF1\xF2"
+    "\xED\xEE\x20\xF1\xEA\xE0\xE6\xF3\x20\x2D\x20\xF2\xE0\xEA\xF3\xFE\x20\xEC\xE0\xF8\xE8\xED\xEA\xF3"
+    "\x20\xFF\x20\xE2\x20\xF0\xF3\xEA\xE0\xF5\x20\xEF\xE5\xF0\xE2\xFB\xE9\x20\xF0\xE0\xE7\x20\xE4\xE5"
+    "\xF0\xE6\xF3\x2E\x20\xC2\xF1\xE5\x20\xE0\xED\xEE\xEC\xE0\xEB\xE8\xE8\x20\xED\xE0\x20\xEA\xE0\xF0"
+    "\xF2\xE5\x2C\x20\xEA\xE0\xEA\x20\xED\xE0\x20\xEB\xE0\xE4\xEE\xED\xE8\x2E\x20\xCD\xE5\x20\xF3\xF0"
+    "\xEE\xED\xE8\x20\xE1\xEE\xEB\xFC\xF8\xE5\x20\xE2\x20\xE1\xEE\xEB\xEE\xF2\xEE\x2E"
+    "</text></string>";
+
+bool add_detector_lines(std::string& text)
+{
+    constexpr std::string_view anchor = "<string_table>";
+    if (text.find("ild_bronevik_detektor_gotov_0") != text.npos) return false;
+    const auto at = text.find(anchor);
+    if (at == text.npos) return false;
+    const auto size = text.size();
+    text.insert(at + anchor.size(), detector_lines);
+    return borrow_indentation(text, text.size() - size) && text.size() == size;
+}
+
 bool add_detector_dialog(std::string& text)
 {
     if (text.find("ild_bronevik_detektor_gotov") != text.npos) return false;
@@ -182,9 +221,13 @@ bool add_detector_topic(std::string& text)
 // names it. This is the skeleton the engine needs to know the task exists; its two steps, and the map spots
 // bound to them, are built in script where the cache and Bronevik can actually be found, because neither has a
 // story id for the XML form to point at.
+// The title carries its own CP1251 bytes for the same reason the dialog above does: Ремонт научного детектора.
 constexpr std::string_view detector_task_entry =
-    "<game_task id=\"ild_detector_task\"><title>ild_detector_task</title>"
-    "<objective><text>ild_detector_task</text><icon>ui_iconsTotal_artefact</icon></objective></game_task>";
+    "<game_task id=\"ild_detector_task\"><title>"
+    "\xD0\xE5\xEC\xEE\xED\xF2\x20\xED\xE0\xF3\xF7\xED\xEE\xE3\xEE\x20\xE4\xE5\xF2\xE5\xEA\xF2\xEE\xF0\xE0"
+    "</title><objective><text>"
+    "\xD0\xE5\xEC\xEE\xED\xF2\x20\xED\xE0\xF3\xF7\xED\xEE\xE3\xEE\x20\xE4\xE5\xF2\xE5\xEA\xF2\xEE\xF0\xE0"
+    "</text><icon>ui_iconsTotal_artefact</icon></objective></game_task>";
 
 bool add_detector_task(std::string& text)
 {
@@ -344,6 +387,10 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
     else if (repair == ConfigRepair::detector_task)
     {
         if (!add_detector_task(patched)) return false;
+    }
+    else if (repair == ConfigRepair::detector_text)
+    {
+        if (!add_detector_lines(patched)) return false;
     }
     else if (repair == ConfigRepair::trader_refusal)
     {
