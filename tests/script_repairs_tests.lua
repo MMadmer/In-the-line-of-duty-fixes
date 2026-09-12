@@ -14,7 +14,7 @@ local function fixture()
     local calls = {tutorials = {}, events = {}, spots = {}, food = {}, spawned = {}, removed = {}, detector = {},
         released = {}, init_btn = {}, on_info = {}, menu_toggles = {}, given = {}, taken = {}, news = {},
         amk_spawns = {}, treasure = {}, looks = {}, infos = {}, sounds = {}, statics = {}, tips = {},
-        created = {}, task_states = {}, news = {}, played = {}, escape_info = {}, object_queries = 0}
+        created = {}, task_states = {}, news = {}, played = {}, escape_info = {}, map = {}, object_queries = 0}
     local objects = {}
     local clock = 100
     local env = setmetatable({}, {__index = _G})
@@ -194,7 +194,12 @@ local function fixture()
     end}
     env.level = {
         vertex_id = function(position) return 'lvid:' .. position.x end,
-        map_remove_object_spot = function(id, kind) calls.spots[#calls.spots + 1] = {id, kind} end,
+        map_remove_object_spot = function(id, kind)
+            calls.spots[#calls.spots + 1] = {id, kind}
+            calls.map[id .. ':' .. kind] = nil
+        end,
+        map_has_object_spot = function(id, kind) return calls.map[id .. ':' .. kind] and 1 or 0 end,
+        map_add_object_spot_ser = function(id, kind, hint) calls.map[id .. ':' .. kind] = hint end,
         main_input_receiver = function() return calls.receiver end,
         start_stop_menu = function(window, flag) calls.menu_toggles[#calls.menu_toggles + 1] = {window, flag} end
     }
@@ -2389,17 +2394,27 @@ do
     module.install()
     env.db.actor = actor()
 
-    equal(module.detector_parts_ready(), false, "the topic stays shut with neither half in the rucksack")
+    equal(module.detector_parts_ready(), false, "the topic stays shut without the chip")
     env.db.actor.items["esc_mikro_sxema_koordinatu_tp"] = {}
-    equal(module.detector_parts_ready(), false, "and with only the chip")
     env.db.actor.items["gar_lomanui_detektor"] = {}
-    equal(module.detector_parts_ready(), true, "both halves open it")
+    equal(module.detector_parts_ready(), true, "and opens on the chip he asked for")
 
     module.repair_detector(nil, "bronevik")
     equal(calls.taken[1], "esc_mikro_sxema_koordinatu_tp", "the chip is handed over")
-    equal(calls.taken[2], "gar_lomanui_detektor", "and so is the broken detector")
+    equal(calls.taken[2], "gar_lomanui_detektor", "and so is the broken detector, while the player still has it")
     equal(calls.given[#calls.given].section, "detector_elite", "the elite detector comes back")
     equal(calls.given[#calls.given].direction, "in", "into the player's hands")
+    equal(calls.pstor.ild_detector_done, 1, "and the save records that the job is finished")
+
+    -- A save that sold the useless broken detector before this repair existed must not be stranded.
+    local sold, sold_calls, _, sold_module, sold_actor = fixture()
+    sold_module.install()
+    sold.db.actor = sold_actor()
+    sold.db.actor.items["esc_mikro_sxema_koordinatu_tp"] = {}
+    equal(sold_module.detector_parts_ready(), true, "the chip alone is enough")
+    sold_module.repair_detector(nil, "bronevik")
+    equal(#sold_calls.taken, 1, "only the chip is taken")
+    equal(sold_calls.given[#sold_calls.given].section, "detector_elite", "and the detector is still rebuilt")
 
     -- The scheme hook drops the chip into the third children's cache the first time that box starts.
     local box = {section = function() return "agro_tainik_detei3" end, position = function() return "at" end,
@@ -2417,6 +2432,41 @@ do
     local other = make_physic(821, nil, elsewhere)
     env.ph_idle.set_scheme(other, "ini", "ph_idle", "ph_idle")
     equal(#calls.created, 1, "and no other cache is touched")
+end
+
+-- The detector job has two places to be, and which one the map shows follows the stage the player is on.
+do
+    local env, calls, objects, module, actor = fixture()
+    module.install()
+    env.db.actor = actor()
+    objects[900] = {section_name = function() return "agro_tainik_detei3" end}
+    objects[901] = {section_name = function() return "bar_bar_moder" end}
+    local binder = {object = env.db.actor, first_update = false}
+    local function pass(seconds)
+        env.clock_ms = env.clock_ms + seconds * 1000
+        env.bind_stalker.actor_binder.update(binder, 1)
+    end
+    pass(4)
+    equal(calls.map["900:green_location"], nil, "nothing is marked before Bronevik has asked for the chip")
+    calls.infos.bar_bronevik_pochini_detektor = true
+    pass(4)
+    equal(calls.map["900:green_location"], "ild_detector_cache_hint", "the cache is marked while the chip is out there")
+    equal(calls.map["901:green_location"], nil, "and the way back is not, yet")
+    env.db.actor.items["esc_mikro_sxema_koordinatu_tp"] = {}
+    pass(4)
+    equal(calls.map["900:green_location"], nil, "the cache mark goes the moment the chip is in hand")
+    equal(calls.map["901:green_location"], "ild_detector_bronevik_hint", "and Bronevik is marked instead")
+    calls.pstor.ild_detector_done = 1
+    pass(4)
+    equal(calls.map["901:green_location"], nil, "a finished job leaves no mark at all")
+    -- A save that reloads keeps the engine's own spots, so the pass must not stack a second one.
+    calls.pstor.ild_detector_done = 0
+    env.db.actor.items["esc_mikro_sxema_koordinatu_tp"] = nil
+    pass(4)
+    local before = #calls.spots
+    pass(4)
+    equal(#calls.spots, before, "an unchanged stage touches nothing")
+    equal(calls.map["900:green_location"], "ild_detector_cache_hint", "and the mark it already had stays")
 end
 
 print("script_repairs_tests: " .. tests .. " checks passed")

@@ -1872,23 +1872,24 @@ end
 -- Bronevik's detector job stops where the mod stopped writing it. He looks the broken detector over for five
 -- thousand, names the part it needs - a military-scientific EVA-1400 microchip - and says to bring it. Nothing
 -- after that exists: the chip is declared in quest_items.ltx and spawned nowhere, no dialog ever takes it, and
--- no repaired detector is handed out, so the five thousand buys a sentence. These two are called from the
--- dialog the pack adds, so they are globals of this namespace rather than locals of the chunk.
+-- no repaired detector is handed out, so the five thousand buys a sentence. These are called from the dialog
+-- the pack adds, so they are globals of this namespace rather than locals of the chunk.
+
+-- Only the chip is asked for. He has already had the broken one in his hands and been paid to look at it, and
+-- a player who did that before this repair existed may well have sold the useless thing on; requiring it back
+-- would strand exactly the saves this is meant to rescue.
 function detector_parts_ready()
-    if not db.actor then return false end
-    return db.actor:object("esc_mikro_sxema_koordinatu_tp") ~= nil and
-        db.actor:object("gar_lomanui_detektor") ~= nil
+    return db.actor ~= nil and db.actor:object("esc_mikro_sxema_koordinatu_tp") ~= nil
 end
 
 function repair_detector(first_speaker, second_speaker)
-    -- Both halves must still be in the rucksack, so the topic shows only when the exchange can happen and
-    -- closes itself the moment it has: nothing else gates it and no portion of ours is needed.
     if not detector_parts_ready() then return end
     sak.out_item_namber("esc_mikro_sxema_koordinatu_tp", 1)
-    sak.out_item_namber("gar_lomanui_detektor", 1)
+    if db.actor:object("gar_lomanui_detektor") then sak.out_item_namber("gar_lomanui_detektor", 1) end
     -- The broken one calls itself the best detector in the world and says it shows every anomaly, which is the
     -- elite detector exactly. No trader sells it, so the job stays the only way to hold one.
     dialogs.relocate_item_section(second_speaker, "detector_elite", "in", 1)
+    xr_logic.pstor_store(db.actor, "ild_detector_done", 1)
     report_line("detector repaired")
 end
 
@@ -2079,6 +2080,46 @@ function install()
         return original_escape_info(info_id, ...)
     end
 
+    -- The detector job has two places to be and the mod marks neither, so the stage the player is on decides
+    -- which one the map shows: the cache that holds the chip until it is in hand, then Bronevik until the
+    -- detector is rebuilt. Both are read back from the map each pass rather than remembered here, because the
+    -- engine saves spots with the game while a local would not survive the reload. The gate is the portion the
+    -- inspection grants, so a save that already paid the five thousand is picked up exactly where it stands.
+    local detector_guide = {
+        cache = {section = "agro_tainik_detei3", hint = "ild_detector_cache_hint"},
+        owner = {section = "bar_bar_moder", hint = "ild_detector_bronevik_hint"},
+        period = 30000
+    }
+    -- Neither of them has a story id, so each is found by walking the simulation once and then remembered.
+    local function detector_object(entry, now)
+        if entry.id then return entry.id end
+        if entry.scanned and now - entry.scanned < detector_guide.period then return nil end
+        entry.scanned = now
+        local simulator = alife()
+        if not simulator then return nil end
+        for id = 1, 65534 do
+            local server = simulator:object(id)
+            local known, name = pcall(function() return server and server:section_name() end)
+            if known and name == entry.section then entry.id = id return id end
+        end
+        return nil
+    end
+    local function detector_spot(entry, wanted, now)
+        local id = detector_object(entry, now)
+        if not id then return end
+        local held = level.map_has_object_spot(id, "green_location")
+        if wanted and held == 0 then level.map_add_object_spot_ser(id, "green_location", entry.hint)
+        elseif not wanted and held ~= 0 then level.map_remove_object_spot(id, "green_location") end
+    end
+    local function guide_detector(now)
+        if not db.actor or not has_alife_info("bar_bronevik_pochini_detektor") then return end
+        local known, done = pcall(xr_logic.pstor_retrieve, db.actor, "ild_detector_done", 0)
+        local finished = not known or (done or 0) ~= 0
+        local carried = db.actor:object("esc_mikro_sxema_koordinatu_tp") ~= nil
+        detector_spot(detector_guide.cache, not finished and not carried, now)
+        detector_spot(detector_guide.owner, not finished and carried, now)
+    end
+
     local binder = bind_stalker.actor_binder
     local original_load = binder.load
     binder.load = function(self, ...)
@@ -2115,6 +2156,7 @@ function install()
         if db.actor and artefacts_dirty and reconcile_artefacts() then artefacts_dirty = false end
         pcall(check_death_watch, time_global())
         pcall(deliver_depo_hint, time_global())
+        pcall(guide_detector, time_global())
     end
     installed = true
 end

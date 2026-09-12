@@ -713,6 +713,19 @@ The pack finishes the branch along the line the author drew, and adds nothing be
 - **The reward is the elite detector.** The broken one's own description says it is "лучший детектор аномалий в
   мире" and shows "абсолютно все аномалии", which is `detector_elite` exactly; no trader sells it, so the job
   stays the only way to hold one.
+- **The map leads, one stage at a time.** The mod marks neither place. While the chip is still out there the
+  cache carries a green spot; once it is in the rucksack that spot moves to Bronevik; once the detector is
+  rebuilt both are taken down. The gate is the portion the inspection grants, so a save that already paid the
+  five thousand is picked up exactly where it stands. The spots are read back from the map on every pass rather
+  than remembered in a local, because the engine saves them with the game and a local would not survive a
+  reload - so a reload cannot stack a second one.
+- **Only the chip is asked for at the end.** He has already had the broken detector in his hands and been paid
+  to look at it, and a player who did that before this repair existed may well have sold the useless thing on.
+  Requiring it back would strand exactly the saves this is meant to rescue, so the hand-over takes the broken
+  detector only if the player still carries it.
+- **A cache that was already looted still yields the chip.** It is placed when the box starts its scheme, which
+  happens again on every entry to the level, so an old save gets it the next time the player is there - once,
+  because the actor's pstor remembers it.
 - **The two lines Bronevik and the actor say** ship in the pack's own string file,
   `gamedata/config/text/rus/ild_fixes_text.xml`. SoC reads every file in the language folder rather than a list,
   so a new file of our own is loaded with no patch at all - and with the depot hint and the Garbage PDA line,

@@ -6,4 +6,10 @@
 	<string id="ild_bronevik_detektor_gotov_1">
 		<text>Ну-ка... она самая, осколки целы. Давай сюда и детектор, посиди пока... Всё, готово, держи. Честно скажу - такую машинку я в руках первый раз держу. Все аномалии на карте, как на ладони. Не урони больше в болото.</text>
 	</string>
+	<string id="ild_detector_cache_hint">
+		<text>Тайник: микросхема для детектора</text>
+	</string>
+	<string id="ild_detector_bronevik_hint">
+		<text>Броневик ждёт микросхему</text>
+	</string>
 </string_table>
