@@ -392,6 +392,7 @@ local function fixture()
     calls.online, calls.given_infos, calls.switches = {}, {}, {}
     env.treasure_manager.manager = {treasure_by_target = {}, treasure_info = {}}
     env.treasure_manager.get_treasure_manager = function() return env.treasure_manager.manager end
+    env.ph_code = {codepad = {update = function() return "code updated" end}}
     env.ph_idle = {set_scheme = function(npc, ini, scheme, section)
         env.db.storage[npc:id()] = env.db.storage[npc:id()] or {}
         env.db.storage[npc:id()][scheme] = {nonscript_usable = false, tips = "sealed", section = section}
@@ -2574,6 +2575,69 @@ do
     again.bind_stalker.actor_binder.update(binder2, 1)
     equal(#calls2.news, 0, "a player who has already talked to Zakorpat is left alone")
     equal(calls2.pstor.ild_prison_zakorpat_hint, nil, "and nothing is written")
+end
+
+-- A code lock whose code was entered before comes back unlocked; one whose code was not stays a lock.
+do
+    local env, calls, _, module = fixture()
+    module.install()
+    local switched = {}
+    env.xr_logic.switch_to_section = function(npc, st, section) switched[#switched + 1] = section end
+    local function lock(name, portion)
+        return {object = {name = function() return name end}, st = {on_code = {condlist = {
+            {section = "nil", infop_check = {}, infop_set = {{name = portion, required = true}, {func = "play_snd"}}}}}}}
+    end
+    local opened = lock("gar_radiotainik_seif", "gar_radiotainik_seif_open_kod")
+    calls.infos.gar_radiotainik_seif_open_kod = true
+    equal(env.ph_code.codepad.update(opened, 1), nil, "a lock whose code is known is switched off before its own update")
+    equal(switched[1], "nil", "to the section the code led to")
+    equal(env.ph_code.codepad.update(opened, 1), "code updated", "and only once per activation")
+    local fresh = lock("esc_toneli_smertiseif_zamok", "estonsmerti_seif_open")
+    equal(env.ph_code.codepad.update(fresh, 1), "code updated", "a lock whose code was never entered is a lock")
+    equal(#switched, 1, "and is not touched")
+end
+
+-- Kuzma's corpse: the portion its offline timer never grants arrives two seconds after the spawn.
+do
+    local env, calls, _, module, actor = fixture()
+    module.install()
+    env.db.actor = actor()
+    local binder = {object = env.db.actor, first_update = false}
+    local function pass(seconds)
+        env.clock_ms = env.clock_ms + seconds * 1000
+        env.bind_stalker.actor_binder.update(binder, 1)
+    end
+    pass(5)
+    equal(calls.infos.del_esc_trup_stalk, nil, "nothing before the scream")
+    calls.infos.esc_spawn_tryp = true
+    pass(1)
+    equal(calls.infos.del_esc_trup_stalk, nil, "the corpse's own second is given first")
+    pass(3)
+    equal(calls.infos.del_esc_trup_stalk, true, "then the portion arrives on its own")
+end
+
+-- The prison's extras are released once Makarov's later scene has spawned the Jegoj to be freed.
+do
+    local env, calls, objects, module, actor = fixture()
+    module.install()
+    env.db.actor = actor()
+    objects[300] = {id = 300, section_name = function() return "esc_jegoj" end}
+    objects[301] = {id = 301, section_name = function() return "esc_novic_aptechka" end}
+    objects[302] = {id = 302, section_name = function() return "esc_jegoj3" end}
+    objects[303] = {id = 303, section_name = function() return "jegoj_tehn2" end}
+    local binder = {object = env.db.actor, first_update = false}
+    env.clock_ms = env.clock_ms + 5000
+    env.bind_stalker.actor_binder.update(binder, 1)
+    equal(#calls.released, 0, "nothing is released while the prison story is still running")
+    calls.infos.esc_makarov_posle_prizraka = true
+    env.clock_ms = env.clock_ms + 5000
+    env.bind_stalker.actor_binder.update(binder, 1)
+    equal(#calls.released, 2, "the prisoner and the novice go")
+    equal(objects[302] ~= nil and objects[303] ~= nil, true, "the village Jegoj and the one to be freed stay")
+    equal(calls.pstor.ild_prison_extras_released, 1, "remembered in the save")
+    env.clock_ms = env.clock_ms + 5000
+    env.bind_stalker.actor_binder.update(binder, 1)
+    equal(#calls.released, 2, "and never repeated")
 end
 
 -- The two Cordon spots the mod added read story object 93 with no guard, inside the actor's info callback.

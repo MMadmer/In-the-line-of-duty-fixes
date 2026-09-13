@@ -90,6 +90,10 @@ inline constexpr std::string_view courier_ninety = "\xEF\xEE\xE4 90.";
         if (key == "inv_grid_y" && value == 1950.0f) return 14.0f;
     }
     if (section == "kyrier_outfit" && key == "additional_inventory_weight2" && value == 25.0f) return 30.0f;
+    // The one weightless artefact among fifty-eight, and the crowbar that weighs 0.3 kg in the rucksack and 3.5 kg
+    // in the hand: the stand-in the hidden-slot script swaps in for it copied a knife's weight.
+    if (section == "af_gravi" && key == "inv_weight" && value == 0.0f) return 0.5f;
+    if (section == "fake_lom" && key == "inv_weight" && value == 0.3f) return 3.5f;
     return std::nullopt;
 }
 

@@ -61,14 +61,15 @@ bool ruck(void* inventory, void* item)
     return result != 0;
 }
 
-bool slot(void* inventory, void* item)
+bool slot(void* inventory, void* item, bool activate)
 {
     const auto target = game_base + 0x204A90;
+    const unsigned not_activate = activate ? 0 : 1;
     unsigned char result{};
     __asm {
         mov ecx, inventory
         mov eax, item
-        push 0
+        push not_activate
         call target
         mov result, al
     }
@@ -86,6 +87,20 @@ void send_event(void* item, std::size_t offset)
     }
 }
 
+// CUIInventoryWnd::GetSlotList: the slot in ECX, the window in EDX; a slot the window draws no list for gives null.
+void* slot_list(void* window, unsigned index)
+{
+    const auto target = game_base + 0x3BC590;
+    void* result{};
+    __asm {
+        mov ecx, index
+        mov edx, window
+        call target
+        mov result, eax
+    }
+    return result;
+}
+
 bool __stdcall to_slot(void* window, void* cell, bool force)
 {
     if (!window || !cell) return false;
@@ -93,24 +108,38 @@ bool __stdcall to_slot(void* window, void* cell, bool force)
     if (!item) return false;
     using GetSlot = unsigned(__thiscall*)(void*);
     const auto get_slot = reinterpret_cast<GetSlot>(field<void**>(item, 0)[41]);
-    if (get_slot(item) != 0) return original_to_slot(window, cell, force);
+    const auto index = get_slot(item);
+    // The window owns lists for the pistol, rifle and outfit slots only, and it leaves the grenade slot alone by
+    // itself. Every other slot - knife, binoculars, bolt, PDA, detector, torch - it moves the item into and then
+    // hands the cell to the list it does not have, which is the crash the mod's own torch text describes. Those
+    // slots are served here the way the engine serves a pickup: the same inventory calls, the same events, and a
+    // rebuild of the bag view instead of a list.
+    if (index == 3 || index == static_cast<unsigned>(-1) || slot_list(window, index))
+        return original_to_slot(window, cell, force);
     const auto inventory = field<void*>(window, 9896);
     if (!inventory || field<void*>(item, 136) != inventory) return false;
-    const auto slots = field<void*>(inventory, 56);
-    if (!slots || field<unsigned char>(slots, 8)) return false;
-    const auto previous = field<void*>(slots, 4);
+    // CInventory::m_slots, sixteen bytes a slot: a vtable, the item, then the persistent flag.
+    const auto begin = field<unsigned char*>(inventory, 56);
+    const auto end = field<unsigned char*>(inventory, 60);
+    if (!begin || !end || index >= static_cast<unsigned>(end - begin) / 16) return false;
+    const auto entry = begin + 16 * index;
+    if (field<unsigned char>(entry, 8)) return false;
+    const auto previous = field<void*>(entry, 4);
     if (previous == item || (previous && !force)) return false;
+    // The knife, the binoculars and the bolt are held in the hands and are drawn on being slotted, as the window
+    // does for a pistol. A torch, a PDA or a detector has no hands to be drawn into: it is placed, and nothing is
+    // asked to become the active item.
+    const auto hand = index == 0 || index == 4 || index == 5;
 
-    // Knife slot zero has no UI list. Reuse engine moves/events, then rebuild its bag view.
     if (previous && !ruck(inventory, previous)) return false;
-    if (!slot(inventory, item))
+    if (!slot(inventory, item, hand))
     {
-        if (previous) static_cast<void>(slot(inventory, previous));
+        if (previous) static_cast<void>(slot(inventory, previous, hand));
         return false;
     }
     if (previous) send_event(previous, 0x3BB8C0);
     send_event(item, 0x3BB740);
-    send_event(item, 0x3BB6D0);
+    if (hand) send_event(item, 0x3BB6D0);
     field<unsigned char>(window, 100) = 1;
     return true;
 }
@@ -310,7 +339,50 @@ const char* qa_inventory_swap(unsigned id)
         if (selected != item) return "wrong-slotted-item";
         return "ok";
     }
-    return "item-not-in-bag";
+    // The bag view is empty while the window has never been opened, which is how QA runs. An item of a slot the
+    // window draws no list for is reached through the rucksack itself: the detour reads nothing of a cell but the
+    // item it carries, so a bare cell stands in for the one the view would have built.
+    const auto inventory = field<void*>(window, 9896);
+    // A VC8 vector starts with its iterator proxy: m_ruck keeps its pointers at 24 and 28, m_belt at 40 and 44,
+    // m_slots at 56 and 60. A second torch lands on the belt, so both containers are searched.
+    std::array<void*, 4> containers{field<void*>(inventory, 24), field<void*>(inventory, 28),
+        field<void*>(inventory, 40), field<void*>(inventory, 44)};
+    for (std::size_t half = 0; half < containers.size(); half += 2)
+    for (auto slot_item = static_cast<void**>(containers[half]);
+        slot_item && slot_item < static_cast<void**>(containers[half + 1]); ++slot_item)
+    {
+        const auto item = *slot_item;
+        if (!item || field<unsigned short>(field<void*>(item, 212), 164) != id) continue;
+        using GetSlot = unsigned(__thiscall*)(void*);
+        const auto index = reinterpret_cast<GetSlot>(field<void**>(item, 0)[41])(item);
+        if (index == 3 || index == static_cast<unsigned>(-1) || slot_list(window, index)) return "slot-has-a-list";
+        std::array<unsigned char, 400> bare{};
+        field<void*>(bare.data(), 380) = item;
+        const auto before = field<unsigned char*>(inventory, 12) - field<unsigned char*>(inventory, 8);
+        if (!to_slot(window, bare.data(), true)) return "to-slot-rejected";
+        const auto after = field<unsigned char*>(inventory, 12) - field<unsigned char*>(inventory, 8);
+        if (before != after) return "inventory-count-changed";
+        const auto entry = field<unsigned char*>(inventory, 56) + 16 * index;
+        return field<void*>(entry, 4) == item ? "ok-through-rucksack" : "wrong-slotted-item";
+    }
+    // Nothing matched: say where the item actually sits, so a wrong container offset is visible in the record.
+    static std::string where;
+    where = "item-not-in-bag";
+    for (unsigned offset = 8; offset <= 48; offset += 4)
+    {
+        const auto begin = field<void**>(inventory, offset);
+        const auto end = field<void**>(inventory, offset + 4);
+        if (!begin || !end || end < begin || end - begin > 256) continue;
+        for (auto entry = begin; entry < end; ++entry)
+        {
+            MEMORY_BASIC_INFORMATION region{};
+            if (!*entry || !VirtualQuery(*entry, &region, sizeof region) || region.State != MEM_COMMIT) continue;
+            const auto object = field<void*>(*entry, 212);
+            if (!object || !VirtualQuery(object, &region, sizeof region) || region.State != MEM_COMMIT) continue;
+            if (field<unsigned short>(object, 164) == id) where += " in-vector-at-" + std::to_string(offset);
+        }
+    }
+    return where.c_str();
 }
 #endif
 }

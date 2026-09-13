@@ -57,7 +57,11 @@ constexpr std::array sources{
     ConfigRepairSource{L"gamedata/config/text/rus/stable_dialogs_darkvalley.xml", 98716,
         "82AD412A73B50A1FDED9B5DB32619294D39EB829F44CCB4E3A6D20EE97960358", ConfigRepair::propysk_text},
     ConfigRepairSource{L"gamedata/config/text/rus/stable_storyline_info_escape.xml", 11546,
-        "C7AF6D401B3AF40AE0EAF1605FD77410F7F85C0A6B4F3DF22426DC39B94FB140", ConfigRepair::skill_banner}
+        "C7AF6D401B3AF40AE0EAF1605FD77410F7F85C0A6B4F3DF22426DC39B94FB140", ConfigRepair::skill_banner},
+    ConfigRepairSource{L"gamedata/config/scripts/kordon/kyza_logic.ltx", 2169,
+        "995FA05842F170387C8891D82342417CF5166811775C6353F2DC7DF09BB73074", ConfigRepair::kuzma_timeout},
+    ConfigRepairSource{L"gamedata/config/scripts/kordon_new/toneli_smerti.ltx", 1671,
+        "DC109F50E8AD24717943BBFB17F81C3B067B3DA1EE24075C7221AFC7166CA9C3", ConfigRepair::tunnel_input}
 };
 
 // Replace a unique expression with an equal-length one, padding the remainder with spaces.
@@ -547,6 +551,21 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
     {
         if (patched.find("stalkerok_navuk_mex_lvl2") != patched.npos ||
             !replace_one(patched, mechanic_level_two, mechanic_level_two_fixed)) return false;
+    }
+    else if (repair == ConfigRepair::kuzma_timeout)
+    {
+        // Kuzma's wait at the anomaly ends on a timer that grants the very portion his brother's dialog closes on,
+        // so a player who has not spoken within those hundred seconds loses the dialog for good. The timer still
+        // sends him home; only the grant goes, at the line's exact length.
+        if (!replace_one(patched, "on_timer = 100000 | %+esc_kyzma_2% kamp",
+            "on_timer = 100000 |                kamp")) return false;
+    }
+    else if (repair == ConfigRepair::tunnel_input)
+    {
+        // Walking back into the death tunnel blacks the actor out after six seconds and the section that follows
+        // ends without ever giving the input back. The call of the tunnel still plays; the input returns with it.
+        if (!replace_one(patched, "on_timer2 = 13000 | %+aiaiaiai =play_snd(ai_kaver\\esc_zov_tonelia_smerti)% nil",
+            "on_timer2 = 13000| %=enable_ui =play_snd(ai_kaver\\esc_zov_tonelia_smerti)% nil")) return false;
     }
     else if (repair == ConfigRepair::trader_refusal)
     {

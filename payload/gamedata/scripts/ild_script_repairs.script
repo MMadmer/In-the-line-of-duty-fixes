@@ -292,6 +292,31 @@ local function install_stash_repairs()
         alife():create("esc_mikro_sxema_koordinatu_tp", npc:position(), npc:level_vertex_id(),
             npc:game_vertex_id(), npc:id())
     end
+    -- A code lock grants a portion and switches itself off when the right code is entered, and that switch is
+    -- the only record of it: a box that goes offline with the level comes back locked, code and all. The portion
+    -- survives, so on the lock's first update the outcome its own condlist describes is replayed - to the same
+    -- section the code led to - whenever every portion that outcome grants is already held.
+    local original_code_update = ph_code.codepad.update
+    ph_code.codepad.update = function(self, delta)
+        local st = self.st
+        if st and st.on_code and not st.ild_remembered then
+            st.ild_remembered = true
+            for _, entry in ipairs(st.on_code.condlist or {}) do
+                local grants, held = 0, true
+                for _, info in ipairs(entry.infop_set or {}) do
+                    if info.required then
+                        grants = grants + 1
+                        if not has_alife_info(info.name) then held = false end
+                    end
+                end
+                if grants > 0 and held and entry.section and entry.section ~= "" then
+                    xr_logic.switch_to_section(self.object, st, entry.section)
+                    return
+                end
+            end
+        end
+        return original_code_update(self, delta)
+    end
     local original_scheme = ph_idle.set_scheme
     ph_idle.set_scheme = function(npc, ini, scheme, section, gulag_name)
         local result = original_scheme(npc, ini, scheme, section, gulag_name)
@@ -2124,6 +2149,42 @@ function install()
             32, 238, 242, 241, 254, 228, 224, 32, 241, 225, 229, 230, 224, 242, 252, 32, 45, 32, 237, 224, 228,
             238, 32, 241, 32, 237, 232, 236, 32, 239, 238, 227, 238, 226, 238, 240, 232, 242, 252, 46)
     }
+    -- Kuzma's brother. The scream ends the dialog by spawning the corpse at the anomaly, and the corpse's own
+    -- one-second timer grants del_esc_trup_stalk, the portion the brother's dialog is gated on - but the dialog
+    -- can be had at the camp, a hundred metres away, where the corpse spawns offline and its timer never runs.
+    -- The grant is made two seconds after the spawn wherever the actor stands; the portion's own action removes
+    -- the corpse exactly as the timer would have.
+    local kuzma_corpse = {armed = "esc_spawn_tryp", over = "del_esc_trup_stalk", delay = 2000}
+    -- The prison's two extras stand at the gate until the roadside talk after the escape releases them, and
+    -- that talk can be walked past. Once Makarov's later scene has spawned the Jegoj the player comes back to
+    -- free, the two are doubles, and the release the mod meant for them is done once.
+    local prison_extras = {armed = "esc_makarov_posle_prizraka", flag = "ild_prison_extras_released",
+        sections = {esc_jegoj = true, esc_novic_aptechka = true}}
+    local function settle_cordon(now)
+        if not db.actor then return end
+        if has_alife_info(kuzma_corpse.armed) and not has_alife_info(kuzma_corpse.over) then
+            kuzma_corpse.since = kuzma_corpse.since or now
+            if now - kuzma_corpse.since >= kuzma_corpse.delay then
+                db.actor:give_info_portion(kuzma_corpse.over)
+                report_line("settle " .. kuzma_corpse.over)
+            end
+        end
+        if not has_alife_info(prison_extras.armed) then return end
+        local known, done = pcall(xr_logic.pstor_retrieve, db.actor, prison_extras.flag, 0)
+        if not known or (done or 0) ~= 0 then return end
+        xr_logic.pstor_store(db.actor, prison_extras.flag, 1)
+        local simulator = alife()
+        if not simulator then return end
+        local released = 0
+        for id = 10, 65534 do
+            local object = simulator:object(id)
+            if object and prison_extras.sections[object:section_name()] then
+                simulator:release(object, true)
+                released = released + 1
+            end
+        end
+        report_line("released prison extras " .. released)
+    end
     local function deliver_hint(hint, now)
         if not db.actor or not has_alife_info(hint.armed) or has_alife_info(hint.over) then return end
         -- The actor's own pstor, which the unmodified mod saves and loads as is, so the line survives a reload
@@ -2267,6 +2328,7 @@ function install()
         pcall(check_death_watch, time_global())
         pcall(deliver_hint, depo_hint, time_global())
         pcall(deliver_hint, prison_hint, time_global())
+        pcall(settle_cordon, time_global())
         pcall(detector_task, time_global())
     end
     installed = true

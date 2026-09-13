@@ -1027,6 +1027,32 @@ dialog has been had, shown for the ten seconds the mod's own tips last and remem
 а ворота не заперли. Закорпат обещал показать, как отсюда сбежать - надо с ним поговорить.» A save that already
 holds `es_meln_jegoj_vushel` receives it on the next load, wherever the player has wandered to.
 
+### One more page of the forum, and the torch that crashed on being equipped
+
+Source: a long list of observations posted under the mod, Cordon to Agroprom, plus a second player confirming
+the one crash on it. Everything below was read against the files and, where it mattered, the player's own save.
+
+| Defect | Consequence | Repair |
+| --- | --- | --- |
+| `CUIInventoryWnd::ToSlot` (xrGame RVA `0x3BBF80`) owns drag-drop lists for the pistol, rifle and outfit slots only and leaves the grenade slot alone by itself; for every other slot it moves the item and then hands the cell to the list it does not have. The sixth pass repaired that for the knife. The mod's own fake torch carries the author's note that clicking the real torch «игра вылетала, как обычно» | Equipping a torch by hand from the rucksack or the belt is a crash; two players report it, one since 1.0.4, when a real torch first became reachable in the bag | The knife path of the detour serves every slot the window draws no list for (asked of `GetSlotList` itself, the slot in ECX and the window in EDX), with the slot entry at sixteen bytes a slot. A torch, PDA or detector is placed without `Activate` and without the activate-slot event, since it has no hands to be drawn into; the knife, binoculars and bolt are drawn as before. Verified on the player's save through the window's own entry: a second torch from the belt takes the slot, the first goes to the rucksack, the count is unchanged |
+| `kyza_logic.ltx:42` - Kuzma's wait at the anomaly ends on `on_timer = 100000 \| %+esc_kyzma_2% kamp`, and `esc_kyzma_2` is the portion his brother's dialog closes on. The scream dialog itself is gated only on `esc_spawn_tryp`, so it can be had at the camp, a hundred metres from where the corpse then spawns; the corpse's own timer (`trup_logic.ltx:6`) grants `del_esc_trup_stalk`, the gate of the brother's dialog, and an offline corpse never ticks | A player who does not follow Kuzma at night, or does not talk within his hundred seconds of probing, loses the brother's story for good - the reported case exactly | The timer still sends him home but no longer grants the portion (in memory, at the file's length); `del_esc_trup_stalk` is granted two seconds after the spawn wherever the actor stands, and its own action removes the corpse as the timer would have |
+| `esc_zakorpat_po_doroge` is the only release of the prison's two extras (`delete.esc_del_chrez_zakorpata_jeoja`, `delet_esc_s4_apteky`), and that roadside talk can be walked past | The prisoner and the novice stand at the camp gate for the rest of the game, beside the Jegoj `esc_makarov_posle_prizraka` spawns for the player to free - the «двойник» of the report | Once that later portion is held, every `esc_jegoj` and `esc_novic_aptechka` object is released, once, remembered in the actor's pstor. The freed Jegoj (`jegoj_tehn2`) and the village one (`esc_jegoj3`) are matched by exact section and untouched |
+| `toneli_smerti.ltx:25-26` - the death tunnel's re-entry section disables the input after 6.5 s and ends at 13 s in `nil` with no `enable_ui` anywhere | Standing in the tunnel's restrictor - it reaches the bridge and the bus stop - for seven seconds after the scene leaves the actor blind and paralysed for good | `=enable_ui` rides on the 13-second line with the tunnel's call, at the line's exact length. The fade on re-entry is the author's and stays |
+| Every `ph_code` lock records an entered code only by switching its section, and `[logic] active` names the locked one | A lock opened and then unloaded with the level is a lock again, with the code unchanged - eight boxes across the mod, the report's stash among them | On the lock's first update the outcome its `on_code` condlist describes is replayed whenever every portion it grants is already held |
+| `artefacts.ltx` gives `af_gravi` `inv_weight = 0.0`, the one weightless artefact of fifty-eight; `fake_lom`, the rucksack stand-in the hidden-slot script swaps in for the crowbar, weighs 0.3 kg against the crowbar's 3.5 | «Грави весит 0.00», and a crowbar that gains three kilograms when taken in hand | Vanilla's 0.5 for the artefact and the crowbar's own weight for its stand-in, where the engine reads them |
+
+Examined and left as the author wrote them: the Toymaker on Agroprom is spawned by the boiler-house killer's
+surrender and nothing else, so shooting the killer first is a choice with a cost, and his dialog gates no quest;
+Yura on the Garbage removes himself when the Agroprom story starts (`gar_qra.ltx:21`, the author's `delme2`) and his
+job still completes on the map from the corpse; the drinking party's chain to the wagon is whole (the wagon
+Tikhonovich, his path and the guard all spawn at the wagon, the timers are numbered timers vanilla supports) and
+could not be made to fail from the files; the checkpoint safe's use area sits 0.7 m above the lock and cannot be
+judged without the model on screen; the Mauser's `anim_empty = empty` names a motion its model lacks, but no code in
+this binary reads `anim_empty`, so it is not what hides the gun; the two Cordon gas masks are two items with their
+own weights; the sergeant's 20 000 goes through `dialogs.relocate_money`, which 1.0.2 verified takes the money;
+the soul mound keeps its default caption for the three seconds between digging and the portion; and the teleport
+into the tower is a puzzle the author hinted at rather than a broken destination.
+
 ### Updates across any number of versions
 
 There never was a one-version rule. A client reads `releases?per_page=30`, takes the highest version of its own

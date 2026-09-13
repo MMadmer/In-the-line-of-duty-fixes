@@ -229,6 +229,22 @@ int main(int argc, char** argv)
         ild::corrected_item_text("wpn_mp40", "inv_name", "\xCC\xCF-40") ||
         ild::corrected_item_text("wpn_mp40", "description", "mp41")) return 54;
     // The rifle's binding to a module that exists nowhere reads as absent; any other binding is left alone.
+    // Kuzma's timeout keeps sending him home but no longer closes his brother's dialog; the tunnel gives the
+    // input back with its call. Both at the line's exact length, both refusing a file already repaired.
+    std::string kuzma = "[remark4]\r\nanim = probe\r\non_timer = 100000 | %+esc_kyzma_2% kamp\r\n";
+    if (!ild::repair_config_text(kuzma, ConfigRepair::kuzma_timeout) ||
+        kuzma != "[remark4]\r\nanim = probe\r\non_timer = 100000 |                kamp\r\n" ||
+        ild::repair_config_text(kuzma, ConfigRepair::kuzma_timeout)) return 56;
+    std::string tunnel = "[sr_idle666]\r\non_timer2 = 13000 | %+aiaiaiai "
+        "=play_snd(ai_kaver\\esc_zov_tonelia_smerti)% nil\r\n";
+    const auto tunnel_size = tunnel.size();
+    if (!ild::repair_config_text(tunnel, ConfigRepair::tunnel_input) || tunnel.size() != tunnel_size ||
+        tunnel.find("13000| %=enable_ui =play_snd(ai_kaver\\esc_zov_tonelia_smerti)% nil") == std::string::npos ||
+        ild::repair_config_text(tunnel, ConfigRepair::tunnel_input)) return 57;
+    if (ild::corrected_item_number("af_gravi", "inv_weight", 0.0f) != 0.5f ||
+        ild::corrected_item_number("af_gravi", "inv_weight", 0.5f) ||
+        ild::corrected_item_number("fake_lom", "inv_weight", 0.3f) != 3.5f ||
+        ild::corrected_item_number("lom", "inv_weight", 0.3f)) return 58;
     if (!ild::hidden_item_line("wpn_b94", "script_binding", "bind_wpn.init") ||
         ild::hidden_item_line("wpn_b94", "script_binding", "bind_physic_object.init") ||
         ild::hidden_item_line("wpn_svd", "script_binding", "bind_wpn.init")) return 55;

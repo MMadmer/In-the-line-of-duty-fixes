@@ -44,8 +44,10 @@ An update is applied by the helper inside the verified archive of the release
 being installed, and a patch that does not fit the installation is replaced by the
 full archive before the game closes, so any number of skipped versions is fine.
 
-Knife replacement uses the ordinary inventory equip action. The obsolete knife
-warning is removed in memory; the main descriptions remain intact.
+Knife, binoculars, bolt, torch, PDA and detector are equipped from the inventory
+through the ordinary equip action: the window owns no list for those slots and
+would crash. Hand items are drawn; a torch, PDA or detector is only placed. The
+obsolete knife warning is removed in memory; the main descriptions remain intact.
 The incorrectly configured decorative table no longer runs a door controller.
 Updater changes are paginated using the game's fonts and native buttons.
 
