@@ -32,6 +32,7 @@ namespace IldFixes.Updater
     {
         internal Version Version;
         internal ReleaseAsset Asset;
+        internal ReleaseAsset FullAsset;
         internal bool IsPatch;
         internal LocalizedNotes Notes;
     }

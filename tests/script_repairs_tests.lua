@@ -1154,7 +1154,14 @@ do
                 level_vertex_id = function(_, index) return 100 + index end
             }
         }
-        mgr.reset = function(self) self.resets = self.resets + 1 end
+        -- Rebuilding the patrol on a terminal waypoint hands that waypoint's callback over at once, as vanilla does.
+        mgr.reset = function(self)
+            self.resets = self.resets + 1
+            if self.terminal then self.last_index = self.terminal end
+        end
+        mgr.standing_on_terminal_waypoint = function(self) return self.terminal ~= nil, self.terminal end
+        mgr.arrived_to_first_waypoint = function(self) return self.last_index ~= nil end
+        mgr.patrol_walk.flag = function(_, index, bit) return mgr.flags ~= nil and mgr.flags[index] == bit end
         mgr.time_callback = function(self) self.callbacks = self.callbacks + 1 end
         mgr.scheme_set_signal = function(self, name) self.signals[#self.signals + 1] = name end
         local states = {callback = {func = function() end, timeout = 5000}}
@@ -1164,7 +1171,7 @@ do
             name = function() return "esc_stalker" end,
             alive = function() return true end,
             position = function(self) return {x = self.x, y = 0, z = 0,
-                distance_to = function(point) return math.abs(point.x - self.x) end} end,
+                distance_to = function(_, point) return math.abs(point.x - self.x) end} end,
             best_enemy = function() return overrides.enemy end,
             best_danger = function() return nil end,
             is_talking = function() return overrides.talking == true end,
@@ -1287,6 +1294,126 @@ do
     env.db.storage[npc:id()].active_scheme = nil
     for _ = 1, 10 do tick(npc, 5) end
     equal(mgr.resets, 0, "an NPC with no active scheme is left alone")
+
+    -- Standing is what these NPCs are for. Read as stalls, a sniper at its post and every sleeper were stood up,
+    -- their animation cut, once a minute for the whole session. A walking move_mgr carries no wait of its own.
+    local function standing(scheme, fields)
+        local world_npc, world_mgr, world_states = make_world()
+        world_states.callback = nil
+        if scheme then
+            fields.section, fields.path_walk = scheme, "walk_path"
+            env.db.storage[world_npc:id()].active_scheme = scheme
+            env.db.storage[world_npc:id()][scheme] = fields
+        end
+        return world_npc, world_mgr
+    end
+    local function lines() return calls.console and #calls.console or 0 end
+    local function reported(from, line)
+        local count = 0
+        for index = from + 1, lines() do
+            if calls.console[index] == "ild_update watchdog " .. line then count = count + 1 end
+        end
+        return count
+    end
+    env.utils = {stalker_at_waypoint = function(object, _, index) return object.at == index end}
+
+    npc, mgr = standing("camper", {sniper = true, scantime_free = 60000})
+    mgr.path_look, mgr.terminal, mgr.flags, npc.at, npc.animations = nil, 0, {[0] = 0}, 0, 1
+    for _ = 1, 60 do tick(npc, 5) end
+    equal(mgr.resets, 0, "a sniper on the end point of its walk path is left at its post")
+    equal(npc.animations, 1, "with its animation intact")
+
+    npc, mgr = standing("camper", {sniper = true, scantime_free = 60000})
+    mgr.flags, npc.at = {[1] = 3}, 1
+    tick(npc, 1)
+    for _ = 1, 15 do tick(npc, 5) end
+    equal(mgr.resets, 0, "a sniper scanning from a flagged point of its walk path is given its scantime_free")
+    tick(npc, 10)
+    equal(mgr.resets, 1, "and one still standing there after it has run out is stalled")
+
+    npc, mgr = standing("camper", {sniper = true, scantime_free = 60000})
+    npc.at = 1
+    tick(npc, 1)
+    tick(npc, 25)
+    equal(mgr.resets, 1, "a point without flags does not hold a sniper")
+
+    npc, mgr = standing("sleeper", {})
+    mgr.patrol_walk.count = function() return 1 end
+    npc.animations = 1
+    for _ = 1, 60 do tick(npc, 5) end
+    equal(mgr.resets, 0, "a sleeper lying on its one point is never stood up")
+    equal(npc.animations, 1, "nor its sleep cut")
+
+    npc, mgr = standing("sleeper", {})
+    mgr.patrol_walk.count = function() return 1 end
+    mgr.last_index = nil
+    tick(npc, 1)
+    tick(npc, 25)
+    equal(mgr.resets, 1, "a sleeper that never reached its point is still stalled")
+
+    npc, mgr = standing()
+    mgr.terminal, mgr.last_index = 2, 2
+    for _ = 1, 60 do tick(npc, 5) end
+    equal(mgr.resets, 0, "a walker whose patrol ended on a terminal waypoint is standing where it was sent")
+
+    npc, mgr = standing()
+    mgr.terminal = 2
+    for _ = 1, 60 do tick(npc, 5) end
+    equal(mgr.resets, 1, "one whose terminal waypoint was never handled is rebuilt once, which hands it over")
+
+    -- No endless ladders. A forced wait that comes back unarmed is not forced again within the section.
+    npc, mgr, states = make_world()
+    mgr.state = 2
+    local from = lines()
+    tick(npc, 1)
+    tick(npc, 5)
+    for _ = 1, 30 do tick(npc, 5) end
+    equal(mgr.callbacks, 1, "a wait that stays unarmed after being forced is not forced again")
+    equal(reported(from, "stuck esc_stalker walker@guard"), 1, "and giving it up is recorded once")
+    env.db.storage[npc:id()].walker.section = "walker@next"
+    tick(npc, 1)
+    tick(npc, 5)
+    tick(npc, 35)
+    equal(mgr.callbacks, 2, "until the section changes")
+
+    npc, mgr, states = make_world()
+    mgr.state = 2
+    tick(npc, 1)
+    tick(npc, 5)
+    tick(npc, 35)
+    states.callback.begin = env.clock_ms
+    tick(npc, 5)
+    states.callback.begin = nil
+    tick(npc, 5)
+    tick(npc, 35)
+    equal(mgr.callbacks, 2, "one that armed in between shows the forcing worked, so the next is forced as well")
+
+    -- A rescue that brought the NPC back, only for it to stand again, ends the ladder for the section.
+    npc, mgr = standing()
+    from = lines()
+    tick(npc, 1)
+    for _ = 1, 3 do tick(npc, 25) end
+    npc.x = 10
+    tick(npc, 5)
+    equal(reported(from, "rejoined esc_stalker walker@guard"), 1, "the rescue brings the NPC back")
+    for _ = 1, 60 do tick(npc, 5) end
+    equal(mgr.resets, 3, "and when it stands again it is left alone")
+    equal(reported(from, "stuck esc_stalker walker@guard"), 1, "which is recorded once, not once a minute")
+    env.db.storage[npc:id()].walker.section = "walker@next"
+    tick(npc, 1)
+    tick(npc, 25)
+    equal(mgr.resets, 4, "until its section changes")
+
+    npc, mgr = standing()
+    tick(npc, 1)
+    for _ = 1, 3 do tick(npc, 25) end
+    npc.dest_vertex = nil
+    tick(npc, 25)
+    equal(npc.dest_vertex, 101, "a rescue that never got the NPC moving is planned once more")
+    tick(npc, 25)
+    equal(mgr.resets, 3, "and when that fails too, the scheme gets its own patrol back")
+    for _ = 1, 20 do tick(npc, 5) end
+    equal(mgr.resets, 3, "and is not rescued again")
 
     -- The original binder still runs.
     npc = make_world()

@@ -206,6 +206,32 @@ int main(int argc, char** argv)
             "\xE2\xE5\xF1\xFC\xEC\xE0") == std::string::npos) return 31;
     if (ild::repaired_description("esc_lopata_kopatelia_veshi", shovel) ||
         ild::repaired_description("item_lopata", "\xDD\xF2\xEE \xEB\xEE\xEF\xE0\xF2\xE0.")) return 32;
+    // The courier suit keeps its seller's promise: the description says 90 and the capacity is 30, nothing else moves.
+    const std::string courier = "\"\xEA\xE8\xEB\xEE\xE3\xF0\xE0\xEC\xEC\xEE\xE2 \xEF\xEE\xE4 80.\"";
+    const auto courier_text = ild::repaired_description("kyrier_outfit", courier);
+    if (!courier_text || courier_text->find("\xEF\xEE\xE4 90.") == std::string::npos ||
+        courier_text->find("80") != std::string::npos || courier_text->size() != courier.size()) return 51;
+    if (ild::corrected_item_number("kyrier_outfit", "additional_inventory_weight2", 25.0f) != 30.0f ||
+        ild::corrected_item_number("kyrier_outfit", "additional_inventory_weight2", 30.0f) ||
+        ild::corrected_item_number("kyrier_outfit", "additional_inventory_weight", 30.0f) ||
+        ild::corrected_item_number("exo_outfit", "additional_inventory_weight2", 25.0f)) return 52;
+    // The sensor's cell and name and the German guns' names change only while they still hold the mod's values.
+    if (ild::corrected_item_number("kruglov_flash", "inv_grid_x", 4000.0f) != 5.0f ||
+        ild::corrected_item_number("kruglov_flash", "inv_grid_y", 1950.0f) != 14.0f ||
+        ild::corrected_item_number("kruglov_flash", "inv_grid_x", 5.0f)) return 53;
+    const auto text_is = [](const char* text, std::string_view expected) { return text && expected == text; };
+    if (!text_is(ild::corrected_item_text("kruglov_flash", "inv_name", "i"), "item_detector_yantar_name") ||
+        ild::corrected_item_text("kruglov_flash", "inv_name_short", "item_detector_yantar_name") ||
+        !text_is(ild::corrected_item_text("wpn_mp40", "inv_name", "mp41"), "\xCC\xCF-40") ||
+        !text_is(ild::corrected_item_text("wpn_mp40n", "inv_name_short", "mp41"), "\xCC\xCF-40") ||
+        !text_is(ild::corrected_item_text("wpn_mp41", "inv_name", "mp40"), "\xCC\xCF-41") ||
+        !text_is(ild::corrected_item_text("wpn_mp41", "inv_name_short", "mp41"), "\xCC\xCF-41") ||
+        ild::corrected_item_text("wpn_mp40", "inv_name", "\xCC\xCF-40") ||
+        ild::corrected_item_text("wpn_mp40", "description", "mp41")) return 54;
+    // The rifle's binding to a module that exists nowhere reads as absent; any other binding is left alone.
+    if (!ild::hidden_item_line("wpn_b94", "script_binding", "bind_wpn.init") ||
+        ild::hidden_item_line("wpn_b94", "script_binding", "bind_physic_object.init") ||
+        ild::hidden_item_line("wpn_svd", "script_binding", "bind_wpn.init")) return 55;
     std::string cramped = prince_part + "<dialog id=\"esc_dengi_rebe\">\r\n<dont_has_info>esc_dengi_rebe</dont_has_info>\r\n"
         "<action>new_life.sidor_mne_keis_s_artami</action>\r\n</dialog>\r\n";
     unchanged = cramped;

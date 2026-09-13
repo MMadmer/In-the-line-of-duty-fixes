@@ -4,25 +4,37 @@ param(
     [string]$Scenario = 'Full',
     [string]$InstalledVersion = '0.9.0',
     [switch]$LongNotes,
-    [string]$AssetRoot = (Join-Path $PSScriptRoot '..\..\qa\mock-assets')
+    [string]$AssetRoot = (Join-Path $PSScriptRoot '..\..\qa\mock-assets'),
+    # Serves the archives in this directory as they are, one release per version, instead of generated assets.
+    [string]$ReleaseDirectory
 )
 
 $ErrorActionPreference = 'Stop'
-$AssetRoot = [IO.Path]::GetFullPath($AssetRoot)
-New-Item -ItemType Directory -Force -Path $AssetRoot | Out-Null
 $prefix = 'In-the-line-of-duty-fixes-'
-$installed = [version]$InstalledVersion
-$nextVersion = "$($installed.Major).$($installed.Minor).$($installed.Build + 1)"
-$versions = @($InstalledVersion, $nextVersion)
-if ($Scenario -in 'Major', 'Both') { $versions += "$($installed.Major + 1).0.0" }
-if ($Scenario -eq 'Empty') { $versions = @() }
+if ($ReleaseDirectory) {
+    $AssetRoot = [IO.Path]::GetFullPath($ReleaseDirectory)
+    $pattern = '^' + [regex]::Escape($prefix) + '([0-9]+\.[0-9]+\.[0-9]+)-(Setup_Manual|Update_Patch)\.zip$'
+    $versions = @(Get-ChildItem -LiteralPath $AssetRoot -File | ForEach-Object { [regex]::Match($_.Name, $pattern) } |
+        Where-Object Success | ForEach-Object { $_.Groups[1].Value } | Sort-Object { [version]$_ } -Unique)
+    $suffixes = @('Setup_Manual', 'Update_Patch')
+} else {
+    $AssetRoot = [IO.Path]::GetFullPath($AssetRoot)
+    New-Item -ItemType Directory -Force -Path $AssetRoot | Out-Null
+    $installed = [version]$InstalledVersion
+    $nextVersion = "$($installed.Major).$($installed.Minor).$($installed.Build + 1)"
+    $versions = @($InstalledVersion, $nextVersion)
+    if ($Scenario -in 'Major', 'Both') { $versions += "$($installed.Major + 1).0.0" }
+    if ($Scenario -eq 'Empty') { $versions = @() }
+    $suffixes = @('Setup_Manual') + $(if ($Scenario -in 'Patch', 'Both') { 'Update_Patch' })
+}
 $assets = @{}
 $releases = foreach ($version in $versions) {
-    $releaseAssets = foreach ($suffix in @('Setup_Manual') + $(if ($Scenario -in 'Patch', 'Both') { 'Update_Patch' })) {
+    $releaseAssets = foreach ($suffix in $suffixes) {
         if (-not $suffix) { continue }
         $name = "$prefix$version-$suffix.zip"
         $path = Join-Path $AssetRoot $name
         if (-not (Test-Path -LiteralPath $path)) {
+            if ($ReleaseDirectory) { continue }
             $bytes = [byte[]]::new(128 * 1024)
             for ($i = 0; $i -lt $bytes.Length; ++$i) { $bytes[$i] = [byte](($i * 31 + $name.Length) % 251) }
             [IO.File]::WriteAllBytes($path, $bytes)

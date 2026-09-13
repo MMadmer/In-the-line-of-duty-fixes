@@ -14,11 +14,29 @@ namespace ild
 {
 namespace
 {
+// xrCore's shared_str is one pointer to a counted entry whose characters follow three 32-bit fields.
+struct SharedName
+{
+    const unsigned char* entry;
+};
+
 using ToSlot = bool(__stdcall*)(void*, void*, bool);
 using ReadString = const char*(__thiscall*)(void*, const char*, const char*);
+using ReadSharedString = const char*(__thiscall*)(void*, const SharedName*, const char*);
+using ReadUnsigned = unsigned(__thiscall*)(void*, const char*, const char*);
+using ReadSharedUnsigned = unsigned(__thiscall*)(void*, const SharedName*, const char*);
+using ReadFloat = float(__thiscall*)(void*, const char*, const char*);
+using ReadSharedFloat = float(__thiscall*)(void*, const SharedName*, const char*);
+using LineExists = int(__thiscall*)(void*, const char*, const char*);
 X86Detour slot_hook;
 ToSlot original_to_slot{};
 ReadString original_read_string{};
+ReadSharedString original_read_shared_string{};
+ReadUnsigned original_read_unsigned{};
+ReadSharedUnsigned original_read_shared_unsigned{};
+ReadFloat original_read_float{};
+ReadSharedFloat original_read_shared_float{};
+LineExists original_line_exists{};
 unsigned char* game_base{};
 bool checked{}, enabled{};
 
@@ -106,12 +124,18 @@ const char* keep_description(std::string_view original, std::string repaired)
     return descriptions.try_emplace(std::string(original), std::move(repaired)).first->second.c_str();
 }
 
-const char* __fastcall read_string(void* ini, void*, const char* section, const char* key)
+[[nodiscard]] const char* name_of(const SharedName* name)
 {
-    const auto value = original_read_string(ini, section, key);
+    return name && name->entry ? reinterpret_cast<const char*>(name->entry + 12) : nullptr;
+}
+
+[[nodiscard]] const char* repaired_text(const char* section, const char* key, const char* value)
+{
     if (!value || !section || !key) return value;
-    // A line the mod never gave text to at all; the replacement is a literal and needs no stable storage.
+    // A line the mod never gave text to at all, or gave the wrong one; the replacement is a literal and needs no
+    // stable storage.
     if (const auto supplied = supplied_item_text(section, key)) return supplied;
+    if (const auto corrected = corrected_item_text(section, key, value)) return corrected;
     if (std::strcmp(key, "description") != 0) return value;
     if (auto repaired = repaired_description(section, value)) return keep_description(value, std::move(*repaired));
     constexpr std::array knives{"wpn_knife_6x2", "wpn_knife_6x4", "wpn_knife_nkvd", "wpn_knife_tip30", "wpn_knify"};
@@ -131,6 +155,67 @@ const char* __fastcall read_string(void* ini, void*, const char* section, const 
     if (!text.substr(warning + marker.size()).starts_with(expected)) return value;
     return keep_description(text, std::string(text.substr(0, warning)));
 }
+
+const char* __fastcall read_string(void* ini, void*, const char* section, const char* key)
+{
+    return repaired_text(section, key, original_read_string(ini, section, key));
+}
+
+const char* __fastcall read_shared_string(void* ini, void*, const SharedName* section, const char* key)
+{
+    return repaired_text(name_of(section), key, original_read_shared_string(ini, section, key));
+}
+
+// Only a value with a correction passes through a float; every other one stays the integer the engine read.
+[[nodiscard]] unsigned repaired_unsigned(const char* section, const char* key, unsigned value)
+{
+    const auto corrected = section && key ? corrected_item_number(section, key, static_cast<float>(value)) :
+        std::optional<float>{};
+    return corrected ? static_cast<unsigned>(*corrected) : value;
+}
+
+[[nodiscard]] float repaired_float(const char* section, const char* key, float value)
+{
+    return section && key ? corrected_item_number(section, key, value).value_or(value) : value;
+}
+
+unsigned __fastcall read_unsigned(void* ini, void*, const char* section, const char* key)
+{
+    return repaired_unsigned(section, key, original_read_unsigned(ini, section, key));
+}
+
+unsigned __fastcall read_shared_unsigned(void* ini, void*, const SharedName* section, const char* key)
+{
+    return repaired_unsigned(name_of(section), key, original_read_shared_unsigned(ini, section, key));
+}
+
+float __fastcall read_float(void* ini, void*, const char* section, const char* key)
+{
+    return repaired_float(section, key, original_read_float(ini, section, key));
+}
+
+float __fastcall read_shared_float(void* ini, void*, const SharedName* section, const char* key)
+{
+    return repaired_float(name_of(section), key, original_read_shared_float(ini, section, key));
+}
+
+int __fastcall line_exists(void* ini, void*, const char* section, const char* key)
+{
+    const auto exists = original_line_exists(ini, section, key);
+    // Only a present binding line is looked at, so the countless other queries cost one comparison.
+    if (!exists || !section || !key || !original_read_string || std::strcmp(key, "script_binding") != 0)
+        return exists;
+    const auto value = original_read_string(ini, section, key);
+    return value && hidden_item_line(section, key, value) ? FALSE : exists;
+}
+
+// The original is published before the import slot changes, since any thread may call through it at once.
+template<class Function> void hook_import(HMODULE game, HMODULE core, const char* symbol, Function& original,
+    void* replacement)
+{
+    original = core ? reinterpret_cast<Function>(GetProcAddress(core, symbol)) : nullptr;
+    if (original) static_cast<void>(replace_iat_import(game, "xrCore.dll", symbol, replacement));
+}
 }
 
 bool install_inventory_hooks(const std::filesystem::path& root)
@@ -139,14 +224,23 @@ bool install_inventory_hooks(const std::filesystem::path& root)
     const auto module = GetModuleHandleW(L"xrGame.dll");
     if (!module) return false;
     checked = true;
-    // Descriptions arrive through an import resolved by name, so their repairs do not need the validated build.
-    // The original is published before the import slot changes, since any thread may call through it at once.
-    constexpr char read_string_symbol[] = "?r_string@CInifile@@QAEPBDPBD0@Z";
+    // Item text and numbers arrive through imports resolved by name, so their repairs do not need the validated build.
+    // Every getter of both overloads is taken, because the engine reads one key through several of them.
     const auto core = GetModuleHandleW(L"xrCore.dll");
-    original_read_string = core ? reinterpret_cast<ReadString>(GetProcAddress(core, read_string_symbol)) : nullptr;
-    if (original_read_string)
-        static_cast<void>(replace_iat_import(module, "xrCore.dll", read_string_symbol,
-            reinterpret_cast<void*>(&read_string)));
+    hook_import(module, core, "?r_string@CInifile@@QAEPBDPBD0@Z", original_read_string,
+        reinterpret_cast<void*>(&read_string));
+    hook_import(module, core, "?r_string@CInifile@@QAEPBDABVshared_str@@PBD@Z", original_read_shared_string,
+        reinterpret_cast<void*>(&read_shared_string));
+    hook_import(module, core, "?r_u32@CInifile@@QAEIPBD0@Z", original_read_unsigned,
+        reinterpret_cast<void*>(&read_unsigned));
+    hook_import(module, core, "?r_u32@CInifile@@QAEIABVshared_str@@PBD@Z", original_read_shared_unsigned,
+        reinterpret_cast<void*>(&read_shared_unsigned));
+    hook_import(module, core, "?r_float@CInifile@@QAEMPBD0@Z", original_read_float,
+        reinterpret_cast<void*>(&read_float));
+    hook_import(module, core, "?r_float@CInifile@@QAEMABVshared_str@@PBD@Z", original_read_shared_float,
+        reinterpret_cast<void*>(&read_shared_float));
+    hook_import(module, core, "?line_exist@CInifile@@QAEHPBD0@Z", original_line_exists,
+        reinterpret_cast<void*>(&line_exists));
     Sha256 hash{};
     if (!sha256_file(root / L"bin" / L"xrGame.dll", hash)) return false;
     constexpr char digits[] = "0123456789ABCDEF";

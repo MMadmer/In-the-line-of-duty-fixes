@@ -216,7 +216,8 @@ namespace IldFixes.Updater
 
         private UpdateOffer BuildUpdateOffer(List<ReleaseInfo> releases, ReleaseInfo target)
         {
-            ReleaseAsset selected = FindFullAsset(target);
+            ReleaseAsset full = FindFullAsset(target);
+            ReleaseAsset selected = full;
             bool patch = false;
             List<ReleaseInfo> usable = releases.Where(delegate(ReleaseInfo release)
             {
@@ -240,6 +241,7 @@ namespace IldFixes.Updater
             UpdateOffer offer = new UpdateOffer();
             offer.Version = target.Version;
             offer.Asset = selected;
+            offer.FullAsset = full;
             offer.IsPatch = patch;
             offer.Notes = ParseNotes(target.Body);
             return offer;

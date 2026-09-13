@@ -40,6 +40,9 @@ The helper uses Windows .NET Framework 4.x. It performs networking and applies
 verified updates; the update dialog itself uses the game's existing UI classes.
 It runs only while an update is offered and exits on its own otherwise. State it
 keeps (status files, download cache, a failed-update note) lives under .ild-fixes.
+An update is applied by the helper inside the verified archive of the release
+being installed, and a patch that does not fit the installation is replaced by the
+full archive before the game closes, so any number of skipped versions is fine.
 
 Knife replacement uses the ordinary inventory equip action. The obsolete knife
 warning is removed in memory; the main descriptions remain intact.
@@ -81,6 +84,15 @@ player is moved to the ordinary side of the door; a finish reached at the wheel
 still returns the player to the organizer; and walking back onto the spot the
 door brought the player to and standing there for three seconds leads out at any
 time.
+
+Carried weight: walking costs stamina for the load as a share of the capacity the
+inventory shows with the worn suit, as jumping always did, so a suit's extra
+capacity is no longer overweight for the legs (where the game DLL matches the
+validated build). The courier suit Nomad sells carries the 90 kg he promises.
+Names, icons and values the mod ships wrong inside files the system config
+includes are corrected where the engine reads them, because those files are read
+before any hook of the pack exists. xrCore's heap walk for "stat_memory" holds
+the heap lock, which ends the occasional "bad node in heap" crash on start.
 
 Shovels, a deliberate change requested for the pack: digging a grave stash no
 longer takes the shovel, so one shovel lasts for every grave. Stamina, sounds,

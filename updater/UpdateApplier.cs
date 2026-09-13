@@ -95,8 +95,7 @@ namespace IldFixes.Updater
                 throw new Failure(19, "The update request does not belong to this installation.");
             EnsureNoReparsePoints(game, archive);
 
-            if (!File.Exists(archive) || new FileInfo(archive).Length != size ||
-                UpdateClient.Digest(archive) != UpdateClient.NormalizeDigest(digest))
+            if (!ArchiveMatches(archive, size, digest))
                 throw new Failure(20, "The downloaded archive failed its size or SHA-256 check.");
             if (!WaitForProcess(waitPid, gameStart, TimeSpan.FromMinutes(2)))
                 throw new Failure(28, "The game did not exit in time.");
@@ -117,9 +116,10 @@ namespace IldFixes.Updater
                     manifest = ReadManifest(entries[ManifestPath]);
                     if (manifest.Version != version)
                         throw new Failure(21, "The archive version does not match the offered update.");
-                    if (manifest.Patch && (installedVersion == null || manifest.Base != installedVersion))
-                        RejectPatch(game, version, "The patch was built for another installed version.");
-                    ValidateAndStage(entries, manifest, game, stage, version);
+                    string mismatch = manifest.Patch ? PatchMismatch(game, installedVersion, manifest, entries) : null;
+                    if (mismatch != null)
+                        RejectPatch(game, version, mismatch);
+                    ValidateAndStage(entries, manifest, game, stage);
                 }
             }
             catch (Failure)
@@ -303,8 +303,81 @@ namespace IldFixes.Updater
 
         private static void RejectPatch(string game, Version version, string reason)
         {
-            WriteTextAtomic(Path.Combine(game, ".ild-fixes", "patch-rejected.txt"), version.ToString());
+            MarkPatchRejected(game, version);
             throw new Failure(24, reason);
+        }
+
+        internal static void MarkPatchRejected(string game, Version version)
+        {
+            WriteTextAtomic(Path.Combine(game, ".ild-fixes", "patch-rejected.txt"), version.ToString());
+        }
+
+        // Takes the updater out of a verified archive, so that a release is applied by its own rules. False when the
+        // archive carries none, as a patch that leaves the updater unchanged does.
+        internal static bool ExtractUpdater(string archive, long size, string digest, string destination)
+        {
+            if (!ArchiveMatches(archive, size, digest))
+                throw new InvalidDataException("The downloaded archive failed its size or SHA-256 check.");
+            using (ZipArchive zip = ZipFile.OpenRead(archive))
+            {
+                ZipArchiveEntry[] carried = zip.Entries.Where(delegate(ZipArchiveEntry entry)
+                {
+                    return entry.FullName.Replace('\\', '/').Equals("InTheLineOfDutyFixesUpdater.exe",
+                        StringComparison.OrdinalIgnoreCase);
+                }).ToArray();
+                if (carried.Length == 0)
+                    return false;
+                if (carried.Length > 1)
+                    throw new InvalidDataException("The update archive contains duplicate paths.");
+                TryDelete(destination);
+                Extract(carried[0], destination);
+                if (new FileInfo(destination).Length != carried[0].Length)
+                    throw new InvalidDataException("The updater in the archive has an unexpected size.");
+            }
+            return true;
+        }
+
+        // The patch check of an apply, asked while the game still runs. Whatever this updater cannot read is left to
+        // the updater that the archive carries.
+        internal static bool PatchApplies(string game, string archive)
+        {
+            try
+            {
+                using (ZipArchive zip = ZipFile.OpenRead(archive))
+                {
+                    Dictionary<string, ZipArchiveEntry> entries = ValidateArchive(zip);
+                    Manifest manifest = ReadManifest(entries[ManifestPath]);
+                    return !manifest.Patch ||
+                        PatchMismatch(game, ReadInstalledVersion(game), manifest, entries) == null;
+                }
+            }
+            catch (Exception)
+            {
+                return true;
+            }
+        }
+
+        private static string PatchMismatch(string game, Version installedVersion, Manifest manifest,
+            Dictionary<string, ZipArchiveEntry> entries)
+        {
+            if (installedVersion == null || manifest.Base != installedVersion)
+                return "The patch was built for another installed version.";
+            foreach (ManifestFile file in manifest.Files)
+            {
+                if (entries.ContainsKey(file.Relative))
+                    continue;
+                string installed = Destination(game, file.Relative);
+                if (!File.Exists(installed) || new FileInfo(installed).Length != file.Size ||
+                    UpdateClient.Digest(installed) != file.Hash)
+                    return "The installed " + file.Relative + " does not match the patch base.";
+            }
+            return null;
+        }
+
+        private static bool ArchiveMatches(string archive, long size, string digest)
+        {
+            return File.Exists(archive) && new FileInfo(archive).Length == size &&
+                UpdateClient.Digest(archive) == UpdateClient.NormalizeDigest(digest);
         }
 
         private static HashSet<string> PayloadPaths(Manifest manifest)
@@ -413,8 +486,7 @@ namespace IldFixes.Updater
             Dictionary<string, ZipArchiveEntry> entries,
             Manifest manifest,
             string game,
-            string stage,
-            Version version)
+            string stage)
         {
             HashSet<string> payload = PayloadPaths(manifest);
             foreach (string path in entries.Keys)
@@ -428,12 +500,9 @@ namespace IldFixes.Updater
                 ZipArchiveEntry entry;
                 if (!entries.TryGetValue(file.Relative, out entry))
                 {
+                    // A patch leaves out what it does not change; PatchMismatch matched the installed copy.
                     if (!manifest.Patch)
                         throw new Failure(21, "The archive omits " + file.Relative + ".");
-                    string installed = Destination(game, file.Relative);
-                    if (!File.Exists(installed) || new FileInfo(installed).Length != file.Size ||
-                        UpdateClient.Digest(installed) != file.Hash)
-                        RejectPatch(game, version, "The installed " + file.Relative + " does not match the patch base.");
                     continue;
                 }
 
@@ -560,6 +629,7 @@ namespace IldFixes.Updater
         }
 
         // The fix pack owns only its own namespaces; every other path belongs to the game, the mod, or another addon.
+        // None is ever dropped: the updater of each later release reads the ownership lists of the older ones.
         private static bool OwnedPath(string value)
         {
             string path;

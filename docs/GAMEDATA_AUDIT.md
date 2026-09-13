@@ -209,6 +209,9 @@ defect, which section 1 of the working rules forbids. They are recorded here ins
   The exception is `[outfit_stalker_m2]` in `misc/racya.ltx`, which grants +10 to the walk threshold and +20 to
   capacity, leaving a 10 kg band in which the player is loaded but cannot run. Its own comment describes it as
   a rucksack suit, so that may well be intended; changing either number changes carrying balance.
+  *Superseded in part by the thirteenth pass:* this looked only at the two limits. The stamina a step costs is
+  a third use of weight, and walking measured it against the bare inventory maximum; that, and the courier
+  suit's 25/30 pair this count missed, are repaired there.
 - **Blockpost yard patrol.** `gulag_escape.ltx:107` sleeps the guard whenever it is *not* evening, so he is
   asleep for twenty hours a day. The sibling sniper job uses the sensible `is_night`/`is_day` pair, which makes
   this look like a mistake, but swapping the conditions rewrites an NPC's schedule.
@@ -266,6 +269,9 @@ paths, so no scripted step is ever skipped:
   scheme is never acted on.
 - A section change resets every timer, and the whole check runs inside `pcall`, so a stall check can never
   take the game down with it.
+- *Corrected in the thirteenth pass:* none of this covered an NPC that stands in move_mgr's walking state on
+  purpose - a sniper on its post, a sleeper on its point - and those were reset and rescued once a minute. The
+  schemes' own idle states are now recognised and every recovery stops after one round per section.
 
 ### Evidence
 
@@ -900,3 +906,143 @@ pack's 1.0.5 script with one added line, and needs nothing.
   stall is the eleventh pass's repair.
 - **A green bug on start** came with no log and nothing can be said about it.
 - **Saves that stopped loading before the Dark Valley** are the open save-corruption item of the eleventh pass.
+
+
+## Thirteenth pass: carried weight, a promise at the black market, and repairs that never ran - 2026-09-13
+
+Sources: the maintainer's own list (the overweight drain, the courier suit, the black market extras, what
+«Похмельняк» is for), a player's report of logless Cordon crashes, the crash dumps Windows kept on this machine and
+the pack's own watchdog record.
+
+### Walking stamina and the carry limit
+
+The stamina a step costs is `walk_power + walk_weight_power * share`, and past a share of 1 the weight part is
+multiplied by `overweight_walk_k` (5 in this mod), then by `accel_k` or `sprint_k`. What "share" is measured
+against is the whole defect:
+
+| Where | Share | Source |
+| --- | --- | --- |
+| Walking, `CActorCondition::UpdateCondition` (xrGame RVA `0x1DD060`) | rucksack weight over `CInventory::m_fMaxWeight` - the bare `[inventory] max_weight`, 60 | `movss xmm4,[esi+6Ch]` / `divss xmm4,[esi+68h]` at `0x1DD0EB`, then `ConditionWalk` at `0x1DD600` |
+| Jumping, `CActor::g_cl_CheckControls` (`0x1CF456`) | the same weight over the owner's virtual at slot `0x98` | `CInventoryOwner::MaxCarryWeight` (`0x20E7F0`): `m_fMaxWeight` plus the worn suit's `m_additional_weight2` |
+| The inventory window and the fatigue step of the same update | `MaxCarryWeight` | `InventoryUtilities::UpdateWeight`, `UpdateCondition` |
+
+So a suit's capacity moved the number the player reads and the jump, but not walking: from the 60th kilogram on,
+every step cost five times the weight share even inside a suit the inventory rated for 85 or 90. The one division is
+now pointed at the virtual the jump already calls. The detour is validated by the whole moving branch and by the
+jump code that proves what slot `0x98` is; on any other build it reports "skipped" and changes nothing. A unit test
+enters the replacement the way the engine does, with every register loaded, and checks the share, that nothing but
+`xmm4` changes, and that a missing capacity or a foreign inventory falls back to the original division.
+
+Without a suit nothing changes, because capacity and the bare maximum are the same 60. Inside one, the weight share
+below the limit is now the share of what the suit carries - the rule the jump always used.
+
+### The courier suit
+
+Nomad (`val_chr_torgash2`) sells `kyrier_outfit` for 30 000 with «что позволит таскать с собой килограммов под 90»
+(`val_chr_torgash2_start_7`). `outfit.ltx:1641-1642` gives it `additional_inventory_weight = 30`, a walk limit of
+90, and `additional_inventory_weight2 = 25`, a capacity of 85: the only unequal pair among the mod's own suits. Its
+description is the dialog's text with «под 80», written while the base was vanilla's 50. The capacity is read as 30
+and the description as «под 90»; no other item, trader or spawn names the section.
+
+### The file repairs that never ran
+
+`XR_3DA.exe`'s WinMain calls the settings loader (`0x40F830`, `system.ltx` and `game.ltx`) straight after
+`Core._initialize` and long before input is created, which is when the pack's file hooks go in. Every file
+`system.ltx` includes is therefore parsed from its unrepaired bytes - the shovel and the super detector were moved to
+the ini getters for exactly that reason. Three eleventh-pass repairs were not: the PP-4a sensor in
+`quest_items.ltx`, the German submachine gun names in `w_mp40.ltx` and the B-94 binding in `w_b94.ltx` shipped as
+file repairs and changed nothing in the game.
+
+They now correct the values where the engine reads them, and only while those still hold the mod's own:
+
+| Value | Getters taken | Why all of them |
+| --- | --- | --- |
+| `kruglov_flash` `inv_name` «i», `wpn_mp40`/`wpn_mp40n`/`wpn_mp41` names | `CInifile::r_string`, both overloads | The MP-41 and the MP-40 variant inherit from the MP-40, so the section decides the name |
+| `kruglov_flash` `inv_grid_x` 4000, `inv_grid_y` 1950 | `r_u32` and `r_float`, both overloads | The inventory cell, trade and PDA windows read the same key through four different getters |
+| `kyrier_outfit` `additional_inventory_weight2` 25 | `r_float` | See above |
+| `wpn_b94` `script_binding = bind_wpn.init` | `line_exist` | The binder asks whether the line exists before it looks the module up and reports the miss |
+
+xrCore's shared-string overloads are thin jumps to the plain ones inside xrCore, so they never pass through the
+game's own import of the plain getter and have to be taken separately. Every getter is an import resolved by name.
+
+### A fatal on start: "bad node in heap"
+
+One of the four dumps Windows kept is `mem_usage_impl` failing with `bad node in heap` inside `stat_memory`, which
+WinMain runs by itself right after input is created. xrCore's copy of `_heapwalk` (`0x1001BAE0`) steps `HeapWalk`
+once per call and checks the previous block with `HeapValidate`, all without the heap lock, so a block another
+thread frees between two steps reads as a damaged node. It is the intermittent start crash Shadow of Chernobyl is
+known for. xrCore's `HeapWalk` import now takes `HeapLock` on a walk's first step and releases it when the walk
+ends, keeping the error code the walker reads; a heap that is really damaged still fails.
+
+### The watchdog that stood people up
+
+The pack's own NPC watchdog record on this machine held 151 lines, and most of them were one sniper:
+`esc_soldat416020 camper@esc_blockpost_camper_day` - 68 resets, 27 rescues, 27 rejoins - with two sleepers, two
+walkers and the intro con-man behind him. The third pass reads "move_mgr in state 1 and under half a metre in twenty
+seconds" as a stall, but state 1 is also where an NPC stands by design, because move_mgr only leaves it on a point
+with a look point (`move_mgr.script:240`, `:523-535`, `:593`). A sniper camper resets without a look path and holds
+its end point (`xr_camper.script:109-115`, `:311`), and a one-point sleeper never touches move_mgr once asleep
+(`xr_sleeper.script:63-69`, `:121-126`). So every such NPC was reset, then rescued - animation cut, stood up, walked
+to its own point - reported "rejoined" two seconds later, and started over about once a minute for the whole session.
+
+Idle by design is now recognised the way the schemes decide it, and nothing loops:
+
+- **A patrol that ended on a terminal waypoint** move_mgr has already handled is idle; one whose callback was never
+  delivered gets one reset, which delivers it.
+- **A one-point sleeper** that has arrived is idle.
+- **A sniper camper** on a flagged point of its walk path, by xr_camper's own test, gets `scantime_free` on top of
+  the grace; on a terminal post the rule above holds it for good.
+- **Every recovery converges.** A section gets one forced wait, one rescue and one re-plan; an NPC that stands again
+  after that is reported once as `stuck` and left to its scheme until its section changes.
+
+The tests' fake `distance_to` had been declared without `self`, so every distance was zero and the old "rejoined"
+check passed without the NPC ever arriving; the new cases fail against the old script.
+
+### Updates across any number of versions
+
+There never was a one-version rule. A client reads `releases?per_page=30`, takes the highest version of its own
+major and goes to it in one step: the patch when it stands on the release listed just before the target, the full
+archive otherwise, and the applier adds and drops files by the two manifests. Each released client was run with its
+own binary against a loopback copy of today's list: 1.0.0-1.0.4 reach 1.0.8 in one step. 1.0.5, 1.0.6 and 1.0.7
+cannot reach anything, because their installed ownership list names `text/rus/ild_fixes_text.xml` and their own
+allowlist does not own it, so they refuse before touching a file; that is compiled into those three binaries, and
+the one manual unpack the 1.0.8 notes ask for stays the only way off them.
+
+What 1.0.9 changes is the part that could strand clients again:
+
+- **A release is applied by its own updater.** The applier used to be a copy of the installed helper, so a later
+  release that owns a new folder or reads its manifest differently would have been refused by every older client,
+  in any number of steps. The helper inside the verified archive now does the applying; a patch that does not carry
+  one keeps the installed helper, which is then the release's own. Every future helper keeps the `--apply`
+  arguments and the `apply-result.txt` and `patch-rejected.txt` formats.
+- **A patch is checked before the game closes.** The client presumes a patch was cut against the release listed
+  before its target - the published 1.0.7 patch is based on 1.0.5, which is no longer listed. The downloaded patch
+  is now held against the installation (its base and every file it leaves out) while the game runs, and one that
+  does not fit is swapped for the full archive in the same session instead of after a failed restart.
+
+`Test-UpdateJump.ps1` runs the real service through the mock API over a skipped release, a patch cut against a
+withdrawn one, a fitting patch and an archive whose own helper must be the one started; `Test-ReleaseUpgrade.ps1`
+now covers every earlier release and applies each a second time with the helper the candidate carries.
+
+### Examined and deliberately not changed
+
+- **The black market's silent people.** The market is the author's own, spawned by `dolina_manu.script` from a
+  portion named `nedodelanui_chernui_runok` - "the unfinished black market". Its 52 NPCs resolve completely:
+  profiles, dialogs, phrase texts, logic, sounds. The ones who only say «Привет» carry the template 227 of the mod's
+  1159 profiles carry, `hai` plus the wounded-medkit dialog, and no dialog written for anyone there is left
+  unattached. The traders trade, Nomad and the unnamed seller sell, the informant opens up as his quest arrives.
+- **«Похмельняк»** is not an artefact to the engine: `gar_art_poxmelie` in `unique_items.ltx` is a vodka-class item
+  that removes 0.05 of intoxication per use with a use count xrCore clamps to the largest integer, one copy, in the
+  stash on top of the Garbage tank that Yura's hatch leads to. It works as written.
+- **The toll-gate dialog** in the same market can never appear, because the portion it needs parks its guard in a
+  no-talk walker. Re-entry never needs the pass, so it is a dead branch of the unfinished market.
+- **Logless crashes on the Cordon**, reported with Wolf's newbie search active, Yura's checkpoint stash bought and
+  Tikhon's computer used as a box. Only the newbie search carries a crash: it spawns the psi-antenna sound case
+  `zvyk_psi_antenna` beside Tolik, whose theme names `characters_voice\scenario\yantar\psy_voices_1` in a Lua string
+  that loses its backslashes, and whose `on_use = no_use` names a section that does not exist - the first kills the
+  game when the case comes online, the second when it is used, and players read the second as a crash with no
+  log. Both are repaired: the theme since 1.0.0, the case's logic since small config repairs reached the game in
+  1.0.3. The stash is information sold for 2 000 and a coded safe, and the computer is a looping sound box that
+  stays openable; neither is released, moved or grows a save. A sweep of every loose logic file for switches to
+  sections that do not exist found the psi case, the X18 pseudogiant's `mob_walker@6` the pack already redirects,
+  and Yura's `walker7` on the Garbage, which waits on a portion nothing declares or grants - nothing new to repair.

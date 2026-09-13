@@ -57,13 +57,7 @@ constexpr std::array sources{
     ConfigRepairSource{L"gamedata/config/text/rus/stable_dialogs_darkvalley.xml", 98716,
         "82AD412A73B50A1FDED9B5DB32619294D39EB829F44CCB4E3A6D20EE97960358", ConfigRepair::propysk_text},
     ConfigRepairSource{L"gamedata/config/text/rus/stable_storyline_info_escape.xml", 11546,
-        "C7AF6D401B3AF40AE0EAF1605FD77410F7F85C0A6B4F3DF22426DC39B94FB140", ConfigRepair::skill_banner},
-    ConfigRepairSource{L"gamedata/config/misc/quest_items.ltx", 149319,
-        "9BFF52163E2AF65B4A3B1F99E75D1B7EB3CEF4747A17DF313767F16B11AF5740", ConfigRepair::yantar_sensor},
-    ConfigRepairSource{L"gamedata/config/weapons/w_mp40.ltx", 8131,
-        "5C5728E2B18581137A00F25B2022296E4DCC935D43F682998EBA29A5796A4BEA", ConfigRepair::german_smg_names},
-    ConfigRepairSource{L"gamedata/config/weapons/w_b94.ltx", 4865,
-        "B85845AB46F2F98958DCEF9A17EFDB5A6D5310316E435875C510774C40969196", ConfigRepair::b94_binding}
+        "C7AF6D401B3AF40AE0EAF1605FD77410F7F85C0A6B4F3DF22426DC39B94FB140", ConfigRepair::skill_banner}
 };
 
 // Replace a unique expression with an equal-length one, padding the remainder with spaces.
@@ -436,43 +430,6 @@ constexpr std::string_view mechanic_level_two_fixed =
     "\xD1\xD3\xCF\xC5\xD0-\xCC\xC5\xD5\xC0\xCD\xC8\xCA\"";
 static_assert(mechanic_level_two.size() == mechanic_level_two_fixed.size());
 
-// The Yantar sensor stalkers carry on four levels lost both halves of its inventory entry: the grid keys hold a
-// pixel position instead of a cell index, which the engine multiplies by fifty again, and the name was cut down
-// to one letter no string table can translate. Vanilla's own cell comes back together with the string id the
-// neighbouring short name already uses; the padding around the equals signs pays for it.
-constexpr std::string_view yantar_sensor_at =
-    "inv_name\t\t\t= i\r\n"
-    "inv_name_short\t\t= item_detector_yantar_name\r\n"
-    "inv_weight\t\t\t= 0\r\n"
-    "\r\n"
-    "inv_grid_width\t\t= 1\r\n"
-    "inv_grid_height\t\t= 1\r\n"
-    "inv_grid_x\t\t\t= 4000\r\n"
-    "inv_grid_y\t\t\t= 1950\r\n"
-    "cost\t\t\t\t= 30";
-constexpr std::string_view yantar_sensor_fix =
-    "inv_name= item_detector_yantar_name\r\n"
-    "inv_name_short= item_detector_yantar_name\r\n"
-    "inv_weight= 0\r\n"
-    "\r\n"
-    "inv_grid_width= 1\r\n"
-    "inv_grid_height= 1\r\n"
-    "inv_grid_x= 5\r\n"
-    "inv_grid_y= 14\r\n"
-    "cost= 30";
-static_assert(yantar_sensor_fix.size() <= yantar_sensor_at.size());
-
-// The two German submachine guns hold each other's name, and neither value is a string table id. The mod names
-// its other war-era weapons with plain CP1251 text in this very field, and the file carries no byte order mark,
-// so the names are written the same way. The MP-41 inherits from the MP-40 and never declared a short name of
-// its own, so the line it needs is paid for out of the blanks around the following visual's equals sign.
-constexpr std::string_view mp40_name_at = "inv_name\t\t\t\t= mp41\r\ninv_name_short\t\t\t= mp41";
-constexpr std::string_view mp40_name_fix = "inv_name\t\t\t= \xCC\xCF-40\r\ninv_name_short\t\t= \xCC\xCF-40";
-constexpr std::string_view mp41_name_at = "inv_name\t\t\t\t= mp40\r\n\r\nvisual                  = ";
-constexpr std::string_view mp41_name_fix = "inv_name=\xCC\xCF-41\r\ninv_name_short=\xCC\xCF-41\r\n\r\nvisual= ";
-static_assert(mp40_name_at.size() == mp40_name_fix.size());
-static_assert(mp41_name_at.size() == mp41_name_fix.size());
-
 bool repair_config_text(std::string& text, ConfigRepair repair)
 {
     auto patched = text;
@@ -590,22 +547,6 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
     {
         if (patched.find("stalkerok_navuk_mex_lvl2") != patched.npos ||
             !replace_one(patched, mechanic_level_two, mechanic_level_two_fixed)) return false;
-    }
-    else if (repair == ConfigRepair::yantar_sensor)
-    {
-        if (!blank_to(patched, yantar_sensor_at, yantar_sensor_fix)) return false;
-    }
-    else if (repair == ConfigRepair::german_smg_names)
-    {
-        if (!replace_one(patched, mp40_name_at, mp40_name_fix) ||
-            !replace_one(patched, mp41_name_at, mp41_name_fix)) return false;
-    }
-    else if (repair == ConfigRepair::b94_binding)
-    {
-        // The rifle asks to be bound to a script module that exists nowhere, so the lookup fails silently on
-        // every spawn. The line is commented out at its exact length.
-        if (!replace_one(patched, "script_binding  = bind_wpn.init", ";cript_binding  = bind_wpn.init"))
-            return false;
     }
     else if (repair == ConfigRepair::trader_refusal)
     {

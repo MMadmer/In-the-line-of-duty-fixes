@@ -145,6 +145,28 @@ VorbisComment* __cdecl normalized_comment(void* source, void* decoder, int link,
     return &adapted;
 }
 
+// xrCore sizes the CRT heap for "stat_memory", which the engine runs by itself on every start, by walking it one
+// entry per call without its lock. A block another thread frees between two steps turns the next step into
+// "bad node in heap", an intermittent fatal on start. The walk holds the heap lock from its first step to its last,
+// which is what HeapLock exists for; a heap that is really damaged still fails the walk.
+thread_local HANDLE walked_heap{};
+
+BOOL WINAPI locked_heap_walk(HANDLE heap, LPPROCESS_HEAP_ENTRY entry)
+{
+    // A walk starts from an entry that has no data yet.
+    if (entry && !entry->lpData && !walked_heap && HeapLock(heap)) walked_heap = heap;
+    const auto more = HeapWalk(heap, entry);
+    if (!more && walked_heap == heap)
+    {
+        // The walker reads why the walk ended, so the unlock must not replace that reason.
+        const auto error = GetLastError();
+        HeapUnlock(heap);
+        walked_heap = nullptr;
+        SetLastError(error);
+    }
+    return more;
+}
+
 // LoadWave keeps its source in EBX; other Vorbis callers are returned unchanged.
 __declspec(naked) VorbisComment* __cdecl comment_entry(void*, int)
 {
@@ -189,6 +211,11 @@ bool install_preset_compatibility(HMODULE engine)
     if (!original_line) return false;
     return replace_iat_import(engine, "xrCore.dll", "?r_string@IReader@@QAEXPADI@Z",
         reinterpret_cast<void*>(&preset_line));
+}
+
+bool install_heap_walk_lock(HMODULE core)
+{
+    return core && replace_iat_import(core, "KERNEL32.dll", "HeapWalk", reinterpret_cast<void*>(&locked_heap_walk));
 }
 
 bool install_audio_metadata_fix(const std::filesystem::path& root)

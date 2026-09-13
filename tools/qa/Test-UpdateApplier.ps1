@@ -1,14 +1,17 @@
 [CmdletBinding()]
-param()
+param(
+    [string]$Updater = (Join-Path $PSScriptRoot '..\..\build\updater\InTheLineOfDutyFixesUpdater.exe'),
+    [string]$RestartStub = (Join-Path $PSScriptRoot '..\..\build\Release\ild_restart_stub.exe')
+)
 
 $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
 $root = Join-Path $repo ('qa\update-flow-' + [Guid]::NewGuid().ToString('N'))
-$updater = Join-Path $repo 'build\updater\InTheLineOfDutyFixesUpdater.exe'
-$stub = Join-Path $repo 'build\Release\ild_restart_stub.exe'
-if (-not (Test-Path -LiteralPath $updater) -or -not (Test-Path -LiteralPath $stub)) {
+if (-not (Test-Path -LiteralPath $Updater) -or -not (Test-Path -LiteralPath $RestartStub)) {
     throw 'Build the updater and ild_restart_stub targets first.'
 }
+$updater = (Resolve-Path -LiteralPath $Updater).Path
+$stub = (Resolve-Path -LiteralPath $RestartStub).Path
 New-Item -ItemType Directory -Path $root | Out-Null
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $utf8 = [Text.UTF8Encoding]::new($false)

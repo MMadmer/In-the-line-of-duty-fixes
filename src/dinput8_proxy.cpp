@@ -12,6 +12,7 @@
 #include "display_mode.h"
 #include "reader_repairs.h"
 #include "vehicle_repairs.h"
+#include "carry_weight.h"
 #include "sha256.h"
 
 #include <Windows.h>
@@ -188,12 +189,12 @@ void note_once(std::atomic<bool>& noted, std::string_view step, std::string_view
     write_report_locked();
 }
 
-std::atomic<bool> console_noted{}, abort_noted{}, actor_noted{}, menu_noted{}, vehicle_noted{};
-std::atomic<bool> vehicle_pending{};
+std::atomic<bool> console_noted{}, abort_noted{}, actor_noted{}, menu_noted{}, vehicle_noted{}, walk_noted{};
+std::atomic<bool> vehicle_pending{}, walk_pending{};
 
-[[nodiscard]] std::string_view vehicle_outcome(ild::VehicleRepair result)
+[[nodiscard]] std::string_view pinned_outcome(ild::PinnedRepair result)
 {
-    return result == ild::VehicleRepair::applied ? "ok" : result == ild::VehicleRepair::skipped ?
+    return result == ild::PinnedRepair::applied ? "ok" : result == ild::PinnedRepair::skipped ?
         "skipped, this build differs from the validated one" : "FAILED";
 }
 
@@ -361,8 +362,14 @@ int __cdecl read_hook(int file, void* buffer, unsigned int size)
     if (vehicle_pending.load(std::memory_order_acquire))
     {
         const auto vehicles = ild::install_vehicle_updates();
-        if (vehicles != ild::VehicleRepair::pending && vehicle_pending.exchange(false, std::memory_order_acq_rel))
-            note_once(vehicle_noted, "unseen vehicles keep updating", vehicle_outcome(vehicles));
+        if (vehicles != ild::PinnedRepair::pending && vehicle_pending.exchange(false, std::memory_order_acq_rel))
+            note_once(vehicle_noted, "unseen vehicles keep updating", pinned_outcome(vehicles));
+    }
+    if (walk_pending.load(std::memory_order_acquire))
+    {
+        const auto walking = ild::install_walk_weight();
+        if (walking != ild::PinnedRepair::pending && walk_pending.exchange(false, std::memory_order_acq_rel))
+            note_once(walk_noted, "walking stamina follows the carry capacity", pinned_outcome(walking));
     }
     const auto read = real_read(file, buffer, size);
     if (read <= 0 || !buffer) return read;
@@ -481,12 +488,17 @@ BOOL CALLBACK install_fixes(PINIT_ONCE, PVOID, PVOID*)
     record(report, "screen mode", ild::install_display_mode(root));
     record(report, "sound metadata", ild::install_audio_metadata_fix(root), validated[sound_identity]);
     record(report, "console editing", ild::install_console_hooks(executable), validated[engine_identity]);
-    // The game DLL is loaded before input, so no car exists yet and nothing can be running the patched code.
+    // The game DLL is loaded before input, so no car or actor exists yet and nothing can be running the patched code.
     const auto vehicles = ild::install_vehicle_updates();
-    if (vehicles == ild::VehicleRepair::pending)
+    if (vehicles == ild::PinnedRepair::pending)
         vehicle_pending.store(true, std::memory_order_release);
     else
-        report += "  unseen vehicles keep updating = " + std::string(vehicle_outcome(vehicles)) + "\n";
+        report += "  unseen vehicles keep updating = " + std::string(pinned_outcome(vehicles)) + "\n";
+    const auto walking = ild::install_walk_weight();
+    if (walking == ild::PinnedRepair::pending)
+        walk_pending.store(true, std::memory_order_release);
+    else
+        report += "  walking stamina follows the carry capacity = " + std::string(pinned_outcome(walking)) + "\n";
 #ifdef ILD_CONSOLE_QA
     if (ild::has_switch(ild::command_line_tail(GetCommandLineW()), L"-ild_console_qa"))
         ild::run_console_selftest(executable, root / L"console-qa.txt");
@@ -499,6 +511,8 @@ BOOL CALLBACK install_fixes(PINIT_ONCE, PVOID, PVOID*)
     // This import carries the console-spam fix, the larger script and config repairs and the Lua payload with the
     // quest and NPC repairs. It is resolved by name, so it does not care which build of the engine runs.
     record(report, "script, config and Lua repairs", real_create_file_mapping != nullptr);
+    // Resolved by name as well; the engine's own "stat_memory" runs right after input is created.
+    record(report, "heap walks hold the heap lock", ild::install_heap_walk_lock(core_module));
     // Files below the engine's mapping threshold never reach the hook above, so the reader is caught as well.
     record(report, "small config repairs", ild::install_reader_repairs(root), validated[core_identity]);
 

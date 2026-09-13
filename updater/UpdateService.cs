@@ -223,15 +223,24 @@ namespace IldFixes.Updater
             WriteStatus();
             try
             {
-                archive = client.Download(result.Update, delegate(DownloadProgress progress)
+                UpdateOffer offer = result.Update;
+                archive = client.Download(offer, ReportProgress);
+                // The client presumes a patch was cut against the release listed before its target. One that does not
+                // fit this installation is swapped for the full archive now, while the game still runs.
+                if (offer.IsPatch && !UpdateApplier.PatchApplies(context.GameDirectory, archive))
                 {
-                    downloaded = progress.Downloaded;
-                    if (Environment.TickCount - lastProgress >= 200 || progress.Downloaded == progress.Total)
+                    UpdateApplier.MarkPatchRejected(context.GameDirectory, offer.Version);
+                    result.Update = new UpdateOffer
                     {
-                        lastProgress = Environment.TickCount;
-                        WriteStatus();
-                    }
-                });
+                        Version = offer.Version,
+                        Asset = offer.FullAsset,
+                        FullAsset = offer.FullAsset,
+                        Notes = offer.Notes
+                    };
+                    downloaded = 0;
+                    WriteStatus();
+                    archive = client.Download(result.Update, ReportProgress);
+                }
                 downloaded = new FileInfo(archive).Length;
                 state = "ready";
                 WriteStatus();
@@ -244,13 +253,28 @@ namespace IldFixes.Updater
             }
         }
 
+        private void ReportProgress(DownloadProgress progress)
+        {
+            downloaded = progress.Downloaded;
+            if (Environment.TickCount - lastProgress >= 200 || progress.Downloaded == progress.Total)
+            {
+                lastProgress = Environment.TickCount;
+                WriteStatus();
+            }
+        }
+
         private int StartApply()
         {
             try
             {
-                string runner = Path.Combine(Path.GetDirectoryName(archive), "IldFixesUpdater.cached.exe");
-                File.Copy(Assembly.GetExecutingAssembly().Location, runner, true);
                 UpdateOffer offer = result.Update;
+                string runner = Path.Combine(Path.GetDirectoryName(archive), "IldFixesUpdater.cached.exe");
+                // The updater inside the archive applies it, so a release that changes what an update may contain
+                // still reaches every older installation in one step. That updater keeps accepting these arguments
+                // and writes the apply result and the patch rejection the way this service reads them. A patch that
+                // carries no updater keeps the installed one, which then is the release's own.
+                if (!UpdateApplier.ExtractUpdater(archive, offer.Asset.Size, offer.Asset.Digest, runner))
+                    File.Copy(Assembly.GetExecutingAssembly().Location, runner, true);
                 string arguments = "--apply --game-dir " + UpdateApplier.Quote(context.GameDirectory) +
                     " --archive " + UpdateApplier.Quote(archive) + " --version " + offer.Version +
                     " --digest " + UpdateApplier.Quote(offer.Asset.Digest) + " --size " + offer.Asset.Size +

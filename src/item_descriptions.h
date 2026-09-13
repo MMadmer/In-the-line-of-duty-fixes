@@ -40,13 +40,63 @@ inline constexpr char super_detector_info[] =
     return nullptr;
 }
 
+// Nomad sells the courier suit as one that "lets you carry close to 90 kilograms". Its walk limit already is 90, but
+// the capacity the inventory shows was left at 85, and the suit's own description, copied from the same line while
+// the mod still stood on vanilla's 50, says "close to 80". Both follow the promise: "под 80." becomes "под 90.".
+inline constexpr std::string_view courier_eighty = "\xEF\xEE\xE4 80.";
+inline constexpr std::string_view courier_ninety = "\xEF\xEE\xE4 90.";
+
+// A repair that must find its phrase exactly once in the line it rewrites.
+[[nodiscard]] inline std::optional<std::string> replaced_once(std::string_view text, std::string_view old,
+    std::string_view next)
+{
+    const auto at = text.find(old);
+    if (at == text.npos || text.find(old, at + old.size()) != text.npos) return std::nullopt;
+    std::string result(text);
+    result.replace(at, old.size(), next);
+    return result;
+}
+
 [[nodiscard]] inline std::optional<std::string> repaired_description(std::string_view section, std::string_view text)
 {
-    if (section != "item_lopata") return std::nullopt;
-    const auto at = text.find(shovel_lifetime);
-    if (at == text.npos || text.find(shovel_lifetime, at + shovel_lifetime.size()) != text.npos) return std::nullopt;
-    std::string result(text);
-    result.replace(at, shovel_lifetime.size(), shovel_sturdy);
-    return result;
+    if (section == "item_lopata") return replaced_once(text, shovel_lifetime, shovel_sturdy);
+    if (section == "kyrier_outfit") return replaced_once(text, courier_eighty, courier_ninety);
+    return std::nullopt;
+}
+
+// Lines the mod did write, but wrong, in files the system config includes. Those are parsed before any hook of the
+// pack exists, so each value is corrected where the engine reads it, and only while it still holds the mod's own.
+// - The PP-4a sensor lost its name to a single letter; the neighbouring short name carries the right string id.
+// - The two German submachine guns hold each other's id, and neither is in any string table. The MP-41 and the
+//   MP-40 variant inherit from the MP-40, so the section decides which name a value stands for.
+[[nodiscard]] inline const char* corrected_item_text(std::string_view section, std::string_view key,
+    std::string_view value)
+{
+    if (section == "kruglov_flash") return key == "inv_name" && value == "i" ? "item_detector_yantar_name" : nullptr;
+    if (key != "inv_name" && key != "inv_name_short") return nullptr;
+    if (section == "wpn_mp41") return value == "mp40" || value == "mp41" ? "\xCC\xCF-41" : nullptr;
+    if (section == "wpn_mp40" || section == "wpn_mp40n") return value == "mp41" ? "\xCC\xCF-40" : nullptr;
+    return nullptr;
+}
+
+// Numbers read the same way. The sensor's grid keys hold a pixel position the engine multiplies by fifty again, so
+// vanilla's cell comes back; the courier suit's capacity is raised to the 90 kg its seller promises.
+[[nodiscard]] inline std::optional<float> corrected_item_number(std::string_view section, std::string_view key,
+    float value)
+{
+    if (section == "kruglov_flash")
+    {
+        if (key == "inv_grid_x" && value == 4000.0f) return 5.0f;
+        if (key == "inv_grid_y" && value == 1950.0f) return 14.0f;
+    }
+    if (section == "kyrier_outfit" && key == "additional_inventory_weight2" && value == 25.0f) return 30.0f;
+    return std::nullopt;
+}
+
+// The B-94 rifle asks to be bound to a script module that exists nowhere, so the engine looks it up and reports the
+// miss on every spawn. The line reads as absent while it still names that module.
+[[nodiscard]] inline bool hidden_item_line(std::string_view section, std::string_view key, std::string_view value)
+{
+    return section == "wpn_b94" && key == "script_binding" && value == "bind_wpn.init";
 }
 }

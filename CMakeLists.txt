@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(InTheLineOfDutyFixes VERSION 1.0.8 LANGUAGES CXX)
+project(InTheLineOfDutyFixes VERSION 1.0.9 LANGUAGES CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "In the Line of Duty Fixes supports Windows only")
@@ -32,6 +32,7 @@ add_library(dinput8 SHARED
     src/startup_repairs.cpp
     src/inventory_hooks.cpp
     src/vehicle_repairs.cpp
+    src/carry_weight.cpp
     src/update_bridge.cpp
     src/console_hooks.cpp
     src/x86_detour.cpp
@@ -55,6 +56,7 @@ add_library(dinput8_console_qa SHARED EXCLUDE_FROM_ALL
     src/startup_repairs.cpp
     src/inventory_hooks.cpp
     src/vehicle_repairs.cpp
+    src/carry_weight.cpp
     tests/runtime_capture.cpp
     src/update_bridge.cpp
     src/dinput8_proxy.cpp src/display_mode.cpp src/console_hooks.cpp src/x86_detour.cpp src/iat_hook.cpp src/sha256.cpp
@@ -83,6 +85,10 @@ add_test(NAME texture_aliases COMMAND ild_texture_alias_tests)
 add_executable(ild_config_repair_tests tests/config_repair_tests.cpp src/config_repairs.cpp src/sha256.cpp)
 target_link_libraries(ild_config_repair_tests PRIVATE ild_script_patch advapi32)
 add_test(NAME config_repairs COMMAND ild_config_repair_tests)
+add_executable(ild_carry_weight_tests tests/carry_weight_tests.cpp src/carry_weight.cpp src/x86_detour.cpp)
+target_include_directories(ild_carry_weight_tests PRIVATE src)
+target_compile_definitions(ild_carry_weight_tests PRIVATE ILD_CARRY_WEIGHT_TESTS=1)
+add_test(NAME carry_weight COMMAND ild_carry_weight_tests)
 add_executable(ild_command_line_tests tests/command_line_tests.cpp)
 target_include_directories(ild_command_line_tests PRIVATE src)
 add_test(NAME command_line COMMAND ild_command_line_tests)
@@ -198,7 +204,8 @@ add_executable(ild_hidden_desktop_launcher
 
 if(MSVC)
     target_compile_options(ild_hidden_desktop_launcher PRIVATE /W4 /WX /permissive- /utf-8)
-    foreach(TEST_TARGET ild_audio_metadata_tests ild_texture_alias_tests ild_config_repair_tests ild_command_line_tests)
+    foreach(TEST_TARGET ild_audio_metadata_tests ild_texture_alias_tests ild_config_repair_tests ild_command_line_tests
+        ild_carry_weight_tests)
         target_compile_options(${TEST_TARGET} PRIVATE /W4 /WX /permissive- /utf-8)
     endforeach()
 endif()
