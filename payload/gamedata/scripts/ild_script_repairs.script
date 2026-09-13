@@ -2107,19 +2107,35 @@ function install()
             242, 238, 45, 242, 238, 32, 243, 239, 240, 224, 226, 235, 255, 229, 242, 46, 32, 205, 224, 228, 238,
             32, 225, 251, 32, 239, 238, 232, 241, 234, 224, 242, 252, 32, 226, 238, 234, 240, 243, 227, 46)
     }
-    local function deliver_depo_hint(now)
-        if not db.actor or not has_alife_info(depo_hint.armed) or has_alife_info(depo_hint.over) then return end
+    -- The prison at the mill. The guard's call ("get up and out, you will be working") takes Jegoj and the novice
+    -- to the gate, where they stand for the rest of the stay; the door is left open and nothing else moves. The
+    -- scene goes on only through Zakorpat's own dialog ("Свобода!"), which nothing points at - and he has just
+    -- told the player to wait for midnight, so that is what players do, in vain. The same single line, ten
+    -- seconds after the two are out, never once that dialog has been had:
+    -- Ребят увели, а ворота не заперли. Закорпат обещал показать, как отсюда сбежать - надо с ним поговорить.
+    local prison_hint = {
+        armed = "es_meln_jegoj_vushel", over = "esc_zakorpat_posle_jegoja", flag = "ild_prison_zakorpat_hint",
+        delay = 10000,
+        text = string.char(
+            208, 229, 225, 255, 242, 32, 243, 226, 229, 235, 232, 44, 32, 224, 32, 226, 238, 240, 238, 242, 224,
+            32, 237, 229, 32, 231, 224, 239, 229, 240, 235, 232, 46, 32, 199, 224, 234, 238, 240, 239, 224, 242,
+            32, 238, 225, 229, 249, 224, 235, 32, 239, 238, 234, 224, 231, 224, 242, 252, 44, 32, 234, 224, 234,
+            32, 238, 242, 241, 254, 228, 224, 32, 241, 225, 229, 230, 224, 242, 252, 32, 45, 32, 237, 224, 228,
+            238, 32, 241, 32, 237, 232, 236, 32, 239, 238, 227, 238, 226, 238, 240, 232, 242, 252, 46)
+    }
+    local function deliver_hint(hint, now)
+        if not db.actor or not has_alife_info(hint.armed) or has_alife_info(hint.over) then return end
         -- The actor's own pstor, which the unmodified mod saves and loads as is, so the line survives a reload
         -- without a portion of our own in the registry.
-        local known, shown = pcall(xr_logic.pstor_retrieve, db.actor, depo_hint.flag, 0)
+        local known, shown = pcall(xr_logic.pstor_retrieve, db.actor, hint.flag, 0)
         if not known or (shown or 0) ~= 0 then return end
-        depo_hint.since = depo_hint.since or now
-        if now - depo_hint.since < depo_hint.delay then return end
-        xr_logic.pstor_store(db.actor, depo_hint.flag, 1)
-        db.actor:give_game_news(depo_hint.text, [[ui\ui_npc_monster]], Frect():set(0, 215, 163, 105), 0, 20000)
+        hint.since = hint.since or now
+        if now - hint.since < hint.delay then return end
+        xr_logic.pstor_store(db.actor, hint.flag, 1)
+        db.actor:give_game_news(hint.text, [[ui\ui_npc_monster]], Frect():set(0, 215, 163, 105), 0, 20000)
         pcall(function() xr_sound.get_safe_sound_object([[device\pda\pda_objective]])
             :play_no_feedback(db.actor, sound_object.s2d, 0, vector(), 1.0) end)
-        report_line("hint " .. depo_hint.flag)
+        report_line("hint " .. hint.flag)
     end
 
     -- The two Cordon map spots the mod added to escape_tasks.process_info_portion read story object 93 and use
@@ -2247,7 +2263,8 @@ function install()
         -- Several zones can respawn in one simulation batch; reconcile only once here.
         if db.actor and artefacts_dirty and reconcile_artefacts() then artefacts_dirty = false end
         pcall(check_death_watch, time_global())
-        pcall(deliver_depo_hint, time_global())
+        pcall(deliver_hint, depo_hint, time_global())
+        pcall(deliver_hint, prison_hint, time_global())
         pcall(detector_task, time_global())
     end
     installed = true

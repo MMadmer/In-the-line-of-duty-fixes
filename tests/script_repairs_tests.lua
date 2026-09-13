@@ -2532,6 +2532,48 @@ do
     equal(calls2.pstor.ild_depo_karlik_hint, nil, "and nothing is written for him")
 end
 
+-- The prison at the mill: once the guard has taken the two workers out, the escape waits on Zakorpat's dialog
+-- and nothing says so; the player is pointed at him once.
+do
+    local env, calls, _, module, actor = fixture()
+    module.install()
+    env.db.actor = actor()
+    local binder = {object = env.db.actor, first_update = false}
+    local function pass(seconds)
+        env.clock_ms = env.clock_ms + seconds * 1000
+        env.bind_stalker.actor_binder.update(binder, 1)
+    end
+    calls.infos.esc_bandit_zabiraet_dryga = true
+    pass(30)
+    equal(#calls.news, 0, "the call alone says nothing: the two are still walking out")
+    calls.infos.es_meln_jegoj_vushel = true
+    pass(4)
+    equal(#calls.news, 0, "nor the moment they are out")
+    pass(11)
+    equal(#calls.news, 1, "ten seconds later the player is pointed at Zakorpat")
+    equal(calls.news[1], string.char(208, 229, 225, 255, 242, 32, 243, 226, 229, 235, 232, 44, 32, 224, 32, 226,
+        238, 240, 238, 242, 224, 32, 237, 229, 32, 231, 224, 239, 229, 240, 235, 232, 46, 32, 199, 224, 234, 238, 240,
+        239, 224, 242, 32, 238, 225, 229, 249, 224, 235, 32, 239, 238, 234, 224, 231, 224, 242, 252, 44, 32, 234, 224,
+        234, 32, 238, 242, 241, 254, 228, 224, 32, 241, 225, 229, 230, 224, 242, 252, 32, 45, 32, 237, 224, 228, 238,
+        32, 241, 32, 237, 232, 236, 32, 239, 238, 227, 238, 226, 238, 240, 232, 242, 252, 46), "in the mod's own words")
+    equal(calls.pstor.ild_prison_zakorpat_hint, 1, "and remembered in the save")
+    pass(60)
+    equal(#calls.news, 1, "exactly once")
+
+    local again, calls2, _, module2, actor2 = fixture()
+    module2.install()
+    again.db.actor = actor2()
+    local binder2 = {object = again.db.actor, first_update = false}
+    calls2.infos.es_meln_jegoj_vushel = true
+    calls2.infos.esc_zakorpat_posle_jegoja = true
+    again.clock_ms = again.clock_ms + 60000
+    again.bind_stalker.actor_binder.update(binder2, 1)
+    again.clock_ms = again.clock_ms + 60000
+    again.bind_stalker.actor_binder.update(binder2, 1)
+    equal(#calls2.news, 0, "a player who has already talked to Zakorpat is left alone")
+    equal(calls2.pstor.ild_prison_zakorpat_hint, nil, "and nothing is written")
+end
+
 -- The two Cordon spots the mod added read story object 93 with no guard, inside the actor's info callback.
 do
     local env, calls, objects, module = fixture()

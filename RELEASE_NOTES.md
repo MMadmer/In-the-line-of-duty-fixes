@@ -11,6 +11,7 @@
 * Сенсор ПП-4а называется по-русски и показывает свою иконку, МП-40 и МП-41 носят свои имена: в 1.0.8 эти правки до игры не доходили.
 * Игра больше не вылетает изредка при запуске с «bad node in heap».
 * Снайперы на постах, спящие и часовые, которые стоят на месте по сценарию, больше не вскакивают раз в минуту: сторож зависших NPC перестал принимать их за застрявших — это была ошибка самого фикспака.
+* Тюрьма на мельнице: когда охрана уводит двоих на работу и всё замирает, игрок получает одну подсказку, что побег дальше идёт через разговор с Закорпатом — мод об этом молчал, а сам перед этим велел ждать полуночи.
 * Встроенный обновлятор теперь ставит обновление правилами той версии, на которую обновляет, и сам меняет неподходящий патч на полный архив ещё до выхода из игры — следующие обновления дойдут через сколько угодно пропущенных версий.
 
 ## Установка
@@ -32,6 +33,7 @@ Overweight in a suit, Nomad's promise and updates across any number of versions
 * The PP-4a sensor reads its proper name and shows its own icon, and the MP-40 and MP-41 carry their own names: in 1.0.8 these fixes never reached the game.
 * The game no longer crashes now and then on start with "bad node in heap".
 * Snipers at their posts, sleepers and guards who stand still by design are no longer stood up once a minute: the stalled-NPC watchdog stopped taking them for stuck - a fault of the fix pack itself.
+* The prison at the mill: when the guards take two prisoners out to work and everything stops, one hint tells the player that the escape goes on through a talk with Zakorpat - the mod said nothing, having just told the player to wait for midnight.
 * The in-game updater now applies an update with the rules of the version it installs and swaps an unfitting patch for the full archive before the game closes, so later updates arrive across any number of skipped versions.
 
 ## Installation

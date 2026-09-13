@@ -998,6 +998,35 @@ Idle by design is now recognised the way the schemes decide it, and nothing loop
 The tests' fake `distance_to` had been declared without `self`, so every distance was zero and the old "rejoined"
 check passed without the NPC ever arriving; the new cases fail against the old script.
 
+### The prison at the mill, after the first job
+
+Reported from a fresh game: the artefact job done, back in the cell, the guard's call comes - «Эй вы, спящие! А-ну жопы
+подняли и на выход! Работать будете.» - two prisoners walk out and "keep standing up into the captive pose", and
+nothing moves on; the player can wander every level with an empty rucksack. The player's own autosave says where
+the chain stands: `esc_bandit_zabiraet_dryga`, `es_meln_jegoj_vushel` and `esc_jegoj_na_vuxode_iz_konclaeria_nam_skazal`
+are held, `esc_zakorpat_posle_jegoja` is not.
+
+The chain, from the mod's own files:
+
+| Step | What runs |
+| --- | --- |
+| Zakorpat's talk after the artefact (`esc_zakorpat_post_arta`) | spawns the escort bandit (`kor_soldiers.spawn_esc_m_bandit_za_jegoj`), who walks to the cell and, within 10 m of the actor, grants the call (`meln_band_za_jegoj.ltx:22`) |
+| The call | Jegoj `sleeper → walker2` (`jegoj.ltx:26`) and the novice `sleeper → walker` (`novic_aptechka.ltx:24`): both walk to the gate, into `def_state_standing = prisoner`, and their next transitions are commented out (`jegoj.ltx:44`, `novic_aptechka.ltx:41`). The camp door closes (`meln_konclager_dver.ltx:31`) |
+| 22 s later | Jegoj grants `es_meln_jegoj_vushel` and the "leave" voice line; the door opens for good (`meln_konclager_dver.ltx:37`) |
+| **Zakorpat's dialog `esc_zakorpat_posle_jegoja`** - «Свобода!» / «Ещё пока нет...» / «В сталкерский лагерь... Готовсь!» | the only thing gated on that portion (`dialogs_escape.xml:6671`). It also spawns Tikhon's doors and the big door for later, and moves Zakorpat onto Jegoj's mattress to wait for night (`zakorpat.ltx:27`, `:42`) |
+| Night (0-7 h) | Zakorpat walks to the exit, 12 s, `esc_zakorpat_na_vuxod_info`, the talk «Через крышу?», a fade, the teleport out, Zakorpat 2 spawned outside, the old one and the two at the gate released on `esc_zakorpat_po_doroge` |
+
+Nothing is broken in it: every path, portion, action and function resolves. The two at the gate stand there by
+design until the actor's escape releases them. What the mod never does is say that the scene now waits on
+Zakorpat - and it has just told the player the opposite. His previous line ends «В полночь я покажу, как отсюда
+сбежать легко», so the player waits for midnight, and the midnight walk sits behind the dialog nobody was pointed at.
+The "endless" standing up was the pack's own watchdog of 1.0.8 resetting the two every minute, repaired above.
+
+The repair is the tenth pass's, again: one line, once, ten seconds after the two are out and never after that
+dialog has been had, in the shape the mod's own `news.script` uses and remembered in the actor's pstor - «Ребят увели,
+а ворота не заперли. Закорпат обещал показать, как отсюда сбежать - надо с ним поговорить.» A save that already
+holds `es_meln_jegoj_vushel` receives it on the next load, wherever the player has wandered to.
+
 ### Updates across any number of versions
 
 There never was a one-version rule. A client reads `releases?per_page=30`, takes the highest version of its own
