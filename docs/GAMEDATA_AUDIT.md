@@ -1022,8 +1022,8 @@ Zakorpat - and it has just told the player the opposite. His previous line ends 
 сбежать легко», so the player waits for midnight, and the midnight walk sits behind the dialog nobody was pointed at.
 The "endless" standing up was the pack's own watchdog of 1.0.8 resetting the two every minute, repaired above.
 
-The repair is the tenth pass's, again: one line, once, ten seconds after the two are out and never after that
-dialog has been had, in the shape the mod's own `news.script` uses and remembered in the actor's pstor - «Ребят увели,
+The repair is the tenth pass's, again: one line, once, half a minute after the two are out and never after that
+dialog has been had, shown for the ten seconds the mod's own tips last and remembered in the actor's pstor - «Ребят увели,
 а ворота не заперли. Закорпат обещал показать, как отсюда сбежать - надо с ним поговорить.» A save that already
 holds `es_meln_jegoj_vushel` receives it on the next load, wherever the player has wandered to.
 

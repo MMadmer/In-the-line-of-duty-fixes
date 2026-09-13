@@ -2549,8 +2549,10 @@ do
     calls.infos.es_meln_jegoj_vushel = true
     pass(4)
     equal(#calls.news, 0, "nor the moment they are out")
+    pass(20)
+    equal(#calls.news, 0, "nor twenty seconds later, while the player is still watching them go")
     pass(11)
-    equal(#calls.news, 1, "ten seconds later the player is pointed at Zakorpat")
+    equal(#calls.news, 1, "half a minute after they are out the player is pointed at Zakorpat")
     equal(calls.news[1], string.char(208, 229, 225, 255, 242, 32, 243, 226, 229, 235, 232, 44, 32, 224, 32, 226,
         238, 240, 238, 242, 224, 32, 237, 229, 32, 231, 224, 239, 229, 240, 235, 232, 46, 32, 199, 224, 234, 238, 240,
         239, 224, 242, 32, 238, 225, 229, 249, 224, 235, 32, 239, 238, 234, 224, 231, 224, 242, 252, 44, 32, 234, 224,

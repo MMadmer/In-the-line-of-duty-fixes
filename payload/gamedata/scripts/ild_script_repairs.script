@@ -2110,12 +2110,13 @@ function install()
     -- The prison at the mill. The guard's call ("get up and out, you will be working") takes Jegoj and the novice
     -- to the gate, where they stand for the rest of the stay; the door is left open and nothing else moves. The
     -- scene goes on only through Zakorpat's own dialog ("Свобода!"), which nothing points at - and he has just
-    -- told the player to wait for midnight, so that is what players do, in vain. The same single line, ten
-    -- seconds after the two are out, never once that dialog has been had:
+    -- told the player to wait for midnight, so that is what players do, in vain. The same single line, once,
+    -- half a minute after the two are out, shown as long as the mod's own tips, never once that dialog has
+    -- been had:
     -- Ребят увели, а ворота не заперли. Закорпат обещал показать, как отсюда сбежать - надо с ним поговорить.
     local prison_hint = {
         armed = "es_meln_jegoj_vushel", over = "esc_zakorpat_posle_jegoja", flag = "ild_prison_zakorpat_hint",
-        delay = 10000,
+        delay = 30000, show = 10000,
         text = string.char(
             208, 229, 225, 255, 242, 32, 243, 226, 229, 235, 232, 44, 32, 224, 32, 226, 238, 240, 238, 242, 224,
             32, 237, 229, 32, 231, 224, 239, 229, 240, 235, 232, 46, 32, 199, 224, 234, 238, 240, 239, 224, 242,
@@ -2132,7 +2133,8 @@ function install()
         hint.since = hint.since or now
         if now - hint.since < hint.delay then return end
         xr_logic.pstor_store(db.actor, hint.flag, 1)
-        db.actor:give_game_news(hint.text, [[ui\ui_npc_monster]], Frect():set(0, 215, 163, 105), 0, 20000)
+        db.actor:give_game_news(hint.text, [[ui\ui_npc_monster]], Frect():set(0, 215, 163, 105), 0,
+            hint.show or 20000)
         pcall(function() xr_sound.get_safe_sound_object([[device\pda\pda_objective]])
             :play_no_feedback(db.actor, sound_object.s2d, 0, vector(), 1.0) end)
         report_line("hint " .. hint.flag)
