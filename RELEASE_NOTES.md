@@ -2,7 +2,7 @@
 
 ## Тема
 
-Задание Броневика про детектор: читаемая запись в ПДА и метка, которая ведёт
+Задание Броневика про детектор в ПДА, замки, которые помнят ключ, и стрелок у котельной
 
 ## Изменения
 
@@ -23,7 +23,7 @@
 
 ## Theme
 
-Bronevik's detector job: a readable PDA entry and a map spot that leads
+Bronevik's detector job in the PDA, locks that remember the key, and the boiler-house shooter
 
 ## Changes
 
