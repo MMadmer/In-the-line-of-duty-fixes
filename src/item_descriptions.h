@@ -69,9 +69,12 @@ inline constexpr std::string_view courier_ninety = "\xEF\xEE\xE4 90.";
 // - The PP-4a sensor lost its name to a single letter; the neighbouring short name carries the right string id.
 // - The two German submachine guns hold each other's id, and neither is in any string table. The MP-41 and the
 //   MP-40 variant inherit from the MP-40, so the section decides which name a value stands for.
+// - The rat king artefact is declared as a medkit, so the quick-use key eats it ahead of an ordinary medkit and
+//   the player pays health for a tushkan. It is food to the engine now, which runs the very same eat lines.
 [[nodiscard]] inline const char* corrected_item_text(std::string_view section, std::string_view key,
     std::string_view value)
 {
+    if (section == "syper_art_dryg_tyshkan") return key == "class" && value == "II_MEDKI" ? "II_FOOD" : nullptr;
     if (section == "kruglov_flash") return key == "inv_name" && value == "i" ? "item_detector_yantar_name" : nullptr;
     if (key != "inv_name" && key != "inv_name_short") return nullptr;
     if (section == "wpn_mp41") return value == "mp40" || value == "mp41" ? "\xCC\xCF-41" : nullptr;

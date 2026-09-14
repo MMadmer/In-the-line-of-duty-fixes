@@ -2300,6 +2300,8 @@ do
     pass(4)
     equal(calls.ui_enabled, nil, "his walk is given its own time first")
     pass(130)
+    equal(calls.ui_enabled, nil, "and is not cut short at two minutes")
+    pass(60)
     equal(calls.infos.barar_vse_letiaga_yshel, true, "then the farewell is closed out")
     equal(calls.ui_enabled, 1, "the input and the HUD come back")
     equal(calls.stash, 1, "and the reward stash the line promised is still made")

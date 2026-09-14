@@ -234,6 +234,28 @@ int main(int argc, char** argv)
         !text_is(ild::corrected_item_text("wpn_mp41", "inv_name_short", "mp41"), "\xCC\xCF-41") ||
         ild::corrected_item_text("wpn_mp40", "inv_name", "\xCC\xCF-40") ||
         ild::corrected_item_text("wpn_mp40", "description", "mp41")) return 54;
+    // The rat king stops being a medkit to the quick-use key; a real medkit and a rat king already food stay put.
+    if (!text_is(ild::corrected_item_text("syper_art_dryg_tyshkan", "class", "II_MEDKI"), "II_FOOD") ||
+        ild::corrected_item_text("syper_art_dryg_tyshkan", "class", "II_FOOD") ||
+        ild::corrected_item_text("syper_art_dryg_tyshkan", "inv_name", "II_MEDKI") ||
+        ild::corrected_item_text("medkit", "class", "II_MEDKI")) return 60;
+    // The Agroprom killer: the two keys the loader would merge are split, and the surrender portion moves from
+    // the raised hands to the talk itself, paid for out of the file's blank lines.
+    std::string killer = "[remark]\r\nanim = hands_up\r\non_info = %+ara_tak_vtorogo_xyilu_ne_nado%\r\n"
+        "combat_ignore_cond = always\r\non_info = {+agro_ybiica_start} camper2\r\n\r\n\r\n[death]\r\n"
+        "on_info = {-ara_tak_vtorogo_xyilu_ne_nado} %=delme2 +aro_gg_v_glaz_popal%\r\n";
+    for (int line = 0; line < 12; ++line) killer += "\r\n";
+    const auto killer_size = killer.size();
+    if (!ild::repair_config_text(killer, ConfigRepair::killer_surrender) || killer.size() != killer_size ||
+        killer.find("on_info2 ={+agro_ybiica_start} camper2") == std::string::npos ||
+        killer.find("on_info ={+agro_ybiica_start} %+ara_tak_vtorogo_xyilu_ne_nado%") == std::string::npos ||
+        killer.find("on_info = %+ara_tak_vtorogo_xyilu_ne_nado%") != std::string::npos ||
+        killer.find("{-ara_tak_vtorogo_xyilu_ne_nado} %=delme2 +aro_gg_v_glaz_popal%") == std::string::npos ||
+        killer.find("\r\n\r\n\r\n[death]") == std::string::npos) return 61;
+    if (ild::repair_config_text(killer, ConfigRepair::killer_surrender)) return 62;
+    // A file too short of blank lines to pay for the change is left as it is.
+    std::string tight = "[remark]\r\non_info = %+ara_tak_vtorogo_xyilu_ne_nado%\r\non_info = {+agro_ybiica_start} camper2\r\n";
+    if (ild::repair_config_text(tight, ConfigRepair::killer_surrender)) return 63;
     // The rifle's binding to a module that exists nowhere reads as absent; any other binding is left alone.
     // Kuzma's timeout keeps sending him home but no longer closes his brother's dialog; the tunnel gives the
     // input back with its call. Both at the line's exact length, both refusing a file already repaired.

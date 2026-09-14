@@ -647,6 +647,85 @@ local function install_crow_binder()
     end
 end
 
+-- ---------- locks-opened-by-hand ----------
+-- A door or box opened with a key, a lockpick or a tool records nothing of it: its on_use spends the item and
+-- switches the section, and [logic] active names the locked section again the next time the object comes
+-- online. Reload the level and the tower hatch is shut with its key gone, the artefact stash wants another
+-- lockpick, the car hood in the garage yields its parts again. A use that spends something, opens a locked
+-- door or ends in the author's "never again" idiom - and lands in a section with no timer back - is written
+-- into the actor's pstor under the object's name and replayed on the object's first update of the next
+-- session, the way the code locks already are.
+local lock_memory = {prefix = "ild_lock_", spends = {"=remove_item(", "=minys_otmuchka"}, never = "aiaiaiai"}
+
+local function use_line(state, section)
+    local known, line = pcall(function() return state.ini:r_string(section, "on_use") end)
+    return known and type(line) == "string" and line or ""
+end
+
+local function use_opens_lock(state, before)
+    if state.locked == true then return true end
+    local line = use_line(state, before)
+    for _, marker in ipairs(lock_memory.spends) do
+        if string.find(line, marker, 1, true) then return true end
+    end
+    return false
+end
+
+-- The car hoods spend nothing, but the section they end in can never be used again: that is as final.
+local function use_never_again(state, after)
+    return after ~= nil and string.find(use_line(state, after), lock_memory.never, 1, true) ~= nil
+end
+
+-- nil means the logic was released and the object is a plain door or box from here on; a section with a
+-- timer is on its way somewhere else, whatever its use says.
+local function use_settles(state, after)
+    if after == nil then return true end
+    local known, timed = pcall(function() return state.ini:line_exist(after, "on_timer") end)
+    return known and not timed
+end
+
+local function remember_use(action)
+    local original = action.use_callback
+    action.use_callback = function(self, ...)
+        local storage = db.storage[self.object:id()]
+        local before = storage and storage.active_section
+        local opens = before ~= nil and use_opens_lock(self.st, before)
+        local result = original(self, ...)
+        if before ~= nil and db.actor then
+            local after = storage.active_section
+            if after ~= before and (opens or use_never_again(self.st, after)) and use_settles(self.st, after) then
+                xr_logic.pstor_store(db.actor, lock_memory.prefix .. self.object:name(), after or "nil")
+            end
+        end
+        return result
+    end
+end
+
+local function replay_use(action)
+    local original = action.update
+    action.update = function(self, ...)
+        local state = self.st
+        if not state.ild_lock_replayed and db.actor then
+            state.ild_lock_replayed = true
+            local known, section = pcall(xr_logic.pstor_retrieve, db.actor,
+                lock_memory.prefix .. self.object:name(), "")
+            local storage = db.storage[self.object:id()]
+            if known and section ~= "" and storage and storage.active_section ~= section then
+                xr_logic.switch_to_section(self.object, state, section)
+                return
+            end
+        end
+        return original(self, ...)
+    end
+end
+
+local function install_lock_memory()
+    for _, action in ipairs({ph_door.action_door, ph_idle.action_idle}) do
+        remember_use(action)
+        replay_use(action)
+    end
+end
+
 ----------------------------------------------------------------------------------------------------
 
 function install()
@@ -670,4 +749,5 @@ function install()
         install_registry()
     end)
     pcall(install_crow_binder)
+    pcall(install_lock_memory)
 end

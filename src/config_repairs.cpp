@@ -94,6 +94,29 @@ bool replace_one(std::string& text, std::string_view old, std::string_view next)
     return true;
 }
 
+// A unique replacement that grows a line of an ini file, paid for with the file's own empty lines: the reader
+// gives a blank line no meaning, and they are taken from the end of the file first, one line ending at a time.
+bool borrow_blank_lines(std::string& text, std::size_t excess)
+{
+    while (excess >= 2)
+    {
+        const auto at = text.rfind("\r\n\r\n");
+        if (at == text.npos) return false;
+        text.erase(at, 2);
+        excess -= 2;
+    }
+    return excess == 0;
+}
+
+bool grow_line(std::string& text, std::string_view old, std::string_view next)
+{
+    const auto at = text.find(old);
+    if (at == text.npos || text.find(old, at + old.size()) != text.npos || next.size() < old.size()) return false;
+    const auto size = text.size();
+    text.replace(at, old.size(), next);
+    return borrow_blank_lines(text, text.size() - size) && text.size() == size;
+}
+
 bool remove_absent_action(std::string& text, std::string_view dialog, std::string_view action, unsigned expected)
 {
     const auto owner = block(text, "dialog", dialog);
@@ -566,6 +589,14 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
         // the switch reader already looks for, and the extra byte comes out of the blank before its own equals.
         if (!replace_one(patched, "on_info = {+agro_ybiica_start} camper2",
             "on_info2 ={+agro_ybiica_start} camper2")) return false;
+        // With both keys read, the surrender line closed the shoot-him branch the moment the killer raised his
+        // hands, and a player who shot him before the talk was done got neither the wounded killer at the stairs
+        // nor the Toymaker: the cassette stayed behind its door. The mod as shipped never granted the portion at
+        // all - the loader kept only the second key - so that branch stayed open, and players relied on it. The
+        // portion now comes with the talk itself, the point where a second killer really is not needed, and the
+        // twenty bytes are paid out of the file's trailing blank lines.
+        if (!grow_line(patched, "on_info = %+ara_tak_vtorogo_xyilu_ne_nado%",
+            "on_info ={+agro_ybiica_start} %+ara_tak_vtorogo_xyilu_ne_nado%")) return false;
     }
     else if (repair == ConfigRepair::propysk_text)
     {

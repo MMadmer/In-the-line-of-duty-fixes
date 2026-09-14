@@ -1141,3 +1141,47 @@ missing, a target that appears after the entry was given, and the size-neutral s
 the string table answers for the five ids with the texts above, the entry is given under `user_task` with its
 title and steps, the cache carries the green spot and Bronevik does not, and the chip in the rucksack closes the
 first step and moves the spot to Bronevik.
+
+## Fifteenth pass: pages 40 to 42 of the thread - 2026-09-14
+
+Thirty-odd reports across the three pages, read against the files and against what the pack already ships.
+Most were closed before this pass (the underground task's repeating notice, the torch crash, Yura's stash,
+Ded's silence, the Jegoj copies, the tunnel's controls, the weights) or answered on the page as walkthrough.
+Three are defects, one of them the pack's own.
+
+### Repairs
+
+| Defect | Consequence | Repair |
+| --- | --- | --- |
+| `agro_kotelnui_ybiica.ltx` `[remark]` grants `ara_tak_vtorogo_xyilu_ne_nado` the moment the killer raises his hands, and `[death]`/`[hit]` spawn the wounded killer at the stairs only while that portion is absent. The mod as shipped never granted it - the loader kept only the second `on_info` of the section - so the shoot-him branch stayed open forever; the eleventh pass read both keys and closed it at the surrender | A player who walks up (he surrenders) and shoots before the talk is done gets neither the wounded killer nor the Toymaker: the door to the cassette stays shut. Two players on page 41 describe exactly the branch that disappeared | The portion is granted with the talk (`{+agro_ybiica_start}`), the point where a second killer really is not needed. Twenty bytes, paid from the file's trailing blank lines |
+| Nine doors and boxes are opened by a use that spends a key, a lockpick or a tool and switches the section (`lqk_na_vushky.ltx`, `gar_tainik_s_artami.ltx`, `dveri_oryjeika.ltx`, `seif_door_oryjeiki.ltx`, `oryjeiki_door_polki.ltx`, `dveri_v_derevne1.ltx`, `dveri_tixona_podsobka.ltx`, `zapor_kapot.ltx`, ...) while `[logic] active` names the locked section | The object comes back locked the next time it comes online, with the key gone - the tower hatch and the artefact stash for good - and the car hood yields its parts again after every reload | The section such a use led to is written into the actor's pstor under the object's name and replayed on the object's first update of the next session, the shape the code locks already use. Only a use that spends something, opens a `locked` door or ends in the author's `{+aiaiaiai}` idiom is remembered, and only when it lands in a section with no timer back - the stove lit with a match keeps burning down |
+| `unique_items.ltx` declares the rat king `syper_art_dryg_tyshkan` as `[medkit]`, so it is a medkit to the engine, and the build's `use_medkit` key takes the first medkit in the rucksack | The key eats the artefact ahead of the ordinary medkits: minus health and a tushkan instead of a heal | Its `class` reads as `II_FOOD` where the engine reads it; the eat lines are the same for both classes and the tushkan comes from the script that watches the section |
+
+The pack's own Letyagin safeguard waits three minutes instead of two before it runs the farewell's own line: the
+walk ends 52 m from the actor, and a slow path deserves the room.
+
+Verified: unit tests cover the killer's file at its exact size, the remembered and replayed lock sections, the
+timed stove and the finished hood that are and are not remembered, and the rat king's class; on a loaded save
+the engine reads that class as `II_FOOD`, the door and box hooks are in place, and the scripts bind cleanly.
+
+### Examined and deliberately not changed
+
+- **The author's word that the pack cut his cutscenes.** Checked against the files: the rally countdown the
+  pack falls back on after 40 s is a 4.5-second sound; the X18 finale portion is delivered only once the fight
+  giant is dead or released for a full minute, and the cutscene giant stands until that portion arrives; the
+  Letyagin release fires only when the farewell has not ended on its own after three minutes. No scene is
+  shortened while it is playing.
+- **The X18 grate** («рубильник опустил, решётка не открылась»). The spawn's own logic: the far-room lever
+  powers the grate button, and the shocking switch under the panel takes that power away again
+  (`on_info2 = {+rybilnik_viebal} %-labx_knopka_reshetki_vkl% ph_button@vukl0`) while it powers the other
+  door's button. Throwing both is the puzzle, not a defect.
+- **The siren at Zhaba's base** never stops after `td_spawn_ad` because the author commented its `on_use` out
+  for that state; the belt draws eighteen cells over `max_belt = 16`; the tools and the file's icon, the
+  vertebra artefact's flight, the invisible wall on the Wild Territory road and the empty Mauser are the
+  author's models and numbers.
+- **Transitions «на кордон, на свалку» from the Bar** after the Warehouses BTR. Nothing in the loose files or
+  the spawn moves the actor between levels except the level changers, none of which leads from the Bar to
+  Cordon; the vanilla autojump is never granted. Not reproducible without the save.
+- **Makarov's hand-in repeating after the safe** and Sidorovich's talk returning: both dialogs are gated on
+  their own portion, granted on the last phrase; leaving either early is what keeps them available.
+- **The checkpoint parcel box** is the twelfth pass's note again: it takes a bottle the player still carries.

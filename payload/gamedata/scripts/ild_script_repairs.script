@@ -1430,8 +1430,9 @@ end
 -- Letyagin's farewell hides the HUD and disables input, and the only thing that ever gives them back is a
 -- distance check on the walk he then takes - while a restrictor teleports the actor back to the same spot
 -- until that walk reports in. A walk that cannot be built therefore locks the player out of the game with no
--- way back. This runs the section's own line instead: the stash, the portion and the input.
-local letyagin_grace = 120000
+-- way back. This runs the section's own line instead: the stash, the portion and the input. The walk itself
+-- ends 52 m from the actor, a minute or so on foot; three minutes leave a slow path all the room it needs.
+local letyagin_grace = 180000
 local letyagin_since
 
 local function release_letyagin(now)
