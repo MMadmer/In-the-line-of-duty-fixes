@@ -1101,3 +1101,43 @@ now covers every earlier release and applies each a second time with the helper 
   stays openable; neither is released, moved or grows a save. A sweep of every loose logic file for switches to
   sections that do not exist found the psi case, the X18 pseudogiant's `mob_walker@6` the pack already redirects,
   and Yura's `walker7` on the Garbage, which waits on a portion nothing declares or grants - nothing new to repair.
+
+## Fourteenth pass: the detector entry as a player's PDA showed it - 2026-09-14
+
+A player on the latest release sent the PDA: the entry titled `ild_detector_task`, two steps reading
+`ild_detector_task_1` and `ild_detector_task_2`, and no spot on the map at all, where 1.0.5 had shown one.
+
+### What the engine does with a task
+
+Read against the SoC sources of `GameTask.cpp`, `GametaskManager.cpp`, `map_manager.cpp` and `ui/UITaskItem.cpp`:
+
+- A task is saved with its title, every step's text, spot type, object id and hint exactly as they were given,
+  and the PDA translates title and step text through the string table only when it draws them. An entry given
+  by 1.0.6 or 1.0.7 therefore keeps the ids those versions wrote for as long as the save lives, and 1.0.8's move
+  to plain text reached only entries given after it. Since the mod's Bar string table is already patched in
+  memory for Bronevik's two lines, the five ids go in beside them - title, two steps, two hints, 418 bytes out
+  of the 881 bytes of borrowable indentation the file has - and every such save reads correctly at once.
+- A saved task is rebuilt from the task file before the saved text is read: `SGameTaskKey::load` constructs
+  `CGameTask(id)`, whose `Load` aborts with «game task id=» on an id the file does not declare. A save holding
+  an entry under the pack's own id therefore cannot be loaded without the pack - which the README promises it
+  can. New entries are hosted on the archived `game_tasks.xml`'s own `user_task`, a skeleton with one line, no
+  condition and no step that only the cut user-spot feature ever gave: its title, line and icon are rewritten
+  at give time and saved with the task, so the entry reads the same with the pack removed. The skeleton the
+  pack adds to `tasks_bar.xml` stays for the saves of 1.0.6 to 1.0.9, which hold the old id; the actor's pstor
+  records which id a save carries, and both stage changes and the hand-over address that one.
+- A step's spot exists only as a map location the engine creates when the task is given and removes when the
+  step closes; nothing puts it back once it is gone, and the PDA offers no button for a step without one. The
+  spots are the pack's own serialised ones now, the way the mod's own markers already are since the twelfth
+  pass: the stage decides which of the two places carries one, the other is kept clear, a spot a pass finds
+  missing is put back, and the first pass of a session replaces whatever an older version left with one that
+  carries this hint. The steps carry no location of the engine's, so nothing competes for the same spot.
+- Neither the cache nor Bronevik has a story id, so both are found by section - a slice of 2048 ids per actor
+  update rather than the whole simulation on one frame, resting ten seconds after a sweep that found nothing.
+
+### Verified
+
+Unit tests cover the new entry, the id kept by an old save, the stage-wise spots, a spot put back after it went
+missing, a target that appears after the entry was given, and the size-neutral string table. On a loaded save
+the string table answers for the five ids with the texts above, the entry is given under `user_task` with its
+title and steps, the cache carries the green spot and Bronevik does not, and the chip in the rucksack closes the
+first step and moves the spot to Bronevik.

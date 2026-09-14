@@ -1963,6 +1963,13 @@ function detector_parts_ready()
     return db.actor ~= nil and db.actor:object("esc_mikro_sxema_koordinatu_tp") ~= nil
 end
 
+-- 1.0.6 to 1.0.9 gave the PDA entry under an id of the pack's own; since 1.0.10 it is hosted on the archived
+-- task file's unused "user_task", and the actor's pstor records which of the two a save holds.
+local function detector_task_id()
+    local known, host = pcall(xr_logic.pstor_retrieve, db.actor, "ild_detector_host", 0)
+    return known and host == 1 and "user_task" or "ild_detector_task"
+end
+
 function repair_detector(first_speaker, second_speaker)
     if not detector_parts_ready() then return end
     sak.out_item_namber("esc_mikro_sxema_koordinatu_tp", 1)
@@ -1970,9 +1977,10 @@ function repair_detector(first_speaker, second_speaker)
     -- The broken one calls itself the best detector in the world and says it shows every anomaly, which is the
     -- elite detector exactly. No trader sells it, so the job stays the only way to hold one.
     dialogs.relocate_item_section(second_speaker, "detector_elite", "in", 1)
-    -- The last step and the entry itself close together; the engine takes the remaining spot down with them.
-    pcall(level_tasks.set_task_state, task.completed, "ild_detector_task", 2)
-    pcall(level_tasks.set_task_state, task.completed, "ild_detector_task", 0)
+    -- The last step and the entry itself close together; the next pass takes the remaining spot down.
+    local id = detector_task_id()
+    pcall(level_tasks.set_task_state, task.completed, id, 2)
+    pcall(level_tasks.set_task_state, task.completed, id, 0)
     xr_logic.pstor_store(db.actor, "ild_detector_task", 3)
     report_line("detector repaired")
 end
@@ -2220,15 +2228,18 @@ function install()
 
     -- The job had no PDA entry at all: the portion its conversation grants is declared empty and no task names
     -- it. The entry is given here rather than from that portion, so a save that already paid the five thousand
-    -- gets it too. Its two steps carry the map spots, which is what ties them to the task - the engine shows the
-    -- spot of an objective while it is open and takes it down when it closes. Neither the cache nor Bronevik has
-    -- a story id, so the objectives are built in script where both can be looked up.
-    -- The engine builds its string table from a fixed list of file names it keeps in localization.ltx, not from
-    -- whatever the language folder holds, so a string file of the pack's own is never opened and an id it cannot
-    -- find is handed back unchanged. The four the player reads therefore carry their own CP1251 bytes, the way
-    -- the two hints further up do:
-    -- Тайник: микросхема для детектора / Броневик ждёт микросхему
+    -- gets it too. It is hosted on the archived game_tasks.xml's own "user_task" - a skeleton with one line, no
+    -- condition and no step, which the released game never gives - because the engine rebuilds a saved task from
+    -- the task file before it reads the saved text and aborts on an id the file lacks: an entry under an id of
+    -- the pack's own chains the save to the pack. The title, the entry's own line and the two steps carry their
+    -- own CP1251 bytes, the way the two hints further up do - the engine opens no string file of the pack's own,
+    -- and text it cannot look up is printed as it is:
+    -- Ремонт научного детектора
     -- Найти микросхему EVA-1400 / Отнести микросхему Броневику
+    -- Тайник: микросхема для детектора / Броневик ждёт микросхему
+    -- The map spots are the pack's own serialised ones, not the steps': the stage decides which of the two
+    -- places carries one, the other is kept clear, and a spot a pass finds missing is put back. Neither the
+    -- cache nor Bronevik has a story id, so both are found by section, a slice of the simulation per update.
     local detector_guide = {
         cache = {section = "agro_tainik_detei3", hint = string.char(
             210, 224, 233, 237, 232, 234, 58, 32, 236, 232, 234, 240, 238, 241, 245, 229, 236, 224, 32, 228, 235,
@@ -2236,40 +2247,96 @@ function install()
         owner = {section = "bar_bar_moder", hint = string.char(
             193, 240, 238, 237, 229, 226, 232, 234, 32, 230, 228, 184, 242, 32, 236, 232, 234, 240, 238, 241, 245,
             229, 236, 243)},
+        title = string.char(208, 229, 236, 238, 237, 242, 32, 237, 224, 243, 247, 237, 238, 227, 238, 32, 228, 229,
+            242, 229, 234, 242, 238, 240, 224),
         step = {
             string.char(205, 224, 233, 242, 232, 32, 236, 232, 234, 240, 238, 241, 245, 229, 236, 243, 32, 69, 86,
                 65, 45, 49, 52, 48, 48),
             string.char(206, 242, 237, 229, 241, 242, 232, 32, 236, 232, 234, 240, 238, 241, 245, 229, 236, 243,
                 32, 193, 240, 238, 237, 229, 226, 232, 234, 243)
         },
-        period = 30000
+        spot = "green_location", tick = 1000, slice = 2048, last = 65534, rest = 10000
     }
+    local function detector_reset()
+        for _, entry in pairs({detector_guide.cache, detector_guide.owner}) do
+            entry.id, entry.cursor, entry.rest_until, entry.swept, entry.placed, entry.settled = nil
+        end
+        detector_guide.next_tick = nil
+    end
+    -- A known id is trusted while the object behind it is still what it was; an unknown one is looked for a
+    -- slice at a time, and a sweep that finds nothing rests before the next.
     local function detector_object(entry, now)
-        if entry.id then return entry.id end
-        if entry.scanned and now - entry.scanned < detector_guide.period then return nil end
-        entry.scanned = now
         local simulator = alife()
         if not simulator then return nil end
-        for id = 1, 65534 do
+        if entry.id then
+            local known, name = pcall(function()
+                local server = simulator:object(entry.id)
+                return server and server:section_name()
+            end)
+            if known and name == entry.section then return entry.id end
+            entry.id = nil
+        end
+        if entry.rest_until and now < entry.rest_until then return nil end
+        local first = entry.cursor or 1
+        local last = math.min(first + detector_guide.slice - 1, detector_guide.last)
+        for id = first, last do
             local server = simulator:object(id)
             local known, name = pcall(function() return server and server:section_name() end)
-            if known and name == entry.section then entry.id = id return id end
+            if known and name == entry.section then
+                entry.id, entry.cursor = id, nil
+                return id
+            end
+        end
+        if last < detector_guide.last then
+            entry.cursor = last + 1
+        else
+            entry.cursor, entry.rest_until, entry.swept = 1, now + detector_guide.rest, true
         end
         return nil
     end
-    -- Both targets are spawned by info portions of their own levels, so in an ordinary playthrough they are
-    -- long since there when Bronevik asks. A save where one of them is not gets the step anyway, without a
-    -- spot: an entry that never appears would be worse than an entry that does not point anywhere.
-    local function detector_step(job, index, entry, now)
-        local step = SGameTaskObjective(job, index)
-        step:set_description(detector_guide.step[index])
-        local id = detector_object(entry, now)
-        if id then
-            step:set_map_hint(entry.hint)
-            step:set_map_location("green_location")
-            step:set_object_id(id)
+    -- Wanted: placed afresh once per session, so a spot an older version left carries this hint and is on, and
+    -- put back whenever a pass finds it gone. Not wanted: whatever is there comes down.
+    local function detector_mark(entry, id, wanted)
+        local known, count = pcall(level.map_has_object_spot, id, detector_guide.spot)
+        count = known and count or 0
+        if wanted and entry.placed == id and count > 0 then return end
+        for _ = 1, count do level.map_remove_object_spot(id, detector_guide.spot) end
+        if wanted then level.map_add_object_spot_ser(id, detector_guide.spot, entry.hint) end
+        entry.placed = wanted and id or nil
+    end
+    -- 1 leads to the cache, 2 to Bronevik; any other stage clears both, and an entry with nothing left to take
+    -- down - or whose object one full sweep could not find - is left alone for the rest of the session.
+    local function detector_lead(stage, now)
+        local reconcile = now >= (detector_guide.next_tick or 0)
+        if reconcile then detector_guide.next_tick = now + detector_guide.tick end
+        for index, entry in ipairs({detector_guide.cache, detector_guide.owner}) do
+            if not entry.settled then
+                local id = detector_object(entry, now)
+                if reconcile then
+                    if id then detector_mark(entry, id, stage == index) end
+                    if stage ~= 1 and stage ~= 2 and (id or entry.swept) then entry.settled = true end
+                end
+            end
         end
-        job:add_objective(step)
+    end
+    local function detector_give()
+        local job = CGameTask()
+        job:load("user_task")
+        job:set_title(detector_guide.title)
+        -- The host's only objective is the entry itself; it takes the title as its line and the job's icon.
+        -- Both are set before the steps are added: adding may move the objectives, and the pointer with them.
+        local entry = job:get_objective(0)
+        entry:set_description(detector_guide.title)
+        entry:set_icon_name("ui_iconsTotal_artefact")
+        for index = 1, 2 do
+            local step = SGameTaskObjective(job, index)
+            step:set_description(detector_guide.step[index])
+            job:add_objective(step)
+        end
+        db.actor:give_task(job, 0, false)
+        xr_logic.pstor_store(db.actor, "ild_detector_host", 1)
+        xr_logic.pstor_store(db.actor, "ild_detector_task", 1)
+        report_line("task user_task")
     end
     -- 0 not given, 1 looking for the chip, 2 carrying it back, 3 finished.
     local function detector_task(now)
@@ -2278,17 +2345,14 @@ function install()
         if not known then return end
         stage = stage or 0
         if stage == 0 then
-            local job = CGameTask()
-            job:load("ild_detector_task")
-            detector_step(job, 1, detector_guide.cache, now)
-            detector_step(job, 2, detector_guide.owner, now)
-            db.actor:give_task(job, 0, false)
-            xr_logic.pstor_store(db.actor, "ild_detector_task", 1)
-            report_line("task ild_detector_task")
+            detector_give()
+            stage = 1
         elseif stage == 1 and db.actor:object("esc_mikro_sxema_koordinatu_tp") then
-            level_tasks.set_task_state(task.completed, "ild_detector_task", 1)
+            level_tasks.set_task_state(task.completed, detector_task_id(), 1)
             xr_logic.pstor_store(db.actor, "ild_detector_task", 2)
+            stage = 2
         end
+        detector_lead(stage, now)
     end
 
     local binder = bind_stalker.actor_binder
@@ -2305,6 +2369,7 @@ function install()
         if result and db.actor then
             install_actor_repairs()
             reset_detector_registry()
+            detector_reset()
         end
         return result
     end

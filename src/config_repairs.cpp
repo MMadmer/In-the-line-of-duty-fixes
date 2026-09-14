@@ -183,6 +183,12 @@ constexpr std::string_view detector_dialog =
 // - Броневик, я нашёл ту микросхему. EVA-1400, как ты и говорил.
 // - Ну-ка... она самая, осколки целы. Давай сюда и детектор, посиди пока... Всё, готово, держи. Честно скажу -
 //   такую машинку я в руках первый раз держу. Все аномалии на карте, как на ладони. Не урони больше в болото.
+// The five that follow are the ids 1.0.6 and 1.0.7 wrote into the PDA entry itself. The engine saves a task with
+// its title, step texts and spot hints exactly as given and translates them only when the PDA draws them, so a
+// save that received the entry from those versions keeps printing the ids until the table can answer for them.
+// - Ремонт научного детектора (the title, and the entry's own line)
+// - Найти микросхему EVA-1400 / Отнести микросхему Броневику (the two steps)
+// - Тайник: микросхема для детектора / Броневик ждёт микросхему (the two spot hints)
 constexpr std::string_view detector_lines =
     "<string id=\"ild_bronevik_detektor_gotov_0\"><text>"
     "\xC1\xF0\xEE\xED\xE5\xE2\xE8\xEA\x2C\x20\xFF\x20\xED\xE0\xF8\xB8\xEB\x20\xF2\xF3\x20\xEC\xE8\xEA"
@@ -199,6 +205,23 @@ constexpr std::string_view detector_lines =
     "\xF0\xE6\xF3\x2E\x20\xC2\xF1\xE5\x20\xE0\xED\xEE\xEC\xE0\xEB\xE8\xE8\x20\xED\xE0\x20\xEA\xE0\xF0"
     "\xF2\xE5\x2C\x20\xEA\xE0\xEA\x20\xED\xE0\x20\xEB\xE0\xE4\xEE\xED\xE8\x2E\x20\xCD\xE5\x20\xF3\xF0"
     "\xEE\xED\xE8\x20\xE1\xEE\xEB\xFC\xF8\xE5\x20\xE2\x20\xE1\xEE\xEB\xEE\xF2\xEE\x2E"
+    "</text></string>"
+    "<string id=\"ild_detector_task\"><text>"
+    "\xD0\xE5\xEC\xEE\xED\xF2\x20\xED\xE0\xF3\xF7\xED\xEE\xE3\xEE\x20\xE4\xE5\xF2\xE5\xEA\xF2\xEE\xF0\xE0"
+    "</text></string>"
+    "<string id=\"ild_detector_task_1\"><text>"
+    "\xCD\xE0\xE9\xF2\xE8\x20\xEC\xE8\xEA\xF0\xEE\xF1\xF5\xE5\xEC\xF3\x20\x45\x56\x41\x2D\x31\x34\x30\x30"
+    "</text></string>"
+    "<string id=\"ild_detector_task_2\"><text>"
+    "\xCE\xF2\xED\xE5\xF1\xF2\xE8\x20\xEC\xE8\xEA\xF0\xEE\xF1\xF5\xE5\xEC\xF3\x20\xC1\xF0\xEE\xED\xE5\xE2\xE8"
+    "\xEA\xF3"
+    "</text></string>"
+    "<string id=\"ild_detector_cache_hint\"><text>"
+    "\xD2\xE0\xE9\xED\xE8\xEA\x3A\x20\xEC\xE8\xEA\xF0\xEE\xF1\xF5\xE5\xEC\xE0\x20\xE4\xEB\xFF\x20\xE4\xE5\xF2"
+    "\xE5\xEA\xF2\xEE\xF0\xE0"
+    "</text></string>"
+    "<string id=\"ild_detector_bronevik_hint\"><text>"
+    "\xC1\xF0\xEE\xED\xE5\xE2\xE8\xEA\x20\xE6\xE4\xB8\xF2\x20\xEC\xE8\xEA\xF0\xEE\xF1\xF5\xE5\xEC\xF3"
     "</text></string>";
 
 bool add_detector_lines(std::string& text)
@@ -236,9 +259,10 @@ bool add_detector_topic(std::string& text)
 }
 
 // The detector job had no PDA entry at all - the portion its conversation grants is declared empty and no task
-// names it. This is the skeleton the engine needs to know the task exists; its two steps, and the map spots
-// bound to them, are built in script where the cache and Bronevik can actually be found, because neither has a
-// story id for the XML form to point at.
+// names it. 1.0.6 to 1.0.9 gave the entry under this id, and the engine rebuilds a saved task from the task file
+// before it reads the saved text, aborting on an id the file does not declare - so every save that holds the
+// entry from those versions needs this skeleton for as long as it is played. Since 1.0.10 the entry is hosted on
+// the archived game_tasks.xml's own unused "user_task", which is there with or without the pack.
 // The title carries its own CP1251 bytes for the same reason the dialog above does: Ремонт научного детектора.
 constexpr std::string_view detector_task_entry =
     "<game_task id=\"ild_detector_task\"><title>"

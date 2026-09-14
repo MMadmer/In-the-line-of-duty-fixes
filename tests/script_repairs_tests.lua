@@ -151,20 +151,30 @@ local function fixture()
         enable_ui = function() calls.ui_enabled = (calls.ui_enabled or 0) + 1 end
     }
     env.task = {completed = "completed", fail = "fail", in_progress = "in_progress"}
-    -- The engine's own task objects: a script-built task carries its map spots on its objectives.
-    env.CGameTask = function()
-        local job = {objectives = {}}
-        job.load = function(self, id) self.id = id end
-        job.add_objective = function(self, objective) self.objectives[#self.objectives + 1] = objective end
-        return job
-    end
+    -- The engine's own task objects. Loading an entry from the task file brings its objectives with it; the
+    -- archived "user_task" skeleton has exactly one, the entry's own line, and the pack rewrites that one.
     env.SGameTaskObjective = function(job, index)
         local step = {job = job, index = index}
         step.set_description = function(self, text) self.description = text end
         step.set_map_hint = function(self, hint) self.hint = hint end
         step.set_map_location = function(self, kind) self.location = kind end
         step.set_object_id = function(self, id) self.object = id end
+        step.set_icon_name = function(self, name) self.icon = name end
         return step
+    end
+    env.CGameTask = function()
+        local job = {objectives = {}}
+        job.load = function(self, id)
+            self.id = id
+            local entry = env.SGameTaskObjective(self, 0)
+            entry.description, entry.icon = "user defined map location", [[ui\ui_icons_task]]
+            self.objectives = {entry}
+        end
+        job.set_title = function(self, title) self.title = title end
+        job.get_objective = function(self, index) return self.objectives[index + 1] end
+        job.get_objectives_cnt = function(self) return #self.objectives end
+        job.add_objective = function(self, objective) self.objectives[#self.objectives + 1] = objective end
+        return job
     end
     env.game_object = {level_path = "level_path", enemy = "enemy"}
     env.xr_remark = {set_scheme = function(npc, ini, scheme, section)
@@ -2705,7 +2715,8 @@ do
     equal(#calls.created, 1, "and no other cache is touched")
 end
 
--- The detector job as a PDA entry: two steps, each carrying the spot that belongs to it.
+-- The detector job as a PDA entry: hosted on the archived skeleton, its two steps written in, and the map led by
+-- the pack's own spots one stage at a time.
 do
     local env, calls, objects, module, actor = fixture()
     module.install()
@@ -2717,53 +2728,110 @@ do
         env.clock_ms = env.clock_ms + seconds * 1000
         env.bind_stalker.actor_binder.update(binder, 1)
     end
+    local title = string.char(208, 229, 236, 238, 237, 242, 32, 237, 224, 243, 247, 237, 238, 227, 238, 32, 228, 229,
+        242, 229, 234, 242, 238, 240, 224)
+    local cache_hint = string.char(210, 224, 233, 237, 232, 234, 58, 32, 236, 232, 234, 240, 238, 241, 245, 229, 236,
+        224, 32, 228, 235, 255, 32, 228, 229, 242, 229, 234, 242, 238, 240, 224)
+    local owner_hint = string.char(193, 240, 238, 237, 229, 226, 232, 234, 32, 230, 228, 184, 242, 32, 236, 232, 234,
+        240, 238, 241, 245, 229, 236, 243)
     pass(4)
     equal(#calls.tasks, 0, "no entry before Bronevik has asked for the chip")
     calls.infos.bar_bronevik_pochini_detektor = true
     pass(4)
     equal(#calls.tasks, 1, "the entry a save that already paid never got")
     local job = calls.tasks[1]
-    equal(job.id, "ild_detector_task", "loaded from the skeleton the pack adds to the task file")
-    equal(#job.objectives, 2, "with the two steps the job actually has")
+    -- The archived skeleton is there with or without the pack, so the save never needs the pack to load.
+    equal(job.id, "user_task", "hosted on the task file's own unused entry")
+    equal(job.title, title, "under the job's title")
+    equal(#job.objectives, 3, "the entry's own line and the two steps")
+    equal(job.objectives[1].description, title, "the host's line is rewritten to the title")
+    equal(job.objectives[1].icon, "ui_iconsTotal_artefact", "and carries the job's icon")
     -- The engine never opens a string file of the pack's own, so what a step carries is the text itself.
-    equal(job.objectives[1].description, string.char(205, 224, 233, 242, 232, 32, 236, 232, 234, 240, 238, 241,
+    equal(job.objectives[2].description, string.char(205, 224, 233, 242, 232, 32, 236, 232, 234, 240, 238, 241,
         245, 229, 236, 243, 32, 69, 86, 65, 45, 49, 52, 48, 48), "find the chip")
-    equal(job.objectives[1].object, 900, "pointing at the children's cache")
-    equal(job.objectives[1].hint, string.char(210, 224, 233, 237, 232, 234, 58, 32, 236, 232, 234, 240, 238, 241,
-        245, 229, 236, 224, 32, 228, 235, 255, 32, 228, 229, 242, 229, 234, 242, 238, 240, 224), "with its own hint")
-    equal(job.objectives[1].location, "green_location", "as a map spot of its own")
-    equal(job.objectives[2].description, string.char(206, 242, 237, 229, 241, 242, 232, 32, 236, 232, 234, 240,
+    equal(job.objectives[3].description, string.char(206, 242, 237, 229, 241, 242, 232, 32, 236, 232, 234, 240,
         238, 241, 245, 229, 236, 243, 32, 193, 240, 238, 237, 229, 226, 232, 234, 243), "then take it back")
-    equal(job.objectives[2].object, 901, "pointing at Bronevik")
-    equal(calls.pstor.ild_detector_task, 1, "and the stage is remembered")
+    equal(job.objectives[2].location, nil, "the steps carry no spot of the engine's")
+    equal(calls.map["900:green_location"], cache_hint, "the cache carries the pack's own serialised spot")
+    equal(calls.map["901:green_location"], nil, "and Bronevik does not yet")
+    equal(calls.pstor.ild_detector_task, 1, "the stage is remembered")
+    equal(calls.pstor.ild_detector_host, 1, "and so is the entry the save holds")
     pass(4)
     equal(#calls.tasks, 1, "the entry is given once")
+    calls.map["900:green_location"] = nil
+    pass(4)
+    equal(calls.map["900:green_location"], cache_hint, "a spot a pass finds missing is put back")
 
-    -- A save where neither target is spawned yet still gets the entry, just without spots on its steps.
-    local bare, bare_calls, _, bare_module, bare_actor = fixture()
+    -- A save where neither target is spawned yet still gets the entry; the spot follows the object.
+    local bare, bare_calls, bare_objects, bare_module, bare_actor = fixture()
     bare_module.install()
     bare.db.actor = bare_actor()
     bare_calls.infos.bar_bronevik_pochini_detektor = true
-    bare.clock_ms = bare.clock_ms + 4000
-    bare.bind_stalker.actor_binder.update({object = bare.db.actor, first_update = false}, 1)
+    local bare_binder = {object = bare.db.actor, first_update = false}
+    local function bare_pass(seconds)
+        bare.clock_ms = bare.clock_ms + seconds * 1000
+        bare.bind_stalker.actor_binder.update(bare_binder, 1)
+    end
+    bare_pass(4)
     equal(#bare_calls.tasks, 1, "the entry appears whether or not the targets are there")
-    equal(#bare_calls.tasks[1].objectives, 2, "with both steps")
-    equal(bare_calls.tasks[1].objectives[1].object, nil, "and no spot it cannot point at")
+    equal(next(bare_calls.map), nil, "with no spot to place yet")
+    -- The sweep goes on a slice at a time; an object that appears ahead of it is found on the next update.
+    bare_objects[3000] = {section_name = function() return "agro_tainik_detei3" end}
+    bare_pass(4)
+    equal(bare_calls.map["3000:green_location"], cache_hint, "the spot follows the moment the cache exists")
 
-    local function closed(objective)
+    local function closed(id, objective)
         for _, state in ipairs(calls.task_states) do
-            if state.id == "ild_detector_task" and state.objective == objective then return state.state end
+            if state.id == id and state.objective == objective then return state.state end
         end
     end
     env.db.actor.items["esc_mikro_sxema_koordinatu_tp"] = {}
     pass(4)
-    equal(closed(1), "completed", "the first step closes on the chip")
+    equal(closed("user_task", 1), "completed", "the first step closes on the chip")
     equal(calls.pstor.ild_detector_task, 2, "and the stage moves on")
+    equal(calls.map["900:green_location"], nil, "the cache spot comes down")
+    equal(calls.map["901:green_location"], owner_hint, "and Bronevik carries the spot now")
 
     module.repair_detector(nil, "bronevik")
-    equal(closed(2), "completed", "the second closes on the hand-over")
-    equal(closed(0), "completed", "and so does the entry itself")
+    equal(closed("user_task", 2), "completed", "the second closes on the hand-over")
+    equal(closed("user_task", 0), "completed", "and so does the entry itself")
     equal(calls.pstor.ild_detector_task, 3, "the job is done")
+    pass(4)
+    equal(calls.map["901:green_location"], nil, "and the last spot comes down with it")
+    local removals = #calls.spots
+    pass(4)
+    equal(#calls.spots, removals, "nothing is touched once the job is settled")
+
+    -- A save that received the entry from 1.0.6-1.0.9 keeps the id those versions gave it, and the spot one of
+    -- them hung on the step is replaced by the pack's own, carrying this hint.
+    local old, old_calls, old_objects, old_module, old_actor = fixture()
+    old_module.install()
+    old.db.actor = old_actor()
+    old_objects[900] = {section_name = function() return "agro_tainik_detei3" end}
+    old_objects[901] = {section_name = function() return "bar_bar_moder" end}
+    old_calls.infos.bar_bronevik_pochini_detektor = true
+    old_calls.pstor.ild_detector_task = 1
+    old_calls.map["900:green_location"] = "ild_detector_cache_hint"
+    local old_binder = {object = old.db.actor, first_update = false}
+    local function old_pass(seconds)
+        old.clock_ms = old.clock_ms + seconds * 1000
+        old.bind_stalker.actor_binder.update(old_binder, 1)
+    end
+    old_pass(4)
+    equal(#old_calls.tasks, 0, "an entry the save already holds is not given again")
+    equal(old_calls.pstor.ild_detector_host, nil, "and its id stays the one those versions used")
+    equal(old_calls.map["900:green_location"], cache_hint, "the old spot is replaced by one with this hint")
+    local function old_closed(objective)
+        for _, state in ipairs(old_calls.task_states) do
+            if state.id == "ild_detector_task" and state.objective == objective then return state.state end
+        end
+    end
+    old.db.actor.items["esc_mikro_sxema_koordinatu_tp"] = {}
+    old_pass(4)
+    equal(old_closed(1), "completed", "its first step closes under that id")
+    old_module.repair_detector(nil, "bronevik")
+    equal(old_closed(2), "completed", "and so does the second")
+    equal(old_closed(0), "completed", "with the entry itself")
 end
 
 print("script_repairs_tests: " .. tests .. " checks passed")

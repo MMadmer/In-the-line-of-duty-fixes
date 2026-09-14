@@ -74,7 +74,7 @@ int main(int argc, char** argv)
         "<phrase id=\"18\">\r\n<next>2</next>\r\n</phrase>\r\n";
     // The added dialog is paid for out of indentation, so the source needs some to lend, as the real file has.
     std::string room;
-    for (int line = 0; line < 40; ++line) room += "                    <phrase id=\"9\"></phrase>\r\n";
+    for (int line = 0; line < 60; ++line) room += "                    <phrase id=\"9\"></phrase>\r\n";
     std::string skat = skat_phrases + detector + wish + room;
     const auto skat_size = skat.size();
     if (!ild::repair_config_text(skat, ConfigRepair::skat_upgrade) || skat.size() != skat_size ||
@@ -126,6 +126,12 @@ int main(int argc, char** argv)
     if (lines.find("<string id=\"ild_bronevik_detektor_gotov_0\">") == std::string::npos ||
         lines.find("<string id=\"ild_bronevik_detektor_gotov_1\">") == std::string::npos ||
         lines.find("EVA-1400") == std::string::npos) return 48;
+    // The ids 1.0.6 and 1.0.7 wrote into saved PDA entries resolve from the same table.
+    for (const auto id : {"ild_detector_task", "ild_detector_task_1", "ild_detector_task_2",
+        "ild_detector_cache_hint", "ild_detector_bronevik_hint"})
+    {
+        if (lines.find(std::string("<string id=\"") + id + "\"><text>") == std::string::npos) return 59;
+    }
     // The courier's reply now carries the id the dialog points at, and only the second block moved.
     if (lines.find("bar_iahik_nac_2_1_1") == std::string::npos ||
         lines.find("bar_iahik_nac_2_1_0") == std::string::npos ||
