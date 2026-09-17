@@ -23,9 +23,72 @@ namespace IldFixes.Updater
 
         internal CheckResult Check()
         {
-            Uri api = ResolveApiUri();
-            string json = ReadText(api, MaximumApiBytes);
-            List<ReleaseInfo> releases = ParseReleases(json);
+            return Evaluate(ParseReleases(ReadReleases(ResolveApiUri())));
+        }
+
+        // The same release list, published beside the repository at every release: no request limit, the same
+        // shape as the API's answer, and every archive still comes from github.com and is checked against the
+        // digest written here.
+        internal CheckResult CheckFallback()
+        {
+            Uri fallback;
+            if (string.IsNullOrEmpty(context.ApiUrl))
+                fallback = new Uri("https://raw.githubusercontent.com/" + ProductInfo.Repository + "/main/updates/latest.json");
+            else
+            {
+                Uri api = ResolveApiUri();
+                fallback = new Uri(api.GetLeftPart(UriPartial.Authority) + "/latest.json");
+            }
+            return Evaluate(ParseReleases(ReadText(fallback, MaximumApiBytes)));
+        }
+
+        // The API's answer is kept with its ETag, and asked for again conditionally: an unchanged list costs no
+        // request against the hourly allowance, and the kept copy is what a 304 stands for.
+        private string ReadReleases(Uri api)
+        {
+            string runtime = Path.Combine(context.GameDirectory, ".ild-fixes", "runtime");
+            string cachedJson = Path.Combine(runtime, "releases-cache.json");
+            string cachedTag = Path.Combine(runtime, "releases-etag.txt");
+            string tag = null;
+            try
+            {
+                if (File.Exists(cachedJson) && File.Exists(cachedTag))
+                    tag = File.ReadAllText(cachedTag).Trim();
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            HttpWebRequest request = CreateRequest(api);
+            if (!string.IsNullOrEmpty(tag))
+                request.Headers["If-None-Match"] = tag;
+            string json;
+            string etag;
+            try
+            {
+                json = ReadResponse(request, MaximumApiBytes, out etag);
+            }
+            catch (WebException error)
+            {
+                HttpWebResponse response = error.Response as HttpWebResponse;
+                if (response != null && response.StatusCode == HttpStatusCode.NotModified && File.Exists(cachedJson))
+                    return File.ReadAllText(cachedJson, Encoding.UTF8);
+                throw;
+            }
+            if (!string.IsNullOrEmpty(etag))
+            {
+                try
+                {
+                    Directory.CreateDirectory(runtime);
+                    File.WriteAllText(cachedJson, json, new UTF8Encoding(false));
+                    File.WriteAllText(cachedTag, etag, new UTF8Encoding(false));
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+            return json;
+        }
+
+        private CheckResult Evaluate(List<ReleaseInfo> releases)
+        {
             releases.Sort(delegate(ReleaseInfo left, ReleaseInfo right)
             {
                 return left.Version.CompareTo(right.Version);
@@ -120,12 +183,18 @@ namespace IldFixes.Updater
 
         private string ReadText(Uri uri, int maximumBytes)
         {
-            HttpWebRequest request = CreateRequest(uri);
+            string etag;
+            return ReadResponse(CreateRequest(uri), maximumBytes, out etag);
+        }
+
+        private string ReadResponse(HttpWebRequest request, int maximumBytes, out string etag)
+        {
             using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
             {
                 ValidateResponseUri(response.ResponseUri);
                 if (response.StatusCode != HttpStatusCode.OK || response.ContentLength > maximumBytes)
                     throw new InvalidDataException("The release list is not usable.");
+                etag = response.Headers["ETag"];
 
                 using (Stream stream = response.GetResponseStream())
                 using (MemoryStream memory = new MemoryStream())

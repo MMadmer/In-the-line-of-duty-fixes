@@ -28,6 +28,9 @@ using ReadSharedUnsigned = unsigned(__thiscall*)(void*, const SharedName*, const
 using ReadFloat = float(__thiscall*)(void*, const char*, const char*);
 using ReadSharedFloat = float(__thiscall*)(void*, const SharedName*, const char*);
 using LineExists = int(__thiscall*)(void*, const char*, const char*);
+using ReadClass = unsigned long long(__thiscall*)(void*, const char*, const char*);
+using ReadSharedClass = unsigned long long(__thiscall*)(void*, const SharedName*, const char*);
+using TextToClass = unsigned long long(__stdcall*)(const char*);
 X86Detour slot_hook;
 ToSlot original_to_slot{};
 ReadString original_read_string{};
@@ -37,6 +40,9 @@ ReadSharedUnsigned original_read_shared_unsigned{};
 ReadFloat original_read_float{};
 ReadSharedFloat original_read_shared_float{};
 LineExists original_line_exists{};
+ReadClass original_read_class{}, original_engine_read_class{};
+ReadSharedClass original_read_shared_class{};
+TextToClass text_to_class{};
 unsigned char* game_base{};
 bool checked{}, enabled{};
 
@@ -238,12 +244,55 @@ int __fastcall line_exists(void* ini, void*, const char* section, const char* ke
     return value && hidden_item_line(section, key, value) ? FALSE : exists;
 }
 
+// An object's class is read through r_clsid, which calls r_string inside xrCore itself - never through the
+// game's import of it - so a class corrected by the text hook above never reached the object factory: the rat
+// king stayed a medkit to the quick-use key with the repair in place. The class getter is taken as well, in the
+// executable, where CObjectList::Create reads it, and in the game module, where the server side and Lua do.
+[[nodiscard]] unsigned long long repaired_class(void* ini, const char* section, const char* key,
+    unsigned long long original)
+{
+    if (!section || !key || !original_read_string || !text_to_class || std::strcmp(key, "class") != 0) return original;
+    const auto value = original_read_string(ini, section, key);
+    const auto corrected = value ? corrected_item_text(section, key, value) : nullptr;
+    return corrected ? text_to_class(corrected) : original;
+}
+
+unsigned long long __fastcall read_class(void* ini, void*, const char* section, const char* key)
+{
+    return repaired_class(ini, section, key, original_read_class(ini, section, key));
+}
+
+unsigned long long __fastcall engine_read_class(void* ini, void*, const char* section, const char* key)
+{
+    return repaired_class(ini, section, key, original_engine_read_class(ini, section, key));
+}
+
+unsigned long long __fastcall read_shared_class(void* ini, void*, const SharedName* section, const char* key)
+{
+    return repaired_class(ini, name_of(section), key, original_read_shared_class(ini, section, key));
+}
+
 // The original is published before the import slot changes, since any thread may call through it at once.
 template<class Function> void hook_import(HMODULE game, HMODULE core, const char* symbol, Function& original,
     void* replacement)
 {
     original = core ? reinterpret_cast<Function>(GetProcAddress(core, symbol)) : nullptr;
     if (original) static_cast<void>(replace_iat_import(game, "xrCore.dll", symbol, replacement));
+}
+
+[[nodiscard]] std::string hex_digest(const std::filesystem::path& file)
+{
+    Sha256 hash{};
+    if (!sha256_file(file, hash)) return {};
+    constexpr char digits[] = "0123456789ABCDEF";
+    std::string actual;
+    for (const auto value : hash)
+    {
+        const auto byte = std::to_integer<unsigned>(value);
+        actual += digits[byte >> 4];
+        actual += digits[byte & 15];
+    }
+    return actual;
 }
 }
 
@@ -270,16 +319,21 @@ bool install_inventory_hooks(const std::filesystem::path& root)
         reinterpret_cast<void*>(&read_shared_float));
     hook_import(module, core, "?line_exist@CInifile@@QAEHPBD0@Z", original_line_exists,
         reinterpret_cast<void*>(&line_exists));
-    Sha256 hash{};
-    if (!sha256_file(root / L"bin" / L"xrGame.dll", hash)) return false;
-    constexpr char digits[] = "0123456789ABCDEF";
-    std::string actual;
-    for (const auto value : hash)
+    text_to_class = core ? reinterpret_cast<TextToClass>(GetProcAddress(core, "?TEXT2CLSID@@YG_KPBD@Z")) : nullptr;
+    if (text_to_class)
     {
-        const auto byte = std::to_integer<unsigned>(value);
-        actual += digits[byte >> 4];
-        actual += digits[byte & 15];
+        hook_import(module, core, "?r_clsid@CInifile@@QAE_KPBD0@Z", original_read_class,
+            reinterpret_cast<void*>(&read_class));
+        hook_import(module, core, "?r_clsid@CInifile@@QAE_KABVshared_str@@PBD@Z", original_read_shared_class,
+            reinterpret_cast<void*>(&read_shared_class));
+        // The executable's import is the one the client object factory reads; it is taken only on the validated
+        // build, the way every other change to the executable is.
+        if (hex_digest(root / L"bin" / L"XR_3DA.exe") ==
+            "B22BC15B94A2A58C4E7046E46D46A3750D80C399BA8F37A2EF40CCF78EE3126D")
+            hook_import(GetModuleHandleW(nullptr), core, "?r_clsid@CInifile@@QAE_KPBD0@Z",
+                original_engine_read_class, reinterpret_cast<void*>(&engine_read_class));
     }
+    const auto actual = hex_digest(root / L"bin" / L"xrGame.dll");
     if (actual != "277B67FD6D21839A2F6C246EF57C8AD0C31079C0EAAAB179A8072D1B74A0284F") return false;
     game_base = reinterpret_cast<unsigned char*>(module);
     constexpr unsigned char expected[]{0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF8};

@@ -38,16 +38,44 @@ namespace IldFixes.Updater
             internal readonly List<ManifestFile> Files = new List<ManifestFile>();
         }
 
-        // Carries the exit code together with the reason shown to the player and kept for the next session.
+        // Carries the exit code together with the reason shown to the player and kept for the next session, and
+        // the path the reason is about when there is one, so the message can name it in the player's language.
         private sealed class Failure : Exception
         {
             internal readonly int Code;
+            internal readonly string Path;
 
-            internal Failure(int code, string reason) : base(reason)
+            internal Failure(int code, string reason, string path = null) : base(reason)
             {
                 Code = code;
+                Path = path;
             }
         }
+
+        // A file that once shipped with the pack and shipped no more: left behind by an archive unpacked by hand over
+        // a newer install, it is removed when its bytes are one of the copies that were released, and never otherwise.
+        private sealed class RetiredCopy
+        {
+            internal readonly long Size;
+            internal readonly string Digest;
+
+            internal RetiredCopy(long size, string digest)
+            {
+                Size = size;
+                Digest = digest;
+            }
+        }
+
+        private static readonly Dictionary<string, RetiredCopy[]> RetiredFiles = new Dictionary<string, RetiredCopy[]>(
+            StringComparer.OrdinalIgnoreCase)
+        {
+            { "gamedata/config/text/rus/ild_fixes_text.xml", new[] {
+            new RetiredCopy(685, "d53bd34a2aec4a13829f3b4358c2318f44d202d13edc18315b83d53c4c55ca46"),
+            new RetiredCopy(700, "7368ad25506673b803b06e2f649bc86da3556e581349a553a15d627034c62a57"),
+            new RetiredCopy(947, "5cdca5f13930856d196d9e29b6223fa0ae14d8927e7a20f458123430e5e5efc3"),
+            new RetiredCopy(971, "3880670d5bdf434f68087c948ba1353166824c74bf911f8eea767d8e63e5b655")
+            } }
+        };
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern bool MoveFileEx(string existing, string replacement, int flags);
@@ -69,13 +97,13 @@ namespace IldFixes.Updater
             }
             catch (Failure failure)
             {
-                return Fail(game, failure.Code, failure.Message, failure.Code != 25, restartExe, restartArgs,
-                    russian, quiet);
+                return Fail(game, failure.Code, failure.Message, failure.Path, failure.Code != 25, restartExe,
+                    restartArgs, russian, quiet);
             }
             catch (Exception error)
             {
                 // The mutation block converts its own errors into a rollback; anything else left the files consistent.
-                return Fail(game, 2, error.Message, true, restartExe, restartArgs, russian, quiet);
+                return Fail(game, 2, error.Message, null, true, restartExe, restartArgs, russian, quiet);
             }
         }
 
@@ -135,12 +163,25 @@ namespace IldFixes.Updater
             HashSet<string> target = PayloadPaths(manifest);
             HashSet<string> scope = new HashSet<string>(previous, StringComparer.OrdinalIgnoreCase);
             scope.UnionWith(target);
+            Dictionary<string, ManifestFile> expected = manifest.Files.ToDictionary(
+                delegate(ManifestFile file) { return file.Relative; }, StringComparer.OrdinalIgnoreCase);
             foreach (string relative in target)
             {
-                if (File.Exists(Destination(game, relative)) && !previous.Contains(relative))
-                    throw new Failure(26, "A foreign file occupies the fix-pack path " + relative + ".");
+                string destination = Destination(game, relative);
+                if (!File.Exists(destination) || previous.Contains(relative))
+                    continue;
+                // The pack's own names under gamedata are nobody else's: a copy an older archive left outside the
+                // ownership list, or one already equal to the release's, is replaced like any other, with a backup.
+                if (PackNamespace(relative))
+                    continue;
+                ManifestFile released;
+                if (expected.TryGetValue(relative, out released) && new FileInfo(destination).Length == released.Size &&
+                    UpdateClient.Digest(destination) == released.Hash)
+                    continue;
+                throw new Failure(26, "A foreign file occupies the fix-pack path " + relative + ".", relative);
             }
-            VerifyInstalledFiles(game, previous, installedVersion);
+            VerifyInstalledFiles(game, previous, installedVersion, target);
+            RemoveRetiredFiles(game, target);
 
             Dictionary<string, bool> existed = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
             try
@@ -258,10 +299,14 @@ namespace IldFixes.Updater
             return 0;
         }
 
-        private static int Fail(string game, int code, string reason, bool restartable, string restartExe,
+        private static int Fail(string game, int code, string reason, string path, bool restartable, string restartExe,
             string restartArgs, bool russian, bool quiet)
         {
             WriteResult(game, code, reason);
+            if (russian && path != null && code == 26)
+                reason = "Путь " + path + " занят посторонним файлом. Удали его или распакуй полный архив Setup_Manual.zip вручную.";
+            else if (russian && path != null && code == 27)
+                reason = "Файл " + path + " изменён вне фикспака (например, хотфиксом с форума). Удали его или распакуй полный архив Setup_Manual.zip вручную.";
             string text = restartable ?
                 (russian ? "Не удалось обновить фикспак (код {0}): {1}\n\nПрежняя версия сохранена; игра будет запущена снова." :
                     "The fix pack update failed (code {0}): {1}\n\nThe previous version was kept; the game will start again.") :
@@ -552,9 +597,43 @@ namespace IldFixes.Updater
                 input.CopyTo(output);
         }
 
+        // The pack's own namespaces under gamedata: names nothing but the pack ever writes.
+        private static bool PackNamespace(string relative)
+        {
+            return relative.StartsWith("gamedata/", StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Files that once shipped and ship no more are removed when their bytes are a released copy's, so a manual
+        // unpack of an old archive over a new one leaves no stray behind; anything else in their place stays.
+        internal static void RemoveRetiredFiles(string game, HashSet<string> managed)
+        {
+            foreach (KeyValuePair<string, RetiredCopy[]> retired in RetiredFiles)
+            {
+                if (managed.Contains(retired.Key))
+                    continue;
+                try
+                {
+                    string path = Destination(game, retired.Key);
+                    if (!File.Exists(path))
+                        continue;
+                    long size = new FileInfo(path).Length;
+                    string digest = UpdateClient.Digest(path);
+                    if (retired.Value.Any(delegate(RetiredCopy copy) { return copy.Size == size && copy.Digest == digest; }))
+                        TryDelete(path);
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+                catch (InvalidDataException) { }
+                catch (Failure) { }
+            }
+        }
+
         // Only bytes that still match the installed manifest are fix-pack property; anything else was put there
-        // by someone else and is never replaced. Installations without a manifest keep path-based ownership.
-        private static void VerifyInstalledFiles(string game, HashSet<string> previous, Version installedVersion)
+        // by someone else and is never replaced. Installations without a manifest keep path-based ownership. The
+        // pack's own script and text files that the release overwrites anyway are not refused for a change made
+        // by hand - a hotfix from the forum, say - since the release replaces them with a backup either way.
+        private static void VerifyInstalledFiles(string game, HashSet<string> previous, Version installedVersion,
+            HashSet<string> target)
         {
             string manifestPath = Destination(game, ManifestPath);
             if (installedVersion == null || !File.Exists(manifestPath))
@@ -572,12 +651,14 @@ namespace IldFixes.Updater
             {
                 if (!previous.Contains(file.Relative))
                     continue;
+                if (PackNamespace(file.Relative) && target.Contains(file.Relative))
+                    continue;
                 string path = Destination(game, file.Relative);
                 if (!File.Exists(path))
                     continue;
                 if (new FileInfo(path).Length != file.Size || UpdateClient.Digest(path) != file.Hash)
                     throw new Failure(27, "The installed " + file.Relative +
-                        " was modified outside the fix pack; refusing to replace it.");
+                        " was modified outside the fix pack; refusing to replace it.", file.Relative);
             }
         }
 
@@ -597,7 +678,7 @@ namespace IldFixes.Updater
             }
         }
 
-        private static HashSet<string> ReadManagedFiles(string game)
+        internal static HashSet<string> ReadManagedFiles(string game)
         {
             string path = Path.Combine(game, ManagedListPath.Replace('/', Path.DirectorySeparatorChar));
             return File.Exists(path) ? ReadManagedList(path) : new HashSet<string>(StringComparer.OrdinalIgnoreCase);

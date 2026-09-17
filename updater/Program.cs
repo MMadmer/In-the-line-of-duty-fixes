@@ -9,9 +9,11 @@ namespace IldFixes.Updater
     {
         private static int Main(string[] source)
         {
+            string gameDirectory = null;
             try
             {
                 Arguments arguments = Arguments.Parse(source);
+                gameDirectory = arguments.Optional("--game-dir");
                 if (arguments.HasFlag("--apply"))
                     return UpdateApplier.Apply(arguments);
                 if (arguments.HasFlag("--finish"))
@@ -28,13 +30,35 @@ namespace IldFixes.Updater
                 context.ApiUrl = arguments.Optional("--api");
                 context.Russian = IsRussian(arguments.Optional("--lang"), context.GameDirectory);
                 if (!File.Exists(Path.Combine(context.GameDirectory, "bin", "XR_3DA.exe")))
+                {
+                    Note(gameDirectory, "no_engine", "bin\\XR_3DA.exe is not there");
                     return 3;
+                }
                 return new UpdateService(context).Run(arguments.HasFlag("--qa-check"), arguments.HasFlag("--qa-download"));
             }
-            catch
+            catch (Exception error)
             {
+                Note(gameDirectory, "crashed", error.GetType().Name + ": " + error.Message);
                 return 2;
             }
+        }
+
+        // A helper that dies before its first status write would leave nothing behind; the loader reads this.
+        private static void Note(string gameDirectory, string state, string error)
+        {
+            if (string.IsNullOrEmpty(gameDirectory))
+                return;
+            try
+            {
+                string runtime = Path.Combine(Path.GetFullPath(gameDirectory), ".ild-fixes", "runtime");
+                Directory.CreateDirectory(runtime);
+                File.WriteAllText(Path.Combine(runtime, "update-last.txt"),
+                    "time=" + DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture) +
+                    "\ninstalled=" + ProductInfo.VersionText + "\nstate=" + state + "\nerror=" +
+                    error.Replace("\r", " ").Replace("\n", " ") + "\n", new UTF8Encoding(false));
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
         }
 
         private static bool IsRussian(string language, string gameDirectory)

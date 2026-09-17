@@ -271,17 +271,13 @@ local function install_session_reset()
     end
 end
 
-
---     ild_spawn_repairs.install()
-
 -- ---------- detector-family ----------
 -- The artefact-detector chain. The mod builds its registry of artefact ids once, at actor spawn, out of a
 -- hardcoded list of seventeen sections; it never drops an entry, never re-reads a section, and throttles the
 -- cheap detector's beep by comparing squared metres against milliseconds. The four functions the pack's own
 -- detector.update wrapper calls by name are replaced below, so the three tiers stay exactly as distinct as they
--- were - 16 m and sound only, 9 m with a plain spot, the whole level with a named spot.
--- Ships as payload/gamedata/scripts/ild_detector_repairs.script and is reached with one line added to
--- ild_gameplay.install(), right after ild_mod_repairs.install():    ild_detector_repairs.install()
+-- were - 16 m and sound only, 9 m with a plain spot, the whole level with a named spot. Installed from
+-- install() below.
 
 
 local spot_type = "artefact_location"
@@ -657,9 +653,35 @@ end
 -- session, the way the code locks already are.
 local lock_memory = {prefix = "ild_lock_", spends = {"=remove_item(", "=minys_otmuchka"}, never = "aiaiaiai"}
 
+-- A key the section lacks is a fatal inside CInifile::r_string, which no pcall can catch - 1.0.10 read it
+-- unasked and every door and box whose section has no on_use killed the game on F. The line is read only once
+-- line_exist, which checks the section as well, says it is there.
 local function use_line(state, section)
-    local known, line = pcall(function() return state.ini:r_string(section, "on_use") end)
-    return known and type(line) == "string" and line or ""
+    local ini = state and state.ini
+    local known, present = pcall(function() return ini ~= nil and section ~= nil and ini:line_exist(section, "on_use") end)
+    if not known or not present then return "" end
+    local line = ini:r_string(section, "on_use")
+    return type(line) == "string" and line or ""
+end
+
+-- Object names repeat across levels - the Cordon's tainik box has namesakes on the Garbage, the Agroprom and
+-- in the Bar - so the level is part of the key. 1.0.10 wrote the bare name; those keys are still read, below.
+local function lock_key(object)
+    local known, name = pcall(function() return level.name() end)
+    return lock_memory.prefix .. (known and name or "level") .. ":" .. object:name()
+end
+
+-- A remembered section is replayed only where it can be: "nil" ends the logic anywhere, any other section has
+-- to exist in this object's own logic. A key 1.0.10 wrote under the bare name may belong to a namesake on
+-- another level, so it is followed only when this object's active section is a lock whose own use names it.
+local function lock_applies(state, before, section, legacy, opens)
+    if section ~= "nil" then
+        local known, exists = pcall(function() return state.ini:section_exist(section) end)
+        if not known or not exists then return false end
+    end
+    if not legacy then return true end
+    if not before or not opens(state, before) then return false end
+    return string.find(use_line(state, before), section, 1, true) ~= nil
 end
 
 local function use_opens_lock(state, before)
@@ -694,7 +716,7 @@ local function remember_use(action)
         if before ~= nil and db.actor then
             local after = storage.active_section
             if after ~= before and (opens or use_never_again(self.st, after)) and use_settles(self.st, after) then
-                xr_logic.pstor_store(db.actor, lock_memory.prefix .. self.object:name(), after or "nil")
+                xr_logic.pstor_store(db.actor, lock_key(self.object), after or "nil")
             end
         end
         return result
@@ -707,10 +729,15 @@ local function replay_use(action)
         local state = self.st
         if not state.ild_lock_replayed and db.actor then
             state.ild_lock_replayed = true
-            local known, section = pcall(xr_logic.pstor_retrieve, db.actor,
-                lock_memory.prefix .. self.object:name(), "")
+            local known, section = pcall(xr_logic.pstor_retrieve, db.actor, lock_key(self.object), "")
+            local legacy = false
+            if known and section == "" then
+                known, section = pcall(xr_logic.pstor_retrieve, db.actor, lock_memory.prefix .. self.object:name(), "")
+                legacy = true
+            end
             local storage = db.storage[self.object:id()]
-            if known and section ~= "" and storage and storage.active_section ~= section then
+            if known and section ~= "" and storage and storage.active_section ~= section and
+                lock_applies(state, storage.active_section, section, legacy, use_opens_lock) then
                 xr_logic.switch_to_section(self.object, state, section)
                 return
             end
@@ -723,6 +750,184 @@ local function install_lock_memory()
     for _, action in ipairs({ph_door.action_door, ph_idle.action_idle}) do
         remember_use(action)
         replay_use(action)
+    end
+end
+
+-- ---------- x18-panel ----------
+-- The six-button panel in X18. A press grants labx_knopkaN and the button's own on_timer takes it back thirty
+-- milliseconds later; the two ring neighbours are meant to read that portion once each from their on_info and
+-- switch. But a physic object's logic runs on the scheduler, thirty to forty milliseconds apart and out of step
+-- with the press, so a neighbour reads the portion never, once or twice: the panel does not obey its own rule
+-- of threes, and the two solutions the puzzle has work one time in three. The press now switches both
+-- neighbours itself, exactly once, and withdraws the portion before any update can read it; the buttons'
+-- own timers still set labx_esti_knopkaN, and the restrictor that reads all six is untouched. A save whose
+-- panel the race has already put out of the solvable class - odd counts in either parity set - is put back to
+-- the shipped position once, before the first press of the session, or the deterministic panel would lock it.
+local panel = {prefix = "lab_konpka_paneli0", portion = "labx_knopka", solved = "labx_smska_test_bliati",
+    on = "ph_button@vkl", off = "ph_button@vukl",
+    neighbours = {{2, 5}, {1, 3}, {2, 4}, {3, 6}, {1, 6}, {4, 5}},
+    initial = {"ph_button@vkl", "ph_button@vkl", "ph_button@vukl", "ph_button@vkl", "ph_button@vukl", "ph_button@vkl"},
+    -- Every press toggles a button and its two ring neighbours, so the number of lit buttons in each of these
+    -- sets keeps its parity; the shipped panel has both even, and so has the solved one.
+    parities = {{1, 2, 4, 6}, {2, 3, 5, 6}}}
+
+local function panel_index(object)
+    local known, name = pcall(function() return object:name() end)
+    local digit = known and type(name) == "string" and string.match(name, "^lab_konpka_paneli0(%d)$")
+    return digit and tonumber(digit) or nil
+end
+
+local function panel_button(index)
+    local simulator = alife()
+    local server = simulator and simulator:object(panel.prefix .. index)
+    local object = server and level.object_by_id(server.id)
+    local storage = object and db.storage[object:id()]
+    if storage and storage.active_scheme == "ph_button" and storage.ph_button then return object, storage end
+    return nil
+end
+
+local function panel_flip(index)
+    local object, storage = panel_button(index)
+    if not object then return false end
+    local target = storage.active_section == panel.on and panel.off or panel.on
+    xr_logic.switch_to_section(object, storage.ph_button, target)
+    return true
+end
+
+local function panel_normalise()
+    if panel.checked or not db.actor or has_alife_info(panel.solved) then return end
+    local sections = {}
+    for index = 1, 6 do
+        local _, storage = panel_button(index)
+        if not storage then return end
+        sections[index] = storage.active_section
+    end
+    panel.checked = true
+    local broken = false
+    for _, set in ipairs(panel.parities) do
+        local lit = 0
+        for _, index in ipairs(set) do
+            if sections[index] == panel.on then lit = lit + 1 end
+        end
+        if lit % 2 == 1 then broken = true end
+    end
+    if not broken then return end
+    for index = 1, 6 do
+        local object, storage = panel_button(index)
+        if object and storage.active_section ~= panel.initial[index] then
+            xr_logic.switch_to_section(object, storage.ph_button, panel.initial[index])
+        end
+        pcall(function() db.actor:disable_info_portion(panel.portion .. index) end)
+    end
+    log("ild: X18 panel put back to the shipped position")
+end
+
+local function install_panel()
+    local class_table = ph_button and ph_button.ph_button
+    if not class_table then return end
+    local original_use = class_table.use_callback
+    class_table.use_callback = function(self, ...)
+        local index = panel_index(self.object)
+        if not index then return original_use(self, ...) end
+        local storage = db.storage[self.object:id()]
+        local before = storage and storage.active_section
+        local result = original_use(self, ...)
+        if storage and before and storage.active_section ~= before and db.actor then
+            pcall(function() db.actor:disable_info_portion(panel.portion .. index) end)
+            for _, neighbour in ipairs(panel.neighbours[index]) do panel_flip(neighbour) end
+        end
+        return result
+    end
+    local original_update = class_table.update
+    class_table.update = function(self, ...)
+        if not panel.checked and panel_index(self.object) then pcall(panel_normalise) end
+        return original_update(self, ...)
+    end
+end
+
+-- ---------- tunnel-safe ----------
+-- The safe in the death tunnel writes its code on the container and takes the code from a keypad case that
+-- the author placed inside the safe's own model, out of sight and out of reach of the crosshair from anywhere
+-- but a hand's width behind it. The safe hands its use to that keypad while the code has not been entered;
+-- once the keypad's portion is held the safe's own use opens it, as written.
+local tunnel_safe = {section = "esc_toneli_smerti_seif", lock = "esc_toneli_smertiseif_zamok",
+    portion = "estonsmerti_seif_open"}
+
+local function install_tunnel_safe()
+    local action = ph_idle and ph_idle.action_idle
+    if not action then return end
+    local original_use = action.use_callback
+    action.use_callback = function(self, ...)
+        local known, section = pcall(function() return self.object:section() end)
+        if known and section == tunnel_safe.section and not has_alife_info(tunnel_safe.portion) then
+            local simulator = alife()
+            local server = simulator and simulator:object(tunnel_safe.lock)
+            local lock = server and level.object_by_id(server.id)
+            local storage = lock and db.storage[lock:id()]
+            if storage and storage.active_scheme == "ph_code" and storage.ph_code then
+                xr_logic.issue_event(lock, storage.ph_code, "use_callback", lock, db.actor)
+                return
+            end
+        end
+        return original_use(self, ...)
+    end
+end
+
+-- ---------- tower-hatch ----------
+-- The hatch to the Agroprom tower spends its key and, before 1.0.10 remembered locks, came back shut with the
+-- key gone: the diary on the tower, and the children's caches it names, were out of reach for good. A save in
+-- that state - the decorations spawned, the diary unread, nothing remembered for the hatch and no key left
+-- anywhere in the simulation - gets the open section written for the hatch once, in the shape the lock memory
+-- replays. A key still in its box or in the rucksack leaves everything as it is.
+local hatch = {name = "agr_m_dog_e_0000", level = "l03_agroprom", section = "ph_door@open",
+    key = "agro_klqchi_ot_bashni", armed = "spawn_vse_agro_dekoru", over = "agro_infa_na_vushke",
+    slice = 4096, last = 65534}
+
+local function hatch_reseed()
+    if hatch.done or not db.actor or not has_alife_info(hatch.armed) or has_alife_info(hatch.over) then return end
+    local key = lock_memory.prefix .. hatch.level .. ":" .. hatch.name
+    local known, remembered = pcall(xr_logic.pstor_retrieve, db.actor, key, "")
+    local legacy_known, legacy = pcall(xr_logic.pstor_retrieve, db.actor, lock_memory.prefix .. hatch.name, "")
+    if not known or not legacy_known then return end
+    if remembered ~= "" or legacy ~= "" then
+        hatch.done = true
+        return
+    end
+    local simulator = alife()
+    if not simulator then return end
+    local first = hatch.cursor or 1
+    local last = math.min(first + hatch.slice - 1, hatch.last)
+    for id = first, last do
+        local object = simulator:object(id)
+        if object then
+            local ok, name = pcall(object.section_name, object)
+            if ok and name == hatch.key then
+                hatch.done = true
+                return
+            end
+        end
+    end
+    if last < hatch.last then
+        hatch.cursor = last + 1
+        return
+    end
+    hatch.done = true
+    xr_logic.pstor_store(db.actor, key, hatch.section)
+    log("ild: the tower hatch is reopened, its key was spent before locks were remembered")
+end
+
+local function install_actor_update()
+    local binder = bind_stalker.actor_binder
+    local original_spawn = binder.net_spawn
+    binder.net_spawn = function(self, ...)
+        hatch.done, hatch.cursor, panel.checked = nil, nil, nil
+        return original_spawn(self, ...)
+    end
+    local original_update = binder.update
+    binder.update = function(self, ...)
+        local result = original_update(self, ...)
+        pcall(hatch_reseed)
+        return result
     end
 end
 
@@ -750,4 +955,7 @@ function install()
     end)
     pcall(install_crow_binder)
     pcall(install_lock_memory)
+    pcall(install_tunnel_safe)
+    pcall(install_panel)
+    pcall(install_actor_update)
 end

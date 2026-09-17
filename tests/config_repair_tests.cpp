@@ -45,9 +45,18 @@ int main(int argc, char** argv)
     std::string other = "<dialog id=\"someone_else\"><phrase id=\"6\"></phrase></dialog>";
     const auto other_copy = other;
     if (!ild::repair_config_text(other, ConfigRepair::abram_pistol) || other != other_copy) return 43;
-    std::string info = "<game_information_portions><info_portion id=\"x\"/>" + std::string(51, '\n');
-    if (!ild::repair_config_text(info, ConfigRepair::info_root) || info.find("</game_information_portions>") == info.npos)
+    // The Agroprom portion file: its lost closing tag comes back, and the two undeclared portions of Sakharov's
+    // suit errand are declared before it, paid for out of the file's indentation.
+    std::string info = "<game_information_portions>\r\n";
+    for (int line = 0; line < 25; ++line) info += "        <info_portion id=\"x\"/>\r\n";
+    info += std::string(51, '\n');
+    const auto info_size = info.size();
+    if (!ild::repair_config_text(info, ConfigRepair::info_root) || info.size() != info_size ||
+        info.find("<info_portion id=\"monolit_have\"/><info_portion id=\"monolit_done\"/></game_information_portions>") == info.npos)
         return 4;
+    if (ild::repair_config_text(info, ConfigRepair::info_root)) return 86;
+    std::string tight_info = "<game_information_portions>\r\n<info_portion id=\"x\"/>" + std::string(51, '\n');
+    if (ild::repair_config_text(tight_info, ConfigRepair::info_root)) return 87;
     std::string label = "<string id=\"stanok_gg_mex_lvl0\"><text>before <<skill:1>> after</text></string>";
     if (!ild::repair_config_text(label, ConfigRepair::skill_text) || label.find("<<") != label.npos ||
         label.find("skill:1") == label.npos) return 5;
@@ -317,6 +326,102 @@ int main(int argc, char** argv)
     const auto narrow_size = narrow.size();
     if (!ild::repair_config_text(narrow, ConfigRepair::counter_normal) || narrow.size() != narrow_size ||
         narrow.find("<static_pda_online x=\"135\" y=\"148\" width=\"35\"") == std::string::npos) return 24;
+
+    // The OC-33's shell effect, the German carbine's name and the re-chambered guns' descriptions: each only while
+    // the value is still the mod's own, and never for the parent section.
+    if (!text_is(ild::corrected_item_text("wpn_oc33", "shell_particles", "weapons\\arsenal_shells1"),
+            "weapons\\generic_shells") ||
+        ild::corrected_item_text("wpn_oc33", "shell_particles", "weapons\\generic_shells") ||
+        ild::corrected_item_text("wpn_sayga12", "shell_particles", "weapons\\arsenal_shells1") ||
+        ild::corrected_item_text("wpn_oc33", "flame_particles", "weapons\\generic_weapon05") ||
+        ild::corrected_item_text("wpn_oc33", "inv_name", "\xCE\xD6-33")) return 64;
+    if (!text_is(ild::corrected_item_text("wpn_nemec_k98", "inv_name", "Karabin-98"), "Karabin-98 (7.92)") ||
+        !text_is(ild::corrected_item_text("wpn_nemec_k98", "inv_name_short", "wpn-k98"), "Karabin-98 (7.92)") ||
+        ild::corrected_item_text("wpn_nemec_k98", "inv_name", "Karabin-98 (7.92)") ||
+        ild::corrected_item_text("wpn_k98", "inv_name", "Karabin-98")) return 65;
+    const std::string k98_inherited = "\xD1\xE8\xFF\x20\xE2\xE8\xED\xF2\xEE\xE2\xEA\xE0\x20\xEE\xE4\xED\xEE\xE7\xED\xE0\xF7\xED\xEE\x20\xEF\xF0\xE8\xE1\xFB\xEB\xE0\x20\xF1\x20\xCD\xE5\xEC\xE5\xF6\xE8\xE8\x2E \xC2\xF0\xEE\xE4\xE5";
+    const auto k98 = ild::corrected_item_text("wpn_nemec_k98", "description", k98_inherited);
+    if (!k98 || std::string_view(k98).find("7,92") == std::string_view::npos ||
+        ild::corrected_item_text("wpn_k98", "description", k98_inherited) ||
+        ild::corrected_item_text("wpn_nemec_k98", "description", "\xD1\xE2\xEE\xE9 \xF2\xE5\xEA\xF1\xF2")) return 66;
+    const auto ak = ild::corrected_item_text("wpn_ak74_mod3", "description", "enc_weapons1_wpn-ak74");
+    if (!ak || std::string_view(ak).find("7,62x54") == std::string_view::npos ||
+        std::string_view(ak).find("\\n") == std::string_view::npos ||
+        ild::corrected_item_text("wpn_ak74", "description", "enc_weapons1_wpn-ak74") ||
+        ild::corrected_item_text("wpn_ak74_mod3", "description", "enc_weapons1_wpn-ak74m1")) return 67;
+    for (const auto [section, parent] : {std::pair{"wpn_mp5_mod", "enc_weapons1_wpn-mp5"},
+        std::pair{"wpn_pm_mod2", "enc_weapons1_wpn-pm"}, std::pair{"wpn_fort_mod2", "enc_weapons1_wpn-fort"},
+        std::pair{"wpn_fort_mod22", "enc_weapons1_wpn-fort"}, std::pair{"wpn_hpsa_mod", "enc_weapons1_wpn-hpsa"},
+        std::pair{"wpn_toz34_m", "enc_weapons1_wpn-toz34"}})
+    {
+        if (!ild::corrected_item_text(section, "description", parent) ||
+            ild::corrected_item_text(section, "description", "enc_weapons1_wpn-other")) return 68;
+    }
+    if (ild::corrected_item_text("wpn_fort", "description", "enc_weapons1_wpn-fort") ||
+        ild::corrected_item_text("wpn_toz34", "description", "enc_weapons1_wpn-toz34")) return 68;
+    // The belt caption takes the string id the mod's own table translates, at the line's exact length.
+    std::string belt = "<window>\n         <text x=\"15\" y=\"142\" font=\"graffiti22\" r=\"231\" g=\"153\" b=\"22\">Belt</text>\n</window>";
+    const auto belt_size = belt.size();
+    if (!ild::repair_config_text(belt, ConfigRepair::belt_caption_normal) || belt.size() != belt_size ||
+        belt.find(">ui_inv_belt</text>") == std::string::npos || belt.find(">Belt<") != std::string::npos ||
+        belt.find("  <text x=\"15\"") == std::string::npos) return 69;
+    if (ild::repair_config_text(belt, ConfigRepair::belt_caption_normal)) return 70;
+    std::string belt_wide = "         <text x=\"30\" y=\"142\" font=\"graffiti22\" r=\"231\" g=\"153\" b=\"22\">Belt</text>";
+    const auto belt_wide_size = belt_wide.size();
+    if (!ild::repair_config_text(belt_wide, ConfigRepair::belt_caption_wide) || belt_wide.size() != belt_wide_size ||
+        belt_wide.find("x=\"30\"") == std::string::npos || belt_wide.find("ui_inv_belt") == std::string::npos) return 71;
+    std::string other_caption = "<text>Belt</text>";
+    if (ild::repair_config_text(other_caption, ConfigRepair::belt_caption_normal) ||
+        ild::repair_config_text(belt_wide, ConfigRepair::belt_caption_normal)) return 72;
+    // The depot's second throw comes back on the first throw's timer.
+    std::string depot = "[ph_idle1]\r\non_timer = 2000 | %+gar_tp_v_depo_ok% ph_idle2\r\n"
+        "[ph_idle3]\r\non_timer = 4000 | %+gar_tp_v_depo_ok2% ph_idle\r\n";
+    const auto depot_size = depot.size();
+    if (!ild::repair_config_text(depot, ConfigRepair::depot_device) || depot.size() != depot_size ||
+        depot.find("on_timer = 2000 | %+gar_tp_v_depo_ok2% ph_idle") == std::string::npos ||
+        depot.find("4000") != std::string::npos) return 76;
+    if (ild::repair_config_text(depot, ConfigRepair::depot_device)) return 77;
+    // The mechanic's line about the PPS-43 names the calibre the gun really takes, blanked to the old length.
+    std::string pps = "<string id=\"esc_l_d_mex_modern_122\"><text>\xEE\xED\x20\xF3\xE6\xE5\x20\xE8\xF2\xE0\xEA\x20\xEC\xEE\xE4\xE8\xF4\xE8\xF6\xE8\xF0\xEE\xE2\xE0\xED\x20\xEF\xEE\xE4\x20\xEA\xE0\xEB\xE8\xE1\xF0\x20\x39\xF5\x31\x39</text></string>";
+    const auto pps_size = pps.size();
+    if (!ild::repair_config_text(pps, ConfigRepair::pps_caliber_text) || pps.size() != pps_size ||
+        pps.find("\xEE\xED\x20\xE8\xF2\xE0\xEA\x20\xEF\xEE\xE4\x20\xF1\xE2\xEE\xE9\x20\xF0\xEE\xE4\xED\xEE\xE9\x20\xEA\xE0\xEB\xE8\xE1\xF0\x20\x37\x2E\x36\x32\xF5\x32\x35") == std::string::npos || pps.find("9\xF5" "19") != std::string::npos) return 78;
+    if (ild::repair_config_text(pps, ConfigRepair::pps_caliber_text)) return 79;
+    // The Economist's file line is captioned as the file, in the same pass that renames the pass strings.
+    std::string tools = "<string_table>\r\n";
+    for (char index = '0'; index <= '7'; ++index)
+        tools += std::string("\t<string id=\"val_chr_band_oxra_dai_propysk_") + index + "\">\r\n\t\t<text>x</text>\r\n\t</string>\r\n";
+    tools += "\t<string id=\"val_kom_mex_instr_5\">\r\n\t\t<text>\xCD\xEE\xE6\xEE\xE2\xEA\xE0\x2E</text>\r\n\t</string>\r\n  <string id=\"val_kom_mex_instr_6\">\r\n";
+    const auto tools_size = tools.size();
+    if (!ild::repair_config_text(tools, ConfigRepair::propysk_text) || tools.size() != tools_size ||
+        tools.find("<text>\xCD\xE0\xEF\xE8\xEB\xFC\xED\xE8\xEA\x2E</text>\r\n\t</string>\r\n<string id=\"val_kom_mex_instr_6\">") == std::string::npos ||
+        tools.find("val_band_oxra_dai_propysk_0") == std::string::npos) return 80;
+    if (ild::repair_config_text(tools, ConfigRepair::propysk_text)) return 81;
+    // Zakorpat's PDA: each of the two dialogs is pointed at its own check, and neither is touched without the
+    // Lua payload, nor is the ransom's charge.
+    const std::string pda = "<dialog id=\"esc_volky_pro_korpata\">\r\n<precondition>new_life.esti_kpk_zakorpata</precondition>\r\n</dialog>\r\n"
+        "<dialog id=\"esc_qra_tainik2_to_pyst\">\r\n<precondition>new_life.esti_kpk_zakorpata</precondition>\r\n</dialog>\r\n";
+    std::string ordered = prince_part + pda + tikhon + reba;
+    const auto ordered_size = ordered.size();
+    if (!ild::repair_config_text(ordered, ConfigRepair::prince_dialog) || ordered.size() != ordered_size ||
+        ordered.find("<dialog id=\"esc_volky_pro_korpata\">\r\n<precondition>ild_script_repairs.volk_pda</precondition>") == std::string::npos ||
+        ordered.find("<dialog id=\"esc_qra_tainik2_to_pyst\">\r\n<precondition>ild_script_repairs.yura_pda</precondition>") == std::string::npos ||
+        ordered.find("new_life.esti_kpk_zakorpata") != std::string::npos) return 82;
+    ild::set_lua_payload_present(false);
+    std::string unbound = prince_part + pda + tikhon + reba;
+    const auto unbound_size = unbound.size();
+    const auto unbound_ok = ild::repair_config_text(unbound, ConfigRepair::prince_dialog);
+    std::string unbound_skat = skat_phrases + detector + wish + room;
+    const auto unbound_skat_ok = ild::repair_config_text(unbound_skat, ConfigRepair::skat_upgrade);
+    std::string unbound_profile = "\t\t<actor_dialog>bar_bronevik_pochini_detektor</actor_dialog>\r\n" + room;
+    const auto unbound_profile_ok = ild::repair_config_text(unbound_profile, ConfigRepair::bronevik_profile);
+    ild::set_lua_payload_present(true);
+    if (!unbound_ok || unbound.size() != unbound_size || unbound.find("ild_script_repairs") != std::string::npos ||
+        unbound.find("ia_otdaq_rebe_dengy_250000") != std::string::npos ||
+        unbound.find("<precondition>new_life.esti_kpk_zakorpata</precondition>") == std::string::npos) return 83;
+    if (!unbound_skat_ok || unbound_skat.find("ild_bronevik_detektor_gotov") != std::string::npos ||
+        unbound_skat.find("b_mne_mod_skat5<") == std::string::npos || unbound_profile_ok) return 84;
+    if (!ild::lua_payload_present()) return 85;
 
     if (argc == 3)
     {

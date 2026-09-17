@@ -65,17 +65,24 @@ int main()
     auto ambiguous_menu = bytes_of("self:InitControls() self:InitControls()");
     if (ild::script_patch::bind_update_menu(ambiguous_menu)) return 7;
 
+    using ild::script_patch::Binding;
     auto actor = bytes_of("function actor_binder:net_spawn(data)\r\n printf(\"actor net spawn\")\r\nend");
     const auto actor_size = actor.size();
-    if (!ild::script_patch::bind_gameplay(actor) || actor.size() != actor_size ||
+    if (ild::script_patch::bind_gameplay(actor) != Binding::bound || actor.size() != actor_size ||
         string_of(actor).find("ild_gameplay.install()") == std::string::npos) return 8;
     auto ambiguous_actor = bytes_of("printf(\"actor net spawn\") printf(\"actor net spawn\")");
-    if (ild::script_patch::bind_gameplay(ambiguous_actor)) return 9;
+    if (ild::script_patch::bind_gameplay(ambiguous_actor) != Binding::unsupported_source) return 9;
+    // Without the Lua payload the anchor is left as the mod wrote it, and the save-format repair is still made.
+    auto without = bytes_of("\t\tpacker:w_bool(true)\r\nprintf(\"actor net spawn\")\r\n");
+    const auto without_size = without.size();
+    if (ild::script_patch::bind_gameplay(without, false) != Binding::skipped || without.size() != without_size ||
+        string_of(without).find("printf(\"actor net spawn\")") == std::string::npos ||
+        string_of(without).find("packet:w_u8(0)") == std::string::npos) return 16;
     // The repaired save branch must write the unmodified mod's ordinary bytes: a zero flag and no timestamp.
     auto save = bytes_of("\t\tpacker:w_bool(true)\r\n\t\tutils.w_CTime(packet, self.st.disable_input_time)\r\n"
         "printf(\"actor net spawn\")\r\n\tif stored_input_time == true then\r\n");
     const auto save_size = save.size();
-    if (!ild::script_patch::bind_gameplay(save) || save.size() != save_size) return 10;
+    if (ild::script_patch::bind_gameplay(save) != Binding::bound || save.size() != save_size) return 10;
     const auto repaired = string_of(save);
     if (repaired.find("packer") != std::string::npos || repaired.find("w_CTime") != std::string::npos ||
         repaired.find("\t\tpacket:w_u8(0)     \r\n\t\t" + std::string(49, ' ') + "\r\n") == std::string::npos ||

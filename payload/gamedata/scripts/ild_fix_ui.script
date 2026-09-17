@@ -15,6 +15,14 @@ local stale_after = 5000
 -- CP1251 escapes: the game renders text in that code page while the payload files stay ASCII.
 local stalled_ru = "\209\235\243\230\225\224 \238\225\237\238\226\235\229\237\232\255 \237\229 \238\242\226\229\247\224\229\242. \204\238\230\237\238 \231\224\234\240\251\242\252 \238\234\237\238 \232 \239\238\226\242\238\240\232\242\252 \239\238\231\230\229."
 local stalled_en = "The update helper is not responding. Close this window and retry later."
+-- The version line in the corner of the main menu: which fix pack is running, and what the update check said.
+-- CP1251 escapes of: "Fikspak", "aktualnaya versiya", "ne udalos proverit obnovleniya", "dostupna".
+local version_words = {
+    ru = {pack = "\208\232\234\241\239\224\234", current = "\224\234\242\243\224\235\252\237\224\255 \226\229\240\241\232\255",
+        failed = "\237\229 \243\228\224\235\238\241\252 \239\240\238\226\229\240\232\242\252 \238\225\237\238\226\235\229\237\232\255",
+        available = "\228\238\241\242\243\239\237\224 "},
+    en = {pack = "Fix pack", current = "up to date", failed = "update check failed", available = "available: "}
+}
 
 local function read_field(key)
     local console = get_console()
@@ -38,6 +46,29 @@ end
 
 local function command(action)
     get_console():execute("ild_update " .. action)
+end
+
+-- The pack's own version is answered by the native bridge from memory; the helper's verdict, when there is
+-- one, is appended: current, failed, or the version on offer.
+local function version_line(current)
+    local version = read_field("pack_version")
+    if version == "" then return "" end
+    local words = version_words[current and current.russian == "0" and "en" or "ru"]
+    local text = words.pack .. " " .. version
+    local state = current and current.state or ""
+    if state == "current" then
+        text = text .. " - " .. words.current
+    elseif state == "check_failed" then
+        text = text .. " - " .. words.failed
+    elseif offers[state] and current.version and current.version ~= "" and current.version ~= version then
+        text = text .. " - " .. words.available .. current.version
+    end
+    return text
+end
+
+local function show_version(menu, current)
+    if not menu.ild_version_line then return end
+    pcall(function() menu.ild_version_line:SetText(version_line(current)) end)
 end
 
 local function service_stalled(current, now)
@@ -242,6 +273,12 @@ function i(menu)
     ild_gameplay.install()
     menu:InitControls()
     install_options()
+    pcall(function()
+        local xml = CScriptXmlInit()
+        xml:ParseFile("ild_fixes_update.xml")
+        menu.ild_version_line = xml:InitStatic("version_line", menu)
+        show_version(menu, nil)
+    end)
     ui_main_menu.main_menu.Update = u
     if not original_keyboard then
         original_keyboard = ui_main_menu.main_menu.OnKeyboard
@@ -266,6 +303,7 @@ function u(menu)
     next_poll = now + 250
     local current = read_status()
     if current.session == "" then return end
+    show_version(menu, current)
     if finished[current.state] then
         menu.ild_update_finished = true
         return

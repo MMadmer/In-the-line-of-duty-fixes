@@ -200,19 +200,9 @@ function install_yura_chain()
     end
 end
 
--- (the file CMakeLists.txt line 105 and ild_gameplay.script line 18 already expect) and add one line,
---     install_yura_chain()
--- to that file's install(). It adds 17 module locals and one global, install_yura_chain; nothing else here is
--- visible outside the chunk, and every name it reads as a global is one the engine already provides
--- (alife, bind_stalker, db, get_console, has_alife_info, ipairs, pcall, time_global, xr_logic, xr_motivator).
+-- Installed from install() below.
 
 -- ---------- crate-stack ----------
--- Goes into the pack's payload\gamedata\scripts\ild_mod_repairs.script: the block below is inserted directly
--- above that file's existing `function install()`, and that three-line install() is replaced by the version at
--- the end of this block (one added line: `pcall(install_crate_stack)`). ild_gameplay.install() already calls
--- ild_mod_repairs.install(), so no other wiring is needed. Nothing here is a top-level local beyond the six
--- declared, all declared above every function that names them, so tests\script_globals.lua stays satisfied.
-
 -- The checkpoint quest hands the actor twenty 5 kg crates in ones and twos and takes them back one at a time.
 -- Its closing hand-over, bar_ckpint.daq_iashik_nac_two, removes a fixed ten - bar_ckpint.script:127 calls
 -- sak.out_item_namber("bar_iahik_nac", 10), and that helper stops at need_number. Seventeen crates are handed out
@@ -278,128 +268,133 @@ local function install_crate_stack()
 end
 
 -- ---------- karabin-nemo ----------
--- moa_agro.spawn_agro_nemo_tyt_vujivet is the only place that was ever going to put "Nemo" on the map, and it names
--- the wrong section: info_l03agroprom.xml grants agro_karabin_strt, which runs that function right beside
--- moa_agro.spawn_agro_nac_prosto_statist, and both of them create "agro_nac_prosto_statist". The nationalist camp
--- therefore stands up with two identical statists five metres apart and no Nemo at all, although every piece of him
--- ships with the mod: [agro_nemo_tyt_vujivet] in creatures\spawn_sections.ltx, the profile of that name in
--- npc_profile.xml and character_desc_agroprom.xml, the logic scripts\agr\agro_nemo_tyt_vujivet.ltx, and the patrol
--- pair agr_nac_nemo_pobeg_walk / agr_nac_nemo_pobeg_look, which are in all.spawn and which agro_karabin.ltx walks
--- as well. Only the section string was wrong, so only the section string changes: position, level vertex and game
--- vertex stay exactly as the author wrote them.
-local nemo = {
-    section = "agro_nemo_tyt_vujivet",
-    x = 120, y = 9.24, z = 163.18,
-    level_vertex = 354295,
-    game_vertex = 504,
-    start = "agro_karabin_strt",
-    -- The actor's own pstor, the key/value table the unmodified mod saves and loads as it is, so the retrofit takes
-    -- one decision per save and remembers it across a reload without a portion of our own in the registry.
-    flag = "ild_agro_nemo_restored",
-    -- His remark scheme leaves for the escape path only once all three of these are in, and they are produced by the
-    -- terrorist, by any one of the agr_bandt_sdelki_* bandits and by the statist - never by Nemo himself. Putting him
-    -- back does not move the gate that releases him, and the surviving single statist still hands out the third.
-    deaths = {"aro_pidr1_strelki_death", "aro_pidr2_strelki_death", "aro_pidr3_strelki_death"}
-}
+-- 1.0.8 to 1.0.10 put "Nemo" (agro_nemo_tyt_vujivet) into the nationalist camp in place of the second extra
+-- that the mod's own misnamed spawn_agro_nemo_tyt_vujivet creates. His section, profile, logic and escape path
+-- all ship with the mod - and so does his immunity: fire, wounds and strikes do nothing to him, his remark
+-- scheme cannot leave while he has an enemy, and an enemy he always has, the actor and Karabin both. So he
+-- stood in the shoot-out for good, Karabin never left his own camper for the talk, and «Зацепка» could not be
+-- closed. The repair is withdrawn: the mod's second mortal extra is back and its death hands out the third
+-- portion the way it always did, and a save that already carries a Nemo loses him once, remembered in the
+-- actor's pstor. Nothing refers to him by id, so nothing else changes.
+local nemo_withdrawal = {section = "agro_nemo_tyt_vujivet", start = "agro_karabin_strt",
+    flag = "ild_agro_nemo_withdrawn"}
 
-local function on_agroprom()
-    local known, name = pcall(level.name)
-    return known and (name == "l03_agroprom" or name == "l03_agroprom_ai2")
-end
-
--- A build whose system.ltx does not carry the section is a build this repair has nothing to say about.
-local function section_known()
-    local known, ini = pcall(system_ini)
-    if not known or not ini then return false end
-    local readable, exists = pcall(ini.section_exist, ini, nemo.section)
-    return readable and exists == true
-end
-
-local function shootout_over()
-    for _, portion in ipairs(nemo.deaths) do
-        if not has_alife_info(portion) then return false end
-    end
-    return true
-end
-
--- The same sweep moa_agro.metka_na_karaba_prosto runs, and for the same reason: an alife object is addressable only
--- by id. Answering "present" when the simulator cannot be asked makes a blind second spawn impossible.
-local function nemo_present()
+local function withdraw_nemo()
+    local actor = db.actor
+    if not actor or not has_alife_info(nemo_withdrawal.start) then return end
+    local known, done = pcall(xr_logic.pstor_retrieve, actor, nemo_withdrawal.flag, 0)
+    if not known or (done or 0) ~= 0 then return end
     local simulator = alife()
-    if not simulator then return true end
+    if not simulator then return end
+    xr_logic.pstor_store(actor, nemo_withdrawal.flag, 1)
+    local released = 0
     for id = 1, 65534 do
         local object = simulator:object(id)
-        if object and object:section_name() == nemo.section then return true end
+        if object then
+            local ok, name = pcall(object.section_name, object)
+            if ok and name == nemo_withdrawal.section then
+                simulator:release(object, true)
+                released = released + 1
+            end
+        end
+    end
+    if released > 0 then log("ild: " .. nemo_withdrawal.section .. " withdrawn, " .. released .. " released") end
+end
+
+-- ---------- toymaker ----------
+-- The Toymaker's peaceful branch - the eloquence line, phrases 662-669 of agro_igra_final - hands out only the
+-- empty agro_ydivitilnui_cirk, and everything the aggressive branch leads to is shut for the rest of the game:
+-- the poltergeist story's own end agro_polter_sdox, the door agr_dver_y_parashi that opens on it, and behind
+-- it the tower key and cassette 2. The peaceful outcome counts as the story settled: the portion is granted,
+-- the door opens by its own logic, and the task of the other branch was never given, so nothing else closes.
+-- Not the fight's portion - that would start the fight and cancel the reward the skill bought.
+--
+-- The boiler-house killer as 1.0.8 and 1.0.9 left him. Those versions granted ara_tak_vtorogo_xyilu_ne_nado
+-- the moment he raised his hands, and a player who shot him before the talk was done got neither the wounded
+-- killer at the stairs nor the Toymaker. Such a save holds the portion and no agro_ybiica_start, a pair the
+-- mod alone and 1.0.10 never produce. A living killer gets the portion taken back - the talk grants it again
+-- and a shot gives the double - and a dead or absent one gets the double now, through the portion his own
+-- [death] would have granted.
+local toymaker = {peace = "agro_ydivitilnui_cirk", settled = "agro_polter_sdox",
+    fight = {"agro_polter_spawn", "agro_spawn_polter_v_fabric", "agro_polter_sdox"}}
+local killer = {section = "agro_kotelnui_ybiica", surrendered = "ara_tak_vtorogo_xyilu_ne_nado",
+    talked = "agro_ybiica_start", shot = "aro_gg_v_glaz_popal", spawned = "agro_igryshechnik_start"}
+
+local function any_of(names)
+    for _, name in ipairs(names) do
+        if has_alife_info(name) then return true end
     end
     return false
 end
 
-local function create_nemo()
+local function settle_toymaker()
+    if not db.actor or not has_alife_info(toymaker.peace) or any_of(toymaker.fight) then return end
+    db.actor:give_info_portion(toymaker.settled)
+    log("ild: the Toymaker's peaceful branch settles the poltergeist story")
+end
+
+local function settle_killer()
+    if killer.done or not db.actor then return end
+    if not has_alife_info(killer.spawned) or not has_alife_info(killer.surrendered) or
+        has_alife_info(killer.talked) or has_alife_info(killer.shot) or any_of(toymaker.fight) then return end
     local simulator = alife()
-    if not simulator then return false end
-    local created = false
-    pcall(function()
-        created = simulator:create(nemo.section, vector():set(nemo.x, nemo.y, nemo.z),
-            nemo.level_vertex, nemo.game_vertex) ~= nil
-    end)
-    return created
+    if not simulator then return end
+    killer.done = true
+    local alive = false
+    for id = 1, 65534 do
+        local object = simulator:object(id)
+        if object then
+            local ok, name = pcall(object.section_name, object)
+            if ok and name == killer.section then
+                local known, living = pcall(object.alive, object)
+                alive = known and living == true
+                break
+            end
+        end
+    end
+    db.actor:disable_info_portion(killer.surrendered)
+    if not alive then db.actor:give_info_portion(killer.shot) end
+    log("ild: the boiler-house killer of a 1.0.8/1.0.9 save " .. (alive and "keeps his talk" or "gets his double"))
 end
 
--- True means the camp has its Nemo and the mod's own call must not run; false means this build could not produce
--- him and the original line is still the best thing left to do.
-local function ensure_nemo(reason)
-    if not section_known() then return false end
-    if nemo_present() then return true end
-    if not create_nemo() then return false end
-    log("ild: " .. nemo.section .. " " .. reason)
-    return true
-end
+-- ---------- volk-tasks ----------
+-- Two optional jobs of the Cordon's Volk, «ПРОПАЛИ!» and the duty with Tolik, are open entries with no end of
+-- their own once the story leaves the Cordon: delete.delet_escape_volka removes him (story 6) when the player
+-- moves on, and the two stay "in progress" for good. They are closed when he is removed, and once on a save
+-- where that already happened - the portions that follow his removal say so more reliably than his absence.
+-- The duty with Tolik that was served counts as completed; anything else fails, which fails its open steps.
+local volk = {tasks = {"esc_poisk_novichkov_kvest", "tolik_i_volk_kvest"}, served = "esc_repka_konec_nax",
+    gone = {"esc_sidor_cho_tyt", "brr_obersh_posli_stepu", "val_volk_poshli"}}
 
--- The mod's info callback is what runs this action, and a raise inside it is fatal, so the body is guarded and the
--- original function stays the fallback: a build that cannot create Nemo is left with exactly what it had before.
-local function install_nemo_spawn()
-    local original = moa_agro.spawn_agro_nemo_tyt_vujivet
-    moa_agro.spawn_agro_nemo_tyt_vujivet = function(...)
-        local known, handled = pcall(ensure_nemo, "spawned")
-        if known and handled then return end
-        if type(original) == "function" then return original(...) end
+local function close_volk_tasks(reason)
+    for _, id in ipairs(volk.tasks) do
+        local known, state = pcall(function() return db.actor:get_task_state(id, 0) end)
+        if known and state == task.in_progress then
+            local outcome = (id == "tolik_i_volk_kvest" and has_alife_info(volk.served)) and task.completed or task.fail
+            pcall(level_tasks.set_task_state, outcome, id, 0)
+            log("ild: " .. id .. " closed, " .. reason)
+        end
     end
 end
 
--- A save made before this repair carries the second statist and no Nemo. He is put back only while the scene he
--- belongs to is still running: the actor on Agroprom, the quest started, the three deaths not yet all in. Once the
--- shootout is over the moment has passed, and dropping an armed enemy into a finished scene reads worse than the gap.
-local function restore_nemo()
-    local actor = db.actor
-    if not actor or not has_alife_info(nemo.start) or not on_agroprom() then return end
-    local known, done = pcall(xr_logic.pstor_retrieve, actor, nemo.flag, 0)
-    if not known or (done or 0) ~= 0 then return end
-    local in_time = not shootout_over()
-    -- Decided either way and recorded before the spawn, so a refusal is never reconsidered frame after frame.
-    xr_logic.pstor_store(actor, nemo.flag, 1)
-    if in_time then ensure_nemo("restored on an old save") end
+local function install_volk_release()
+    local original = delete and delete.delet_escape_volka
+    if type(original) ~= "function" then return end
+    delete.delet_escape_volka = function(...)
+        local results = {original(...)}
+        if db.actor then pcall(close_volk_tasks, "Volk released") end
+        return unpack(results)
+    end
 end
 
-
--- ---------------------------------------------------------------------------------------------------------------
--- WIRING (three one-line edits to the pack's own files, no game/mod file is touched):
---   1. save the block above as D:\Games\In-the-line-of-duty-fixes\payload\gamedata\scripts\ild_agro_nemo.script
---      (pure ASCII, so CP1251 and UTF-8 are byte-identical here);
---   2. in payload\gamedata\scripts\ild_gameplay.script, inside install(), after `ild_mod_repairs.install()`, add:
---          ild_agro_nemo.install()
---      X-Ray resolves an unreferenced module never, so this call is what loads the file;
---   3. add the pair
---          'gamedata/scripts/ild_agro_nemo.script' = 'payload\gamedata\scripts\ild_agro_nemo.script'
---      to the manifest in tools\deploy\Deploy-FixPack.ps1 and its '/' twin in tools\package\Build-Package.ps1,
---      beside the existing ild_gameplay.script rows.
--- ---------------------------------------------------------------------------------------------------------------
+local function settle_volk()
+    if volk.done or not db.actor or not any_of(volk.gone) then return end
+    volk.done = true
+    close_volk_tasks("Volk long gone")
+end
 
 -- ---------- psy-antenna ----------
--- APPLY: append this block to payload/gamedata/scripts/ild_mod_repairs.script immediately above its existing
--- install(), and add the single call `install_psy_ceiling()` as the last line of that install(). That file is
--- already the pack's overflow script, already runs at load time next to ild_script_repairs (ild_gameplay.install()
--- chains it, and the engine reaches ild_gameplay.install() from bind_stalker's actor net_spawn via script_patch),
--- and needs no build, manifest or deploy change. The final install() is reproduced at the bottom of this block.
+-- Installed from install() below.
 
 -- The Radar antenna field is on the only road north, and carrying Sakharov's psy helmet makes it worse instead
 -- of better. The mod lowered the bare-headed rows of two restrictors in all.spawn and left their helmet rows at
@@ -472,10 +467,6 @@ local function install_psy_ceiling()
 end
 
 -- ---------- map-and-logic-gaps ----------
--- payload/gamedata/scripts/ild_map_repairs.script
---     ild_map_repairs.install()
--- The engine loads a script module only when something names it, so without that line this file never runs.
-
 -- Four gaps between the mod's map, its spawn and its logic files. Every repair below puts the mod's own data
 -- back where the mod's own code already looks for it; nothing is invented and no original file is touched.
 
@@ -544,8 +535,10 @@ local marker_rules = {
     {module = "new_life", fn = "metka_na_stanciq_prizraka", section = "esc_radiostancia_prizraka",
         spot = "crlc_big", hint = "esc_mtka_na_stanciq", starts = {"esc_sidor_delo_po_dolgy"},
         stops = {"esc_radioantena_prizraka_zapyshena"}},
+    -- No portion ends this one; the box is spawned full, so the spot comes down once it has been emptied.
     {module = "new_life", fn = "metka_na_tainik_mamkinogo_shpiona", section = "esc_tainik_mamkinogo_shpiona",
-        spot = "crlc_big", hint = "mtka_na_tainik_mamkinogo_shpiona", starts = {"esc_pervui_shpion_pacanchika_poshadil"}},
+        spot = "crlc_big", hint = "mtka_na_tainik_mamkinogo_shpiona", starts = {"esc_pervui_shpion_pacanchika_poshadil"},
+        done = "ild_marker_spy_stash_done", empty_box = true},
     {module = "new_life", fn = "metka_na_space_dlia_btra_sda", name = "esc_dlia_btr_mai_space",
         spot = "blue_location", hint = "esc_dlia_btr_mai_space_txt", starts = {"esc_gg_zavel_btr"},
         stops = {"esc_makr_btr_privez"}},
@@ -595,8 +588,24 @@ local function marker_matches(rule, server)
     return known and hit
 end
 
+local function marker_done(rule)
+    if not rule.done then return false end
+    local known, value = pcall(xr_logic.pstor_retrieve, db.actor, rule.done, 0)
+    return known and value == 1
+end
+
 local function marker_reconcile(rule, server)
     local present = level.map_has_object_spot(server.id, rule.spot) ~= 0
+    if rule.active and rule.empty_box then
+        local known, emptied = pcall(function()
+            local object = level.object_by_id(server.id)
+            return object ~= nil and object:is_inv_box_empty() == true
+        end)
+        if known and emptied then
+            xr_logic.pstor_store(db.actor, rule.done, 1)
+            rule.active, rule.finished = false, true
+        end
+    end
     if rule.active then
         if rule.bound ~= server.id or not present then
             -- A spot an older version placed the volatile way is replaced by one the save keeps, once per load.
@@ -619,7 +628,7 @@ local function marker_update()
     markers.next_tick = now + markers.tick
     local missing = false
     for _, rule in ipairs(marker_rules) do
-        rule.finished = any_info(rule.stops)
+        rule.finished = any_info(rule.stops) or marker_done(rule)
         rule.active = not rule.finished and (rule.requested or any_info(rule.starts))
         local server
         if rule.story then
@@ -729,12 +738,50 @@ end
 -- save made with the pack still loads without it: the mod's own path reads the spawn ini again and the NPC is
 -- blank exactly as he was before. A save made before the pack is repaired on load, because a blank NPC has no
 -- active section to resume and the scheme is then chosen from scratch.
+-- Yura in the tunnel starts his logic over from [walker] every time he comes back online: an NPC that goes
+-- offline within a session is not "loaded", so xr_logic takes [logic] active again, and Yura walks off to the
+-- tunnel from wherever the chain had brought him. The portions the chain leaves behind say where he was; the
+-- latest stage they name is the section he resumes, activated the way the ordinary path activates one.
+local yura_resume = {
+    {"esc_qra_ia_nashel_xabar_t2", "walker7"}, {"esc_spawn_kycha_krovososov_na_qry", "walker66"},
+    {"esc_qra_posle_tainika1", "walker6"}, {"esc_qra_dostal_xabar_tainika1", "remark3"},
+    {"esc_qra_pered_tainikom1", "walker45"}, {"esc_qra2_posle_psisobak", "walker3"},
+    {"esc_tonnel_psidog1_death esc_tonnel_psidog2_death", "remark2"}, {"esc_qra2_start_v_tonnele", "remark1"}
+}
+
+local function yura_resume_section()
+    for _, entry in ipairs(yura_resume) do
+        local all = true
+        for portion in string.gmatch(entry[1], "%S+") do
+            if not has_alife_info(portion) then all = false end
+        end
+        if all then return entry[2] end
+    end
+    return nil
+end
+
+local function resume_yura(object, stype)
+    local known, section = pcall(function() return object:section() end)
+    if not known or section ~= "esc_qra2" then return false end
+    local resume = yura_resume_section()
+    if not resume then return false end
+    local ini = xr_logic.configure_schemes(object, object:spawn_ini(), "<customdata>", stype, "logic", nil)
+    if not ini or not ini:section_exist(resume) then return false end
+    xr_logic.activate_by_section(object, ini, resume, false)
+    yura_report("resume " .. resume)
+    return true
+end
+
 local function install_missing_schemes()
     local original_initialize = xr_logic.initialize_obj
     xr_logic.initialize_obj = function(object, storage, loaded, actor, stype, ...)
         local known, name = pcall(function() return object:name() end)
         local sections = known and missing_schemes[name] or nil
         if not sections then
+            if not loaded then
+                local resumed, done = pcall(resume_yura, object, stype)
+                if resumed and done then return end
+            end
             return original_initialize(object, storage, loaded, actor, stype, ...)
         end
         local ini = xr_logic.configure_schemes(object, read_only_ini(sections), "<customdata>", stype, "logic", nil)
@@ -764,18 +811,26 @@ function install()
     installed = true
     pcall(install_yura_chain)
     pcall(install_crate_stack)
-    pcall(install_nemo_spawn)
     pcall(install_psy_ceiling)
     pcall(install_lchanger_spots)
     pcall(install_map_markers)
     pcall(install_missing_schemes)
-    -- The Karabin quest re-checks its NPC from the actor's own update.
+    pcall(install_volk_release)
+    -- The settles that read the actor's portions run from the actor's own update.
     pcall(function()
         local binder = bind_stalker.actor_binder
+        local original_spawn = binder.net_spawn
+        binder.net_spawn = function(self, ...)
+            killer.done, volk.done = nil, nil
+            return original_spawn(self, ...)
+        end
         local original_update = binder.update
         binder.update = function(self, ...)
             local result = original_update(self, ...)
-            pcall(restore_nemo)
+            pcall(withdraw_nemo)
+            pcall(settle_toymaker)
+            pcall(settle_killer)
+            pcall(settle_volk)
             return result
         end
     end)

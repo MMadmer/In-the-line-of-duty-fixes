@@ -2,13 +2,17 @@
 #include "sha256.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstring>
 #include <optional>
+#include <utility>
 
 namespace ild
 {
 namespace
 {
+std::atomic<bool> lua_payload{true};
+
 constexpr std::array sources{
     ConfigRepairSource{L"gamedata/config/gameplay/dialogs.xml", 142847,
         "2B4E97EBFB80940F6AFEE2468ACF9F6267474E3114C2055069CD17CF8B0EDE5D", ConfigRepair::mechanic_dialog},
@@ -61,7 +65,15 @@ constexpr std::array sources{
     ConfigRepairSource{L"gamedata/config/scripts/kordon/kyza_logic.ltx", 2169,
         "995FA05842F170387C8891D82342417CF5166811775C6353F2DC7DF09BB73074", ConfigRepair::kuzma_timeout},
     ConfigRepairSource{L"gamedata/config/scripts/kordon_new/toneli_smerti.ltx", 1671,
-        "DC109F50E8AD24717943BBFB17F81C3B067B3DA1EE24075C7221AFC7166CA9C3", ConfigRepair::tunnel_input}
+        "DC109F50E8AD24717943BBFB17F81C3B067B3DA1EE24075C7221AFC7166CA9C3", ConfigRepair::tunnel_input},
+    ConfigRepairSource{L"gamedata/config/ui/inventory_new.xml", 8478,
+        "6AA1331D5F6AAB23A308DD09FA873FE2A05FCBC1316758D2C39D7288BA090DB8", ConfigRepair::belt_caption_normal},
+    ConfigRepairSource{L"gamedata/config/ui/inventory_new_16.xml", 8524,
+        "3A403A91D7F355C70A921D183111BFC226C269ED42584B0A5E5F9230547362F0", ConfigRepair::belt_caption_wide},
+    ConfigRepairSource{L"gamedata/config/scripts/mysorka/tp_v_dp_logic.ltx", 491,
+        "8104A6162C817062296CBDDD2807AD400DB04E464892FE774D889CE66A9A29F5", ConfigRepair::depot_device},
+    ConfigRepairSource{L"gamedata/config/text/rus/stable_dialogs_escape.xml", 333886,
+        "0E4725EB1BF43D67D3A25BCA71A8E5899E018D87C6C05B286B79FC59F9693F57", ConfigRepair::pps_caliber_text}
 };
 
 // Replace a unique expression with an equal-length one, padding the remainder with spaces.
@@ -176,6 +188,14 @@ bool swap_unique(std::string& text, std::string_view old, std::string_view next)
 // would drag the whole minimap with it, so the counter moves instead, by what was measured between the
 // number on screen and the centre of the dial in the atlas. Nothing is resized, so the file keeps its
 // exact length.
+// The belt of the inventory window is the one caption of the mod's layout left in English; the string table
+// the mod loads already carries the Russian word under ui_inv_belt, and the indentation pays for the id.
+constexpr std::string_view belt_normal_at = R"(         <text x="15" y="142" font="graffiti22" r="231" g="153" b="22">Belt</text>)";
+constexpr std::string_view belt_normal_fix = R"(  <text x="15" y="142" font="graffiti22" r="231" g="153" b="22">ui_inv_belt</text>)";
+constexpr std::string_view belt_wide_at = R"(         <text x="30" y="142" font="graffiti22" r="231" g="153" b="22">Belt</text>)";
+constexpr std::string_view belt_wide_fix = R"(  <text x="30" y="142" font="graffiti22" r="231" g="153" b="22">ui_inv_belt</text>)";
+static_assert(belt_normal_at.size() == belt_normal_fix.size());
+static_assert(belt_wide_at.size() == belt_wide_fix.size());
 constexpr std::string_view counter_wide_at = R"(<static_pda_online x="104" y="167")";
 constexpr std::string_view counter_wide_fix = R"(<static_pda_online x="105" y="153")";
 constexpr std::string_view counter_normal_at = R"(<static_pda_online x="138" y="167")";
@@ -261,6 +281,7 @@ bool add_detector_lines(std::string& text)
 bool add_detector_dialog(std::string& text)
 {
     if (text.find("ild_bronevik_detektor_gotov") != text.npos) return false;
+    if (!lua_payload.load(std::memory_order_acquire)) return true;
     const auto owner = block(text, "dialog", "bar_bronevik_pochini_detektor");
     if (!owner) return true;
     const auto size = text.size();
@@ -274,6 +295,7 @@ bool add_detector_topic(std::string& text)
     constexpr std::string_view anchor = "<actor_dialog>bar_bronevik_pochini_detektor</actor_dialog>";
     constexpr std::string_view added = "<actor_dialog>ild_bronevik_detektor_gotov</actor_dialog>\r\n\t\t";
     if (text.find("ild_bronevik_detektor_gotov") != text.npos) return false;
+    if (!lua_payload.load(std::memory_order_acquire)) return false;
     const auto at = text.find(anchor);
     if (at == text.npos || text.find(anchor, at + anchor.size()) != text.npos) return false;
     const auto size = text.size();
@@ -346,6 +368,28 @@ bool add_tikhon_share(std::string& text, bool required)
     contents.insert(at + line.size(), share);
     if (!borrow_indentation(contents, contents.size() - size) || contents.size() != size) return false;
     text.replace(owner->begin, size, contents);
+    return true;
+}
+
+// Zakorpat's PDA is asked for by Volk's talk and by Yura's on one and the same precondition, so a player who
+// hands it to Volk first leaves Yura's «тайник пуст» unreachable - it wants the item Volk now has - and the
+// stash chain with it. Each dialog is pointed at a check of the pack's own, at the file's length: Volk takes
+// the PDA only once Yura has read it, and Yura's talk opens without the item where Volk already has it.
+bool retarget_pda_checks(std::string& text)
+{
+    constexpr std::string_view shared = "<precondition>new_life.esti_kpk_zakorpata</precondition>";
+    constexpr std::array checks{
+        std::pair{"esc_volky_pro_korpata", "<precondition>ild_script_repairs.volk_pda</precondition>"},
+        std::pair{"esc_qra_tainik2_to_pyst", "<precondition>ild_script_repairs.yura_pda</precondition>"}};
+    for (const auto& [dialog, check] : checks)
+    {
+        // A source without the dialog has nothing to retarget; one already retargeted is not this file.
+        const auto owner = block(text, "dialog", dialog);
+        if (!owner) continue;
+        auto contents = text.substr(owner->begin, owner->end - owner->begin);
+        if (!replace_one(contents, shared, check)) return false;
+        text.replace(owner->begin, contents.size(), contents);
+    }
     return true;
 }
 
@@ -500,6 +544,25 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
         if (!swap_unique(patched, wide ? counter_wide_at : counter_normal_at,
             wide ? counter_wide_fix : counter_normal_fix)) return false;
     }
+    else if (repair == ConfigRepair::belt_caption_wide || repair == ConfigRepair::belt_caption_normal)
+    {
+        const auto wide = repair == ConfigRepair::belt_caption_wide;
+        if (!swap_unique(patched, wide ? belt_wide_at : belt_normal_at, wide ? belt_wide_fix : belt_normal_fix))
+            return false;
+    }
+    else if (repair == ConfigRepair::depot_device)
+    {
+        // The depot's device throws the actor 73 m into the sky and brings him back on a timer: two seconds the
+        // first time, four the second, which is longer than the fall. The second cycle takes the first's timer.
+        if (!replace_one(patched, "on_timer = 4000 | %+gar_tp_v_depo_ok2% ph_idle",
+            "on_timer = 2000 | %+gar_tp_v_depo_ok2% ph_idle")) return false;
+    }
+    else if (repair == ConfigRepair::pps_caliber_text)
+    {
+        // The Cordon mechanic says the PPS-43 is already chambered for 9x19; the gun fires 7.62x25 and nothing
+        // else. His line says so, in the mod's CP1251, blanked to the old length.
+        if (!blank_to(patched, "\xEE\xED\x20\xF3\xE6\xE5\x20\xE8\xF2\xE0\xEA\x20\xEC\xEE\xE4\xE8\xF4\xE8\xF6\xE8\xF0\xEE\xE2\xE0\xED\x20\xEF\xEE\xE4\x20\xEA\xE0\xEB\xE8\xE1\xF0\x20\x39\xF5\x31\x39", "\xEE\xED\x20\xE8\xF2\xE0\xEA\x20\xEF\xEE\xE4\x20\xF1\xE2\xEE\xE9\x20\xF0\xEE\xE4\xED\xEE\xE9\x20\xEA\xE0\xEB\xE8\xE1\xF0\x20\x37\x2E\x36\x32\xF5\x32\x35")) return false;
+    }
     else if (repair == ConfigRepair::psi_sound)
     {
         if (!replace_one(patched, "on_use = no_use", ";n_use = no_use")) return false;
@@ -601,6 +664,9 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
     else if (repair == ConfigRepair::propysk_text)
     {
         if (!rename_propysk_strings(patched)) return false;
+        // The line for handing the file to the Economist is captioned "Ножовка." - the hacksaw of the line
+        // before. Two bytes of the next declaration's indentation pay for the longer word.
+        if (!replace_one(patched, "\t\t<text>\xCD\xEE\xE6\xEE\xE2\xEA\xE0\x2E</text>\r\n\t</string>\r\n  <string id=\"val_kom_mex_instr_6\">", "\t\t<text>\xCD\xE0\xEF\xE8\xEB\xFC\xED\xE8\xEA\x2E</text>\r\n\t</string>\r\n<string id=\"val_kom_mex_instr_6\">")) return false;
     }
     else if (repair == ConfigRepair::skill_banner)
     {
@@ -657,11 +723,18 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
     else if (repair == ConfigRepair::info_root)
     {
         constexpr std::string_view closing = "</game_information_portions>";
+        // Sakharov's Monolith-suit errand grants monolit_have and monolit_done, declared in no portion file at
+        // all, so the grant is a fatal. Portions are global, and this is the one portion file the pack already
+        // rewrites with room to pay: both are declared before the closing tag, out of the file's indentation.
+        constexpr std::string_view declared = "<info_portion id=\"monolit_have\"/><info_portion id=\"monolit_done\"/>";
         if (patched.find("<game_information_portions>") == patched.npos) return false;
-        if (patched.find(closing) != patched.npos) return false;
+        if (patched.find(closing) != patched.npos || patched.find("monolit_have") != patched.npos) return false;
         const auto last = patched.find_last_not_of(" \t\r\n");
         if (last == patched.npos || patched.size() - last - 1 < closing.size() + 3) return false;
         patched.replace(last + 3, closing.size(), closing);
+        const auto size = patched.size();
+        patched.insert(last + 3, declared);
+        if (!borrow_indentation(patched, patched.size() - size) || patched.size() != size) return false;
     }
     else
     {
@@ -704,13 +777,26 @@ bool repair_config_text(std::string& text, ConfigRepair repair)
             // Retain every implemented reward and state transition; remove only absent legacy action references.
             const auto ransom_present = block(patched, "dialog", "esc_dengi_rebe").has_value();
             if (!remove_absent_action(patched, "esc_sidor_artu_dolgy_ne_dal", "new_life.sidor_nagrada_1_6", 2) ||
-                !remove_absent_action(patched, "esc_post_pianka", "new_life.give_albom", 1) ||
-                !add_ransom_check(patched) || !add_tikhon_share(patched, ransom_present)) return false;
+                !remove_absent_action(patched, "esc_post_pianka", "new_life.give_albom", 1)) return false;
+            // The share that pays for the ransom and the PDA checks name functions of the Lua payload; without
+            // it the dialog stays as the mod ships it, charge and all left out together.
+            if (lua_payload.load(std::memory_order_acquire) && (!add_ransom_check(patched) ||
+                !add_tikhon_share(patched, ransom_present) || !retarget_pda_checks(patched))) return false;
         }
     }
     if (patched.size() != text.size()) return false;
     text = std::move(patched);
     return true;
+}
+
+void set_lua_payload_present(bool present)
+{
+    lua_payload.store(present, std::memory_order_release);
+}
+
+bool lua_payload_present()
+{
+    return lua_payload.load(std::memory_order_acquire);
 }
 
 bool repair_config_buffer(std::span<std::byte> bytes)

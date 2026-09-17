@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(InTheLineOfDutyFixes VERSION 1.0.10 LANGUAGES CXX)
+project(InTheLineOfDutyFixes VERSION 1.0.11 LANGUAGES CXX)
 
 if(NOT WIN32)
     message(FATAL_ERROR "In the Line of Duty Fixes supports Windows only")
@@ -46,7 +46,7 @@ add_library(dinput8 SHARED
 )
 
 target_link_libraries(dinput8 PRIVATE ild_script_patch advapi32 shell32)
-target_compile_definitions(dinput8 PRIVATE ILD_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(dinput8 PRIVATE ILD_VERSION="${PROJECT_VERSION}" ILD_VERSION_W=L"${PROJECT_VERSION}")
 set_target_properties(dinput8 PROPERTIES PREFIX "" OUTPUT_NAME "dinput8")
 
 add_library(dinput8_console_qa SHARED EXCLUDE_FROM_ALL
@@ -62,7 +62,7 @@ add_library(dinput8_console_qa SHARED EXCLUDE_FROM_ALL
     src/dinput8_proxy.cpp src/display_mode.cpp src/console_hooks.cpp src/x86_detour.cpp src/iat_hook.cpp src/sha256.cpp
     src/dinput8_proxy.def
 )
-target_compile_definitions(dinput8_console_qa PRIVATE ILD_CONSOLE_QA=1 ILD_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(dinput8_console_qa PRIVATE ILD_CONSOLE_QA=1 ILD_VERSION="${PROJECT_VERSION}" ILD_VERSION_W=L"${PROJECT_VERSION}")
 target_link_libraries(dinput8_console_qa PRIVATE ild_script_patch advapi32 shell32 ole32)
 if(MSVC)
     target_compile_options(dinput8_console_qa PRIVATE /W4 /WX /permissive- /utf-8)
@@ -126,6 +126,8 @@ endif()
 add_test(NAME script_patch COMMAND ild_script_patch_tests)
 add_test(NAME update_ui_contract COMMAND ${CMAKE_COMMAND}
     -DSOURCE_ROOT=${CMAKE_CURRENT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/update_ui_contract.cmake)
+add_test(NAME payload_markers COMMAND ${CMAKE_COMMAND}
+    -DSOURCE_ROOT=${CMAKE_CURRENT_SOURCE_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/payload_markers.cmake)
 add_executable(ild_console_editor_tests tests/console_editor_tests.cpp)
 target_link_libraries(ild_console_editor_tests PRIVATE ild_script_patch)
 if(MSVC)

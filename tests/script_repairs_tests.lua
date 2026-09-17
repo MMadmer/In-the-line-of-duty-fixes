@@ -30,8 +30,13 @@ local function fixture()
     }
     env.alife = function()
         return {
-            create = function(_, section, position, lvid, gvid)
-                calls.created[#calls.created + 1] = {section, position, lvid, gvid}
+            -- What the simulator answers: a server object that can be found by its id from then on.
+            create = function(_, section, position, lvid, gvid, parent)
+                calls.created[#calls.created + 1] = {section, position, lvid, gvid, parent}
+                local id = 9000 + #calls.created
+                objects[id] = {id = id, section_name = function() return section end, position = position,
+                    m_level_vertex_id = lvid, m_game_vertex_id = gvid, parent = parent}
+                return objects[id]
             end,
             object = function(_, id)
                 calls.object_queries = calls.object_queries + 1
@@ -148,9 +153,11 @@ local function fixture()
         -- What four grave stashes run from their timers: the mod's own shovel removal.
         minys_lopata = function() env.sak.out_item_namber("item_lopata", 1) end,
         dt_final_rndm_tainik = function() calls.stash = (calls.stash or 0) + 1 end,
-        enable_ui = function() calls.ui_enabled = (calls.ui_enabled or 0) + 1 end
+        enable_ui = function() calls.ui_enabled = (calls.ui_enabled or 0) + 1 end,
+        disable_ui = function() calls.ui_disabled = (calls.ui_disabled or 0) + 1 end
     }
     env.task = {completed = "completed", fail = "fail", in_progress = "in_progress"}
+    env.callback = {task_state = "task_state"}
     -- The engine's own task objects. Loading an entry from the task file brings its objectives with it; the
     -- archived "user_task" skeleton has exactly one, the entry's own line, and the pack rewrites that one.
     env.SGameTaskObjective = function(job, index)
@@ -160,6 +167,7 @@ local function fixture()
         step.set_map_location = function(self, kind) self.location = kind end
         step.set_object_id = function(self, id) self.object = id end
         step.set_icon_name = function(self, name) self.icon = name end
+        step.get_idx = function(self) return self.index end
         return step
     end
     env.CGameTask = function()
@@ -173,6 +181,7 @@ local function fixture()
         job.set_title = function(self, title) self.title = title end
         job.get_objective = function(self, index) return self.objectives[index + 1] end
         job.get_objectives_cnt = function(self) return #self.objectives end
+        job.get_id = function(self) return self.id end
         job.add_objective = function(self, objective) self.objectives[#self.objectives + 1] = objective end
         return job
     end
@@ -225,6 +234,7 @@ local function fixture()
         end,
         map_has_object_spot = function(id, kind) return calls.map[id .. ':' .. kind] and 1 or 0 end,
         map_add_object_spot_ser = function(id, kind, hint) calls.map[id .. ':' .. kind] = hint end,
+        name = function() return calls.level_name or "l01_escape" end,
         main_input_receiver = function() return calls.receiver end,
         start_stop_menu = function(window, flag) calls.menu_toggles[#calls.menu_toggles + 1] = {window, flag} end
     }
@@ -279,8 +289,16 @@ local function fixture()
             calls.treasure[#calls.treasure + 1] = key
             self.treasure_info[key].done = true
             return 'granted'
+        end,
+        -- The draw: which records were in it is what matters here.
+        use = function(self, npc)
+            calls.drawn = {}
+            for key, entry in pairs(self.treasure_info) do
+                if entry.done == false then calls.drawn[key] = true end
+            end
+            return 'drawn'
         end
-    }}
+    }, take_item_from_box = function(box, story) calls.box_taken = (calls.box_taken or 0) + 1 end}
     env.action = function(object, look_action) calls.looks[#calls.looks + 1] = {object, look_action} end
     env.look = setmetatable({point = 'point'}, {__call = function(_, kind, position)
         return {kind = kind, position = position}
@@ -338,7 +356,9 @@ local function fixture()
             calls.events[#calls.events + 1] = {object = object, storage = storage, victim = victim, who = who}
         end
     }
-    env.smart_terrain = {on_death = function(id) calls.terrain = id end}
+    env.smart_terrain = {on_death = function(id) calls.terrain = id end,
+        -- The reader's answer for a server NPC: whatever its custom data carried, or nothing.
+        read_smart_terrain_conditions = function(self) return self.conditions end}
     env.hit = setmetatable({fire_wound = 5}, {
         __call = function() return {bone = function(self, name) self.bone_name = name end} end
     })
@@ -471,7 +491,15 @@ local function fixture()
                 calls.food[#calls.food + 1] = item
             end,
             set_fastcall = function(self, callback) self.fastcall = callback end,
-            position = function() return {sub = function() return "direction" end} end,
+            position = function()
+                return calls.actor_position or {x = 0, y = 0, z = 0, sub = function() return "direction" end}
+            end,
+            set_actor_position = function(self, at) calls.moved = at end,
+            set_callback = function(self, kind, handler, owner)
+                calls.callbacks = calls.callbacks or {}
+                calls.callbacks[kind] = {fn = handler, owner = owner}
+            end,
+            disable_info_portion = function(_, name) calls.infos[name] = nil end,
             give_task = function(self, job) calls.tasks[#calls.tasks + 1] = job end,
             level_vertex_id = function() return 4242 end,
             game_vertex_id = function() return 42 end,
@@ -2188,7 +2216,7 @@ end
 
 -- The Agroprom underground betrayal: nothing in the mod ever kills the three soldiers it says died.
 do
-    local env, calls, _, module, actor = fixture()
+    local env, calls, objects, module, actor = fixture()
     module.install()
     env.db.actor = actor()
     local function soldier(id, section)
@@ -2223,6 +2251,8 @@ do
         env.clock_ms = env.clock_ms + seconds * 1000
         env.bind_stalker.actor_binder.update(binder, 1)
     end
+    -- The captain is alive and well in this save, so his own talk keeps the doors.
+    objects[510] = {id = 510, section_name = function() return "agr_kapitan" end, alive = function() return true end}
     calls.infos.und_prapor_3 = true
     pass(4)
     equal(#calls.task_states, 0, "the underground task is left alone while the Prapor lives")
@@ -2266,7 +2296,11 @@ do
     local commander = scene_npc(920, "b_kom_stroi")
     env.xr_remark.set_scheme(commander, "ini", "remark", "remark2")
     local logic = env.db.storage[920].remark.logic
-    equal(logic[1].v1, 25000, "the Bar formation cannot wait on its sound for ever")
+    -- duty_zoneguard_1.ogg runs 54.05 s and dt_ss_kom_start.ogg 31.99 s, measured; a floor below either cut
+    -- the speech and opened the next dialog mid-sentence, which is what the author complained of.
+    local bar_speech, ss_speech = 54050, 31990
+    equal(logic[1].v1, 70000, "the Bar formation cannot wait on its sound for ever")
+    check(logic[1].v1 > bar_speech + 10000, "but the floor sits well past the speech itself")
     equal(logic[1].condlist.source, "%+bar_krik_konec% remark3",
         "and makes the transition the section itself would have made")
     env.xr_remark.set_scheme(commander, "ini", "remark", "remark")
@@ -2275,6 +2309,8 @@ do
     env.xr_remark.set_scheme(ss, "ini", "remark", "remark1")
     equal(env.db.storage[921].remark.logic[1].condlist.source, "%+ddt_ss_desant_na_start% walker",
         "the paratroop commander starts moving")
+    equal(env.db.storage[921].remark.logic[1].v1, 45000, "once his opening speech is over")
+    check(env.db.storage[921].remark.logic[1].v1 > ss_speech + 5000, "with room for the turn into it")
     env.xr_remark.set_scheme(ss, "ini", "remark", "remark2")
     equal(env.db.storage[921].remark.logic[1].condlist.source, "%+dt_ss_nakonecto_k_tonelq% camper55",
         "and reaches the only section in which he can be talked to at all")
@@ -2526,7 +2562,16 @@ do
     pass(4)
     equal(#calls.news, 0, "nor while the player is still working out what is happening")
     pass(21)
-    equal(#calls.news, 1, "twenty seconds in, the hint arrives")
+    equal(#calls.news, 0, "nor on another level, however long")
+    equal(calls.pstor.ild_depo_karlik_hint, nil, "and the one line is not spent there")
+    calls.level_name = "l02_garbage"
+    pass(21)
+    equal(#calls.news, 0, "nor on the Garbage far from the depot")
+    calls.actor_position = {x = -100, y = 1.5, z = 20, sub = function() return "direction" end}
+    pass(4)
+    equal(#calls.news, 0, "the delay is counted from the arrival")
+    pass(21)
+    equal(#calls.news, 1, "twenty seconds by the depot, the hint arrives")
     equal(calls.pstor.ild_depo_karlik_hint, 1, "and is remembered in the save rather than in a portion")
     pass(30)
     equal(#calls.news, 1, "exactly once")
@@ -2534,6 +2579,8 @@ do
     local again, calls2, _, module2, actor2 = fixture()
     module2.install()
     again.db.actor = actor2()
+    calls2.level_name = "l02_garbage"
+    calls2.actor_position = {x = -119, y = 1.5, z = 12, sub = function() return "direction" end}
     local binder2 = {object = again.db.actor, first_update = false}
     calls2.infos.gar_depo_napadenie_nachalosi = true
     calls2.infos.gr_depo_krus_podox = true
@@ -2589,24 +2636,30 @@ do
     equal(calls2.pstor.ild_prison_zakorpat_hint, nil, "and nothing is written")
 end
 
--- A code lock whose code was entered before comes back unlocked; one whose code was not stays a lock.
+-- A code lock whose code was entered before comes back in the section the code led to; one whose code was not
+-- stays a lock, and so does one whose code led to "nil" - the portion is that lock's record, and a lock without
+-- logic opens an empty window.
 do
     local env, calls, _, module = fixture()
     module.install()
     local switched = {}
     env.xr_logic.switch_to_section = function(npc, st, section) switched[#switched + 1] = section end
-    local function lock(name, portion)
+    local function lock(name, portion, outcome)
         return {object = {name = function() return name end}, st = {on_code = {condlist = {
-            {section = "nil", infop_check = {}, infop_set = {{name = portion, required = true}, {func = "play_snd"}}}}}}}
+            {section = outcome, infop_check = {}, infop_set = {{name = portion, required = true}, {func = "play_snd"}}}}}}}
     end
-    local opened = lock("gar_radiotainik_seif", "gar_radiotainik_seif_open_kod")
-    calls.infos.gar_radiotainik_seif_open_kod = true
-    equal(env.ph_code.codepad.update(opened, 1), nil, "a lock whose code is known is switched off before its own update")
-    equal(switched[1], "nil", "to the section the code led to")
+    local opened = lock("dak", "dak_open", "ph_idle@enable")
+    calls.infos.dak_open = true
+    equal(env.ph_code.codepad.update(opened, 1), nil, "a lock whose code is known is switched before its own update")
+    equal(switched[1], "ph_idle@enable", "to the section the code led to")
     equal(env.ph_code.codepad.update(opened, 1), "code updated", "and only once per activation")
-    local fresh = lock("esc_toneli_smertiseif_zamok", "estonsmerti_seif_open")
+    local fresh = lock("esc_seif_v_derevne", "esc_seif_v_derevne_open", "ph_idle")
     equal(env.ph_code.codepad.update(fresh, 1), "code updated", "a lock whose code was never entered is a lock")
     equal(#switched, 1, "and is not touched")
+    local ended = lock("esc_toneli_smertiseif_zamok", "estonsmerti_seif_open", "nil")
+    calls.infos.estonsmerti_seif_open = true
+    equal(env.ph_code.codepad.update(ended, 1), "code updated", "a lock whose code led to nil keeps its keypad")
+    equal(#switched, 1, "since the portion is the record and the vanilla scheme never switches it either")
 end
 
 -- Kuzma's corpse: the portion its offline timer never grants arrives two seconds after the spawn.
@@ -2626,6 +2679,35 @@ do
     equal(calls.infos.del_esc_trup_stalk, nil, "the corpse's own second is given first")
     pass(3)
     equal(calls.infos.del_esc_trup_stalk, true, "then the portion arrives on its own")
+
+    -- A save from before 1.0.9 kept Kuzma's timer with the grant of his brother's closing portion in it.
+    local timed, timed_calls, _, timed_module, timed_actor = fixture()
+    timed_module.install()
+    timed.db.actor = timed_actor()
+    local timed_binder = {object = timed.db.actor, first_update = false}
+    timed_calls.infos.esc_kyzma_2 = true
+    timed.clock_ms = timed.clock_ms + 1000
+    timed.bind_stalker.actor_binder.update(timed_binder, 1)
+    equal(timed_calls.infos.esc_kyzma_2, nil, "the closing portion without the scream is taken back")
+    timed_calls.infos.esc_kyzma_2, timed_calls.infos.esc_spawn_tryp, timed_calls.infos.del_esc_trup_stalk = true, true, true
+    timed.clock_ms = timed.clock_ms + 1000
+    timed.bind_stalker.actor_binder.update(timed_binder, 1)
+    equal(timed_calls.infos.esc_kyzma_2, true, "with the scream had, it is the dialog's own and stays")
+    -- And Kuzma's logic as such a save holds it loses the grant where it is parsed.
+    local kuzma = {name = function() return "esc_kyza" end, section = function() return "esc_kyza" end}
+    equal(timed.xr_logic.parse_condlist(kuzma, "remark4", "on_timer", "%+esc_kyzma_2% kamp").source, "kamp",
+        "the saved timer sends him home and grants nothing")
+    equal(timed.xr_logic.parse_condlist(kuzma, "remark4", "on_timer", "kamp").source, "kamp",
+        "a repaired file passes as it is")
+    local other = {name = function() return "esc_x" end, section = function() return "esc_other" end}
+    equal(timed.xr_logic.parse_condlist(other, "remark4", "on_timer", "%+esc_kyzma_2% kamp").source,
+        "%+esc_kyzma_2% kamp", "another NPC's line is left alone")
+    -- The psi case at the bridge as a save from before 1.0.3 holds it: its dead on_use points at itself.
+    local case = {name = function() return "zvyk" end, section = function() return "zvyk_psi_antenna" end}
+    equal(timed.xr_logic.parse_condlist(case, "ph_sound", "on_use", "no_use").source, "ph_sound",
+        "the psi case's use of a section that does not exist becomes a use of its own")
+    equal(timed.xr_logic.parse_condlist(other, "ph_sound", "on_use", "no_use").source, "no_use",
+        "any other sound box keeps its line")
 end
 
 -- The prison's extras are released once Makarov's later scene has spawned the Jegoj to be freed.
@@ -2671,7 +2753,7 @@ do
     equal(#calls.escape_info, 2, "neither branch reached the mod's unguarded code")
 end
 
--- Bronevik's detector job: the chip the mod never placed, and the hand-over it never wrote.
+-- Bronevik's detector job: the hand-over the mod never wrote.
 do
     local env, calls, _, module, actor = fixture()
     module.install()
@@ -2698,48 +2780,56 @@ do
     sold_module.repair_detector(nil, "bronevik")
     equal(#sold_calls.taken, 1, "only the chip is taken")
     equal(sold_calls.given[#sold_calls.given].section, "detector_elite", "and the detector is still rebuilt")
-
-    -- The scheme hook drops the chip into the third children's cache the first time that box starts.
-    local box = {section = function() return "agro_tainik_detei3" end, position = function() return "at" end,
-        level_vertex_id = function() return 7 end, game_vertex_id = function() return 8 end}
-    local cache = make_physic(820, nil, box)
-    env.ph_idle.set_scheme(cache, "ini", "ph_idle", "ph_idle")
-    equal(#calls.created, 1, "the cache is given the chip the author meant to hide there")
-    equal(calls.created[1][1], "esc_mikro_sxema_koordinatu_tp", "the chip itself")
-    equal(calls.pstor.ild_detector_chip_placed, 1, "and the save remembers it")
-    env.ph_idle.set_scheme(cache, "ini", "ph_idle", "ph_idle")
-    equal(#calls.created, 1, "a reload never stacks a second one")
-    local elsewhere = {}
-    for key, value in pairs(box) do elsewhere[key] = value end
-    elsewhere.section = function() return "agro_tainik_detei1" end
-    local other = make_physic(821, nil, elsewhere)
-    env.ph_idle.set_scheme(other, "ini", "ph_idle", "ph_idle")
-    equal(#calls.created, 1, "and no other cache is touched")
 end
 
--- The detector job as a PDA entry: hosted on the archived skeleton, its two steps written in, and the map led by
--- the pack's own spots one stage at a time.
+-- The detector job as a PDA entry: hosted on the archived skeleton, its two steps written in and keyed to the
+-- map, the chip made where the job can be finished, and the map led by the pack's own spots one stage at a time.
 do
-    local env, calls, objects, module, actor = fixture()
-    module.install()
-    env.db.actor = actor()
-    objects[900] = {section_name = function() return "agro_tainik_detei3" end}
-    objects[901] = {section_name = function() return "bar_bar_moder" end}
-    local binder = {object = env.db.actor, first_update = false}
-    local function pass(seconds)
-        env.clock_ms = env.clock_ms + seconds * 1000
-        env.bind_stalker.actor_binder.update(binder, 1)
-    end
+    local chip = "esc_mikro_sxema_koordinatu_tp"
     local title = string.char(208, 229, 236, 238, 237, 242, 32, 237, 224, 243, 247, 237, 238, 227, 238, 32, 228, 229,
+        242, 229, 234, 242, 238, 240, 224)
+    local chip_hint = string.char(204, 232, 234, 240, 238, 241, 245, 229, 236, 224, 32, 228, 235, 255, 32, 228, 229,
         242, 229, 234, 242, 238, 240, 224)
     local cache_hint = string.char(210, 224, 233, 237, 232, 234, 58, 32, 236, 232, 234, 240, 238, 241, 245, 229, 236,
         224, 32, 228, 235, 255, 32, 228, 229, 242, 229, 234, 242, 238, 240, 224)
     local owner_hint = string.char(193, 240, 238, 237, 229, 226, 232, 234, 32, 230, 228, 184, 242, 32, 236, 232, 234,
         240, 238, 241, 245, 229, 236, 243)
+    local function bronevik() return {id = 901, section_name = function() return "bar_bar_moder" end} end
+    local function cache()
+        return {id = 900, section_name = function() return "agro_tainik_detei3" end,
+            position = {x = 36.56, y = 3.86, z = -123.4}, m_level_vertex_id = 274164, m_game_vertex_id = 451}
+    end
+    local function closed_in(calls, id, objective)
+        for _, state in ipairs(calls.task_states) do
+            if state.id == id and state.objective == objective then return state.state end
+        end
+    end
+
+    -- A fresh save: the diary on the tower unread, so the cache cannot exist, and the chip is made at once.
+    local env, calls, objects, module, actor = fixture()
+    module.install()
+    env.db.actor = actor()
+    objects[901] = bronevik()
+    -- The binder is an instance of the mod's class, which is how its methods are found when it re-registers.
+    local binder = setmetatable({object = env.db.actor, first_update = false}, {__index = env.bind_stalker.actor_binder})
+    local function pass(seconds)
+        env.clock_ms = env.clock_ms + seconds * 1000
+        env.bind_stalker.actor_binder.update(binder, 1)
+    end
     pass(4)
     equal(#calls.tasks, 0, "no entry before Bronevik has asked for the chip")
+    equal(#calls.created, 0, "and no chip")
     calls.infos.bar_bronevik_pochini_detektor = true
-    pass(4)
+    pass(1)
+    equal(#calls.created, 1, "the chip is made the moment the job is given")
+    equal(calls.created[1][1], chip, "the chip itself")
+    equal(calls.created[1][2].x, 36.56, "at the spot the author's script puts the cache on")
+    equal(calls.created[1][3], 274164, "on its level vertex")
+    equal(calls.created[1][4], 451, "and its game vertex")
+    equal(calls.created[1][5], nil, "loose, since there is no box to go into")
+    equal(calls.pstor.ild_detector_chip, 9001, "its id is remembered")
+    equal(calls.pstor.ild_detector_target, 9001, "and it carries the spot")
+    equal(calls.pstor.ild_detector_chip_placed, 1, "with the flag the older versions used")
     equal(#calls.tasks, 1, "the entry a save that already paid never got")
     local job = calls.tasks[1]
     -- The archived skeleton is there with or without the pack, so the save never needs the pack to load.
@@ -2753,87 +2843,372 @@ do
         245, 229, 236, 243, 32, 69, 86, 65, 45, 49, 52, 48, 48), "find the chip")
     equal(job.objectives[3].description, string.char(206, 242, 237, 229, 241, 242, 232, 32, 236, 232, 234, 240,
         238, 241, 245, 229, 236, 243, 32, 193, 240, 238, 237, 229, 226, 232, 234, 243), "then take it back")
-    equal(job.objectives[2].location, nil, "the steps carry no spot of the engine's")
-    equal(calls.map["900:green_location"], cache_hint, "the cache carries the pack's own serialised spot")
-    equal(calls.map["901:green_location"], nil, "and Bronevik does not yet")
+    equal(job.objectives[2].location, "green_location", "the first step is keyed to the map")
+    equal(job.objectives[2].object, 9001, "to the chip")
+    equal(job.objectives[2].hint, chip_hint, "under the chip's own caption")
+    equal(job.objectives[3].location, nil, "the second is not keyed yet, or Bronevik's spot would be up already")
+    equal(calls.map["9001:green_location"], chip_hint, "the pack's own serialised spot is on the chip")
+    equal(calls.map["901:green_location"], nil, "and not on Bronevik")
     equal(calls.pstor.ild_detector_task, 1, "the stage is remembered")
     equal(calls.pstor.ild_detector_host, 1, "and so is the entry the save holds")
     pass(4)
     equal(#calls.tasks, 1, "the entry is given once")
-    calls.map["900:green_location"] = nil
-    pass(4)
-    equal(calls.map["900:green_location"], cache_hint, "a spot a pass finds missing is put back")
-
-    -- A save where neither target is spawned yet still gets the entry; the spot follows the object.
-    local bare, bare_calls, bare_objects, bare_module, bare_actor = fixture()
-    bare_module.install()
-    bare.db.actor = bare_actor()
-    bare_calls.infos.bar_bronevik_pochini_detektor = true
-    local bare_binder = {object = bare.db.actor, first_update = false}
-    local function bare_pass(seconds)
-        bare.clock_ms = bare.clock_ms + seconds * 1000
-        bare.bind_stalker.actor_binder.update(bare_binder, 1)
-    end
-    bare_pass(4)
-    equal(#bare_calls.tasks, 1, "the entry appears whether or not the targets are there")
-    equal(next(bare_calls.map), nil, "with no spot to place yet")
-    -- The sweep goes on a slice at a time; an object that appears ahead of it is found on the next update.
-    bare_objects[3000] = {section_name = function() return "agro_tainik_detei3" end}
-    bare_pass(4)
-    equal(bare_calls.map["3000:green_location"], cache_hint, "the spot follows the moment the cache exists")
-
-    local function closed(id, objective)
-        for _, state in ipairs(calls.task_states) do
-            if state.id == id and state.objective == objective then return state.state end
-        end
-    end
-    env.db.actor.items["esc_mikro_sxema_koordinatu_tp"] = {}
-    pass(4)
-    equal(closed("user_task", 1), "completed", "the first step closes on the chip")
+    equal(#calls.created, 1, "and the chip once")
+    calls.map["9001:green_location"] = nil
+    pass(1)
+    equal(calls.map["9001:green_location"], chip_hint, "a spot a tick finds missing is put back")
+    -- Bronevik was found by the first slice of the sweep; from then on a tick costs a few lookups, not a pass.
+    local queries = calls.object_queries
+    pass(1)
+    check(calls.object_queries - queries <= 4, "a settled tick is cheap: " .. (calls.object_queries - queries))
+    -- A reload: the callback is registered again, since reinit registered the mod's before install ran, and
+    -- what the save holds is read back rather than made again.
+    env.bind_stalker.actor_binder.net_spawn(binder, true)
+    equal(calls.callbacks.task_state.fn, env.bind_stalker.actor_binder.task_callback, "the task callback is ours")
+    equal(calls.callbacks.task_state.owner, binder, "on the binder")
+    pass(1)
+    equal(#calls.created, 1, "a reload never makes a second chip")
+    equal(calls.map["9001:green_location"], chip_hint, "and the spot stays where it was")
+    -- The chip picked up.
+    env.db.actor.items[chip] = {}
+    pass(1)
+    equal(closed_in(calls, "user_task", 1), "completed", "the first step closes on the chip")
     equal(calls.pstor.ild_detector_task, 2, "and the stage moves on")
-    equal(calls.map["900:green_location"], nil, "the cache spot comes down")
+    equal(calls.map["9001:green_location"], nil, "the chip's spot comes down")
     equal(calls.map["901:green_location"], owner_hint, "and Bronevik carries the spot now")
-
+    -- The engine's own callback on that completion, where its task object reaches Lua: step 2 is keyed to him.
+    env.bind_stalker.actor_binder.task_callback(binder, job, job.objectives[2], "completed")
+    equal(job.objectives[3].location, "green_location", "the second step is keyed to the map")
+    equal(job.objectives[3].object, 901, "to Bronevik")
+    equal(job.objectives[3].hint, owner_hint, "under his caption")
+    env.bind_stalker.actor_binder.task_callback(binder, job, job.objectives[3], "completed")
+    equal(job.objectives[3].object, 901, "a later callback changes nothing")
+    -- A chip put down somewhere on the way back is marked again, and the mark goes when it is picked up.
+    env.db.actor.items[chip] = nil
+    pass(1)
+    equal(calls.map["9001:green_location"], chip_hint, "a chip put down carries its spot again")
+    equal(calls.map["901:green_location"], owner_hint, "beside Bronevik's")
+    env.db.actor.items[chip] = {}
+    pass(1)
+    equal(calls.map["9001:green_location"], nil, "picked up, it goes")
     module.repair_detector(nil, "bronevik")
-    equal(closed("user_task", 2), "completed", "the second closes on the hand-over")
-    equal(closed("user_task", 0), "completed", "and so does the entry itself")
+    equal(closed_in(calls, "user_task", 2), "completed", "the second closes on the hand-over")
+    equal(closed_in(calls, "user_task", 0), "completed", "and so does the entry itself")
     equal(calls.pstor.ild_detector_task, 3, "the job is done")
-    pass(4)
+    pass(1)
     equal(calls.map["901:green_location"], nil, "and the last spot comes down with it")
     local removals = #calls.spots
     pass(4)
     equal(#calls.spots, removals, "nothing is touched once the job is settled")
+    local settled = calls.object_queries
+    pass(4)
+    equal(calls.object_queries, settled, "and the simulation is not asked again")
 
-    -- A save that received the entry from 1.0.6-1.0.9 keeps the id those versions gave it, and the spot one of
-    -- them hung on the step is replaced by the pack's own, carrying this hint.
+    -- The diary used and the cache there: the chip goes into the cache, and the cache carries the spot.
+    local dia, dia_calls, dia_objects, dia_module, dia_actor = fixture()
+    dia_module.install()
+    dia.db.actor = dia_actor()
+    dia_objects[900], dia_objects[901] = cache(), bronevik()
+    dia_calls.infos.bar_bronevik_pochini_detektor = true
+    dia_calls.infos.agro_infa_na_vushke = true
+    local dia_binder = {object = dia.db.actor, first_update = false}
+    local function dia_pass(seconds)
+        dia.clock_ms = dia.clock_ms + seconds * 1000
+        dia.bind_stalker.actor_binder.update(dia_binder, 1)
+    end
+    dia_pass(1)
+    equal(#dia_calls.tasks, 0, "with the diary used, the cache is looked for first")
+    equal(#dia_calls.created, 0, "and nothing is made until it is found")
+    dia_pass(1)
+    equal(#dia_calls.created, 1, "the chip goes into the cache")
+    equal(dia_calls.created[1][5], 900, "as its child")
+    equal(dia_calls.created[1][2], dia_objects[900].position, "at its place")
+    equal(dia_calls.created[1][3], 274164, "on its vertices")
+    equal(#dia_calls.tasks, 1, "and the entry follows")
+    equal(dia_calls.tasks[1].objectives[2].object, 900, "keyed to the cache")
+    equal(dia_calls.tasks[1].objectives[2].hint, cache_hint, "under the cache's caption")
+    equal(dia_calls.map["900:green_location"], cache_hint, "the cache carries the spot")
+    equal(dia_calls.map["9001:green_location"], nil, "the chip inside it does not")
+    equal(dia_calls.pstor.ild_detector_target, 900, "the carrier is remembered")
+    equal(dia_calls.pstor.ild_detector_chip, 9001, "and so is the chip")
+
+    -- The diary used but no cache anywhere: one full pass, then the chip is made at the cache's spot.
+    local nobox, nobox_calls, nobox_objects, nobox_module, nobox_actor = fixture()
+    nobox_module.install()
+    nobox.db.actor = nobox_actor()
+    nobox_objects[901] = bronevik()
+    nobox_calls.infos.bar_bronevik_pochini_detektor = true
+    nobox_calls.infos.agro_infa_na_vushke = true
+    local nobox_binder = {object = nobox.db.actor, first_update = false}
+    local function nobox_pass(seconds)
+        nobox.clock_ms = nobox.clock_ms + seconds * 1000
+        nobox.bind_stalker.actor_binder.update(nobox_binder, 1)
+    end
+    for _ = 1, 15 do nobox_pass(1) end
+    equal(#nobox_calls.created, 0, "a full pass is given to find the cache")
+    nobox_pass(1)
+    nobox_pass(1)
+    equal(#nobox_calls.created, 1, "and once it is not there, the chip is made at its spot")
+    equal(nobox_calls.created[1][5], nil, "loose")
+    equal(#nobox_calls.tasks, 1, "with the entry keyed to it")
+    equal(nobox_calls.tasks[1].objectives[2].object, 9001, "the chip")
+
+    -- A 1.0.10 save at stage 1: the entry is there, no chip was ever placed, its step is not keyed and cannot be.
     local old, old_calls, old_objects, old_module, old_actor = fixture()
     old_module.install()
     old.db.actor = old_actor()
-    old_objects[900] = {section_name = function() return "agro_tainik_detei3" end}
-    old_objects[901] = {section_name = function() return "bar_bar_moder" end}
+    old_objects[901] = bronevik()
     old_calls.infos.bar_bronevik_pochini_detektor = true
-    old_calls.pstor.ild_detector_task = 1
-    old_calls.map["900:green_location"] = "ild_detector_cache_hint"
+    old_calls.pstor.ild_detector_task, old_calls.pstor.ild_detector_host = 1, 1
     local old_binder = {object = old.db.actor, first_update = false}
     local function old_pass(seconds)
         old.clock_ms = old.clock_ms + seconds * 1000
         old.bind_stalker.actor_binder.update(old_binder, 1)
     end
-    old_pass(4)
+    old_pass(1)
     equal(#old_calls.tasks, 0, "an entry the save already holds is not given again")
-    equal(old_calls.pstor.ild_detector_host, nil, "and its id stays the one those versions used")
-    equal(old_calls.map["900:green_location"], cache_hint, "the old spot is replaced by one with this hint")
-    local function old_closed(objective)
-        for _, state in ipairs(old_calls.task_states) do
-            if state.id == "ild_detector_task" and state.objective == objective then return state.state end
-        end
+    equal(#old_calls.created, 1, "the chip the save never got is made")
+    equal(old_calls.map["9001:green_location"], chip_hint, "and carries the pack's spot, keyed step or not")
+    old.db.actor.items[chip] = {}
+    old_pass(1)
+    equal(closed_in(old_calls, "user_task", 1), "completed", "its first step closes under the id it holds")
+    local skeleton = {get_id = function() return "user_task" end, get_objectives_cnt = function() return 1 end,
+        get_objective = function() error("must not be asked for a step it lacks") end}
+    old.bind_stalker.actor_binder.task_callback(old_binder, skeleton, {get_idx = function() return 1 end}, "completed")
+    check(true, "an entry without a third objective is left alone by the callback")
+
+    -- A save that received the entry from 1.0.6-1.0.9 keeps the id those versions gave it, and the spot one of
+    -- them hung on the cache is replaced by the pack's own, carrying this hint.
+    local six, six_calls, six_objects, six_module, six_actor = fixture()
+    six_module.install()
+    six.db.actor = six_actor()
+    six_objects[900], six_objects[901] = cache(), bronevik()
+    six_calls.infos.bar_bronevik_pochini_detektor = true
+    six_calls.infos.agro_infa_na_vushke = true
+    six_calls.pstor.ild_detector_task = 1
+    six_calls.map["900:green_location"] = "ild_detector_cache_hint"
+    local six_binder = {object = six.db.actor, first_update = false}
+    local function six_pass(seconds)
+        six.clock_ms = six.clock_ms + seconds * 1000
+        six.bind_stalker.actor_binder.update(six_binder, 1)
     end
-    old.db.actor.items["esc_mikro_sxema_koordinatu_tp"] = {}
-    old_pass(4)
-    equal(old_closed(1), "completed", "its first step closes under that id")
-    old_module.repair_detector(nil, "bronevik")
-    equal(old_closed(2), "completed", "and so does the second")
-    equal(old_closed(0), "completed", "with the entry itself")
+    six_pass(1)
+    six_pass(1)
+    equal(#six_calls.tasks, 0, "an entry the save already holds is not given again")
+    equal(six_calls.pstor.ild_detector_host, nil, "and its id stays the one those versions used")
+    equal(six_calls.created[1][5], 900, "the chip goes into the cache that is there")
+    equal(six_calls.map["900:green_location"], cache_hint, "the old spot is replaced by one with this hint")
+    six.db.actor.items[chip] = {}
+    six_pass(1)
+    equal(closed_in(six_calls, "ild_detector_task", 1), "completed", "its first step closes under that id")
+    six_module.repair_detector(nil, "bronevik")
+    equal(closed_in(six_calls, "ild_detector_task", 2), "completed", "and so does the second")
+    equal(closed_in(six_calls, "ild_detector_task", 0), "completed", "with the entry itself")
+
+    -- 1.0.5 recorded the hand-over under a flag of its own, before the entry existed: nothing to give.
+    local five, five_calls, _, five_module, five_actor = fixture()
+    five_module.install()
+    five.db.actor = five_actor()
+    five_calls.infos.bar_bronevik_pochini_detektor = true
+    five_calls.pstor.ild_detector_done = 1
+    local five_binder = {object = five.db.actor, first_update = false}
+    five.clock_ms = five.clock_ms + 1000
+    five.bind_stalker.actor_binder.update(five_binder, 1)
+    equal(#five_calls.tasks, 0, "a job finished in 1.0.5 gets no entry")
+    equal(#five_calls.created, 0, "and no chip")
+    equal(five_calls.pstor.ild_detector_task, 3, "it is recorded as finished")
+
+    -- The first error of a session in a settle is the one trace it leaves; the tick goes on.
+    local err, err_calls, err_objects, err_module, err_actor = fixture()
+    err_module.install()
+    err.db.actor = err_actor()
+    err_objects[901] = bronevik()
+    err_calls.infos.bar_bronevik_pochini_detektor = true
+    err.level_tasks.set_task_state = function() error("no task manager here") end
+    local err_binder = {object = err.db.actor, first_update = false}
+    local function err_pass(seconds)
+        err.clock_ms = err.clock_ms + seconds * 1000
+        err.bind_stalker.actor_binder.update(err_binder, 1)
+    end
+    err_pass(1)
+    err.db.actor.items[chip] = {}
+    err_pass(1)
+    err_pass(1)
+    local reported = 0
+    for _, line in ipairs(err_calls.console or {}) do
+        if string.find(line, "ild_update watchdog detector error", 1, true) then reported = reported + 1 end
+    end
+    equal(reported, 1, "the error is reported once")
+    equal(err_calls.pstor.ild_detector_task, 1, "and the stage is not moved past it")
+end
+
+-- Reba's first spy: his death locks the input and only the box at his spot gives it back, from within 135 m.
+do
+    local env, calls, _, module, actor = fixture()
+    module.install()
+    env.db.actor = actor()
+    local binder = {object = env.db.actor, first_update = false}
+    local function pass(seconds)
+        env.clock_ms = env.clock_ms + seconds * 1000
+        env.bind_stalker.actor_binder.update(binder, 1)
+    end
+    local spy = {section = function() return "esc_absolqtno_drygoi_mamkin_shpion" end}
+    local other = {section = function() return "esc_soldat_start" end}
+    env.xr_effects.disable_ui(env.db.actor, other)
+    equal(calls.ui_disabled, 1, "any other disable_ui runs as the mod wrote it")
+    pass(10)
+    pass(70)
+    equal(calls.moved, nil, "and starts no watch")
+    equal(calls.ui_enabled, nil, "nor a failsafe")
+    env.xr_effects.disable_ui(env.db.actor, spy)
+    equal(calls.ui_disabled, 2, "the spy's death still takes the input away")
+    calls.infos.esc_shpion0_ymer_spawni_blok = true
+    pass(4)
+    equal(calls.moved, nil, "the scene is given its own time")
+    pass(5)
+    check(calls.moved and calls.moved.x == 138 and calls.moved.z == 338.8,
+        "an actor out of the box's reach is put in the room beside it, where the scene takes him anyway")
+    pass(30)
+    equal(calls.ui_enabled, nil, "and the author's chain is given a minute")
+    pass(35)
+    equal(calls.ui_enabled, 1, "after which the input comes back regardless")
+    pass(70)
+    equal(calls.ui_enabled, 1, "once")
+    -- The chain that ran: nothing is done.
+    env.xr_effects.disable_ui(env.db.actor, spy)
+    calls.infos.esc_delet_mamkinogo_shpiona0 = true
+    calls.moved = nil
+    pass(10)
+    pass(70)
+    equal(calls.moved, nil, "a chain that gave the input back is left alone")
+    equal(calls.ui_enabled, 1, "and nothing is forced")
+    -- An actor within reach of the box: not moved, the box is online and its logic runs.
+    calls.infos.esc_delet_mamkinogo_shpiona0 = nil
+    calls.actor_position = {x = 136, y = -0.89, z = 300, sub = function() return "direction" end}
+    env.xr_effects.disable_ui(env.db.actor, spy)
+    pass(10)
+    equal(calls.moved, nil, "an actor beside the box is not moved")
+end
+
+-- The captain of the Agroprom base: his talk after the underground is the only source of the doors' portion.
+do
+    local env, calls, objects, module, actor = fixture()
+    module.install()
+    env.db.actor = actor()
+    local binder = {object = env.db.actor, first_update = false}
+    local function pass(seconds)
+        env.clock_ms = env.clock_ms + seconds * 1000
+        env.bind_stalker.actor_binder.update(binder, 1)
+    end
+    objects[500] = {id = 500, section_name = function() return "agr_kapitan" end, alive = function() return true end}
+    pass(4)
+    equal(calls.infos.agro_door_open, nil, "nothing before the underground is done")
+    calls.infos.und_prapor_3 = true
+    pass(4)
+    equal(calls.infos.agro_door_open, nil, "a living captain keeps his talk")
+    objects[500].alive = function() return false end
+    pass(4)
+    equal(calls.infos.agro_door_open, true, "a dead one has the doors opened for him")
+    local gone, gone_calls, _, gone_module, gone_actor = fixture()
+    gone_module.install()
+    gone.db.actor = gone_actor()
+    gone_calls.infos.und_prapor_3 = true
+    local gone_binder = {object = gone.db.actor, first_update = false}
+    gone.clock_ms = gone.clock_ms + 4000
+    gone.bind_stalker.actor_binder.update(gone_binder, 1)
+    equal(gone_calls.infos.agro_door_open, true, "and so has a captain who is gone from the simulation")
+    local open, open_calls, _, open_module, open_actor = fixture()
+    open_module.install()
+    open.db.actor = open_actor()
+    open_calls.infos.und_prapor_3, open_calls.infos.agro_door_open = true, true
+    local open_binder = {object = open.db.actor, first_update = false}
+    open.clock_ms = open.clock_ms + 4000
+    open.bind_stalker.actor_binder.update(open_binder, 1)
+    equal(open_calls.object_queries, 0, "doors already open ask nothing of the simulation")
+end
+
+-- The seven removals of the Cordon guards match names by substring; they match sections now.
+do
+    local env, calls, objects, module = fixture()
+    module.install()
+    objects[50] = {id = 50, section_name = function() return "norm" end}
+    objects[51] = {id = 51, section_name = function() return "norm3" end}
+    objects[52] = {id = 52, section_name = function() return "mil_m_bloodsucker_normal_0000" end}
+    env.delete.del_esc_kor_norm1()
+    equal(#calls.released, 2, "the first removal takes the guard family, the way its substring did")
+    equal(objects[52] ~= nil, true, "and nothing else with those letters in it")
+    objects[53] = {id = 53, section_name = function() return "norm2" end}
+    objects[54] = {id = 54, section_name = function() return "norm20" end}
+    env.delete.del_esc_kor_norm2()
+    equal(#calls.released, 3, "a numbered removal takes its own guard only")
+    equal(objects[54] ~= nil, true, "not a section that merely starts with its name")
+end
+
+-- The psi case at the bridge plays its voices for the rest of the game; once Tolik is taken away it is silent.
+do
+    local env, calls, _, module = fixture()
+    module.install()
+    local stopped = 0
+    local case = {st = {theme = "moa_psi_antena", sound_set = true},
+        played_sound = {stop = function() stopped = stopped + 1 end}}
+    equal(env.ph_sound.snd_source.update(case, 1), "updated", "the case plays while Tolik is there")
+    calls.infos.esc_tola0_delet_i_1_spawn = true
+    equal(env.ph_sound.snd_source.update(case, 1), nil, "once he is taken away its update does nothing")
+    equal(stopped, 1, "the voice that was playing is stopped")
+    equal(case.played_sound, nil, "and dropped")
+    equal(case.st.sound_set, false, "with nothing queued to start")
+    local radio = {st = {theme = "melnica_radio"}, played_sound = {stop = function() stopped = stopped + 1 end}}
+    equal(env.ph_sound.snd_source.update(radio, 1), "updated", "every other sound box is untouched")
+end
+
+-- Eighty-two scripted NPCs whose custom data opens with a byte-order mark: the reader never sees their
+-- "none = true", so the answer the file meant is given for exactly those sections.
+do
+    local env, _, _, module = fixture()
+    module.install()
+    local ded = {section_name = function() return "mil_ded_kontra" end}
+    local conditions = env.smart_terrain.read_smart_terrain_conditions(ded)
+    check(conditions and conditions.none and conditions.none.source == "true", "a marked NPC is kept out of every camp")
+    equal(conditions.none.section, "smart_terrains", "through the section the file meant")
+    local hired = {section_name = function() return "esc_x" end}
+    equal(env.smart_terrain.read_smart_terrain_conditions(hired), nil, "an NPC outside the list keeps the reader's answer")
+    local own = {section_name = function() return "mil_ded_kontra" end, conditions = {none = "own"}}
+    equal(env.smart_terrain.read_smart_terrain_conditions(own).none, "own", "an answer the reader found is kept")
+end
+
+-- The Seeker's Cordon stash names a story object the author removed; the box it was written for is still there.
+do
+    local env, calls, objects, module = fixture()
+    module.install()
+    local manager = env.treasure_manager.manager
+    manager.treasure_info.esc_secret_stalker_things = {target = 5008, done = false, active = false, name = "n",
+        description = "d", items = {{section = "modern_material1", prob = 1}, {section = "wpn_knife_6x2", prob = 1}}}
+    manager.treasure_info.esc_secret_box_bridge = {target = 5009, done = false, active = false, items = {}}
+    manager.treasure_info.esc_live = {target = 5000, done = false, active = false, items = {}}
+    calls.story = {[5000] = {id = 5000}}
+    objects[78] = {id = 78, name = function() return "level_prefix_inventory_box_0012" end,
+        position = {x = 200, y = 0, z = 0}, m_level_vertex_id = 5, m_game_vertex_id = 30}
+    objects[77] = {id = 77, name = function() return "level_prefix_inventory_box_0012" end,
+        position = {x = 5.4, y = 15.6, z = 93}, m_level_vertex_id = 11, m_game_vertex_id = 2}
+    env.treasure_manager.CTreasure.give_treasure(manager, "esc_secret_stalker_things")
+    equal(#calls.created, 2, "the stash's two items go into the box")
+    equal(calls.created[1][5], 77, "the Cordon box, not its namesake on another level")
+    equal(calls.created[1][3], 11, "at its vertices")
+    equal(calls.map["77:treasure"] ~= nil, true, "with the treasure spot")
+    equal(manager.treasure_info.esc_secret_stalker_things.done, true, "and the record is done")
+    equal(#calls.treasure, 0, "without the manager's own body, which has no box to work on")
+    env.treasure_manager.CTreasure.give_treasure(manager, "esc_secret_stalker_things")
+    equal(#calls.created, 2, "never twice")
+    env.treasure_manager.CTreasure.use(manager, {})
+    equal(calls.drawn.esc_live, true, "a record with a box is in the draw")
+    equal(calls.drawn.esc_secret_box_bridge, nil, "one without a box is not")
+    equal(manager.treasure_info.esc_secret_box_bridge.done, false, "and its flag is put back at once")
+    local box = {id = function() return 77 end, name = function() return "level_prefix_inventory_box_0012" end,
+        is_inv_box_empty = function() return true end}
+    env.treasure_manager.take_item_from_box(box, -1)
+    equal(calls.map["77:treasure"], nil, "the spot comes down with the last item")
+    equal(manager.treasure_info.esc_secret_stalker_things.active, false, "and the record is no longer active")
+    equal(calls.box_taken, 1, "the mod's own call still runs")
 end
 
 print("script_repairs_tests: " .. tests .. " checks passed")

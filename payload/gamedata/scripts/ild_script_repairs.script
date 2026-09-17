@@ -280,22 +280,13 @@ local function unseal_online_box(story_id)
 end
 
 local function install_stash_repairs()
-    -- The author's own plan for the chip was one of the children's caches on Agroprom. It goes into the third,
-    -- the one that already holds rifle parts and lockpicks, the first time that box starts its scheme, and the
-    -- actor's pstor remembers that it has so a reload cannot stack a second one.
-    local function place_detector_chip(npc)
-        local known, section = pcall(function() return npc:section() end)
-        if not known or section ~= "agro_tainik_detei3" or not db.actor then return end
-        local stored, placed = pcall(xr_logic.pstor_retrieve, db.actor, "ild_detector_chip_placed", 0)
-        if not stored or (placed or 0) ~= 0 then return end
-        xr_logic.pstor_store(db.actor, "ild_detector_chip_placed", 1)
-        alife():create("esc_mikro_sxema_koordinatu_tp", npc:position(), npc:level_vertex_id(),
-            npc:game_vertex_id(), npc:id())
-    end
     -- A code lock grants a portion and switches itself off when the right code is entered, and that switch is
     -- the only record of it: a box that goes offline with the level comes back locked, code and all. The portion
     -- survives, so on the lock's first update the outcome its own condlist describes is replayed - to the same
-    -- section the code led to - whenever every portion that outcome grants is already held.
+    -- section the code led to - whenever every portion that outcome grants is already held. An outcome of "nil"
+    -- is not replayed: the vanilla scheme never switches a lock there within a session, and a lock left without
+    -- logic is a bare box that opens on an empty window - the death-tunnel keypad, the radio stash, the X18 and
+    -- the Last Day safes all end in "nil", and for every one of them the portion itself is the record.
     local original_code_update = ph_code.codepad.update
     ph_code.codepad.update = function(self, delta)
         local st = self.st
@@ -309,7 +300,7 @@ local function install_stash_repairs()
                         if not has_alife_info(info.name) then held = false end
                     end
                 end
-                if grants > 0 and held and entry.section and entry.section ~= "" then
+                if grants > 0 and held and entry.section and entry.section ~= "" and entry.section ~= "nil" then
                     xr_logic.switch_to_section(self.object, st, entry.section)
                     return
                 end
@@ -320,7 +311,6 @@ local function install_stash_repairs()
     local original_scheme = ph_idle.set_scheme
     ph_idle.set_scheme = function(npc, ini, scheme, section, gulag_name)
         local result = original_scheme(npc, ini, scheme, section, gulag_name)
-        pcall(place_detector_chip, npc)
         if logic_config(npc) == sealed_box_config then
             local server = alife():object(npc:id())
             local storage = db.storage[npc:id()]
@@ -347,14 +337,103 @@ local function install_world_repairs()
         alife():create("svet_kostra", position, level.vertex_id(position), actor:game_vertex_id())
     end
 
+    -- The Seeker's Cordon stash «Товар сталкера» (esc_secret_stalker_things) names story object 5008, which the
+    -- author dropped from the spawn together with four trader stashes, so the record sits in the draw for good
+    -- with a weight of two and every time it is drawn the player gets nothing. The box it was written for is
+    -- still there, only without its story id - level_prefix_inventory_box_0012 on the Cordon, at
+    -- (5.37, 15.61, 93.02); the name is shared by boxes on other levels, so the position decides. The grant is
+    -- honoured on that box by the manager's own body, and its spot comes down when the box is emptied, which
+    -- treasure_empty cannot do for a box that has no story id. The four records that have no box at all are kept
+    -- out of the draw while it is made and put back at once: the done flag is saved with the game, and a flag
+    -- written for good would be a change to the file's own rules.
+    local stash_alias = {key = "esc_secret_stalker_things", name = "level_prefix_inventory_box_0012",
+        x = 5.37, y = 15.61, z = 93.02, reach = 2}
+    local function alias_box(simulator)
+        if stash_alias.id then
+            local server = simulator:object(stash_alias.id)
+            local known, name = pcall(function() return server and server:name() end)
+            if known and name == stash_alias.name then return server end
+            stash_alias.id = nil
+        end
+        for id = 1, 65534 do
+            local server = simulator:object(id)
+            if server then
+                local known, hit = pcall(function()
+                    if server:name() ~= stash_alias.name then return false end
+                    local at = server.position
+                    local dx, dy, dz = at.x - stash_alias.x, at.y - stash_alias.y, at.z - stash_alias.z
+                    return dx * dx + dy * dy + dz * dz <= stash_alias.reach * stash_alias.reach
+                end)
+                if known and hit then
+                    stash_alias.id = id
+                    return server
+                end
+            end
+        end
+        return nil
+    end
+    local function give_alias(entry)
+        local simulator = alife()
+        local box = simulator and alias_box(simulator)
+        if not box then return end
+        pcall(function() news_manager.send_treasure(entry.name) end)
+        local text = "%c[255,238,155,23]" .. game.translate_string(entry.name) .. "\\n" .. "%c[default]" ..
+            game.translate_string(entry.description)
+        level.map_add_object_spot_ser(box.id, "treasure", text)
+        for _, item in ipairs(entry.items or {}) do
+            if ammo_section and ammo_section[item.section] == true then
+                se_respawn.create_ammo(item.section, box.position, box.m_level_vertex_id, box.m_game_vertex_id,
+                    box.id, item.prob)
+            else
+                for _ = 1, item.prob do
+                    simulator:create(item.section, box.position, box.m_level_vertex_id, box.m_game_vertex_id, box.id)
+                end
+            end
+        end
+        entry.active, entry.done = true, true
+    end
+
     -- Direct dialog grants bypass CTreasure:use, whose done flag is the only guard against a second spawn.
     local original_give = treasure_manager.CTreasure.give_treasure
     treasure_manager.CTreasure.give_treasure = function(self, key)
         local entry = self.treasure_info[key]
         if not entry or entry.done then return end
+        if key == stash_alias.key then return give_alias(entry) end
         local result = original_give(self, key)
         if entry.done then unseal_online_box(entry.target) end
         return result
+    end
+    local original_use = treasure_manager.CTreasure.use
+    if type(original_use) == "function" then
+        treasure_manager.CTreasure.use = function(self, npc, ...)
+            local simulator, hidden = alife(), {}
+            for key, entry in pairs(self.treasure_info) do
+                if entry.done == false and key ~= stash_alias.key and simulator and
+                    not simulator:story_object(entry.target) then
+                    entry.done = true
+                    hidden[#hidden + 1] = entry
+                end
+            end
+            local results = {pcall(original_use, self, npc, ...)}
+            for _, entry in ipairs(hidden) do entry.done = false end
+            if not results[1] then error(results[2], 0) end
+            return unpack(results, 2)
+        end
+    end
+    local original_take = treasure_manager.take_item_from_box
+    if type(original_take) == "function" then
+        treasure_manager.take_item_from_box = function(box, story_id, ...)
+            local known, emptied = pcall(function()
+                return box:name() == stash_alias.name and level.name() == "l01_escape" and
+                    box:is_inv_box_empty() == true
+            end)
+            if known and emptied then
+                level.map_remove_object_spot(box:id(), "treasure")
+                local entry = treasure_manager.get_treasure_manager().treasure_info[stash_alias.key]
+                if entry then entry.active = false end
+            end
+            return original_take(box, story_id, ...)
+        end
     end
 
     -- "target" is read with utils.cfg_get_number under a string default, so a section without it yields ""
@@ -609,6 +688,16 @@ end
 local function install_radio_volume()
     local original_update = ph_sound.snd_source.update
     ph_sound.snd_source.update = function(self, delta)
+        -- The psi case beside Tolik keeps its voices going at the railway bridge for the rest of the game: its
+        -- logic has no end, and the portion that takes Tolik away leaves the case where it is. Once that portion
+        -- is held the case plays nothing more; the object, its logic and the save stay as they are.
+        if self.st and self.st.theme == "moa_psi_antena" and has_alife_info("esc_tola0_delet_i_1_spawn") then
+            local sound = self.played_sound
+            if sound then pcall(function() sound:stop() end) end
+            self.played_sound = nil
+            self.st.sound_set = false
+            return
+        end
         local result = original_update(self, delta)
         local sound = self.played_sound
         if sound and self.st and is_radio_theme(self.st.theme) then
@@ -703,6 +792,43 @@ local function install_smart_terrain_repair()
             if not owner or not owner.gulag then return end
         end
         return original(object_id)
+    end
+    -- Eighty-one of the mod's custom_data files open with a UTF-8 byte-order mark, and the ini reader takes those
+    -- three bytes as part of the first section's name: "[smart_terrains]" is never found, "none = true" is never
+    -- read, and the eighty-two scripted NPCs written into those files are free for any camp to hire away from
+    -- their scenes. The conditions are read again at every load, so the answer the file meant is given for
+    -- exactly those sections whenever the reader found none.
+    local original_conditions = smart_terrain.read_smart_terrain_conditions
+    if type(original_conditions) ~= "function" then return end
+    local bom_sections = {}
+    for section in string.gmatch([[
+        bar_feik_braman bar_letiagin_final1 bar_letiagin_final2 bar_ss_lomateli1 bar_ss_lomateli2
+        bar_ss_pravaa_ryka_finalka bar_vuxod_na_mil_nac_vodila bar_vuxod_na_mil_ss_kyrit
+        bar_vuxod_na_mil_ss_otchituvaetsa bar_vuxod_na_mil_ss_oxrana bar_vuxod_na_mil_ss_pravaa_ryka
+        bar_vuxod_na_mil_ss_ranenui bar_vuxod_na_mil_ss_ranenui2 bar_vuxod_na_mil_ss_vrach dt_ss_desantnik1
+        dt_ss_desantnik2 dt_ss_desantnik3 dt_ss_desantnik_kom esc_soldat_start gar_bandit_balanda_paxan
+        gar_bandit_balanda_reid1 gar_bandit_balanda_reid2 gar_bandit_balanda_reid3 gar_bandit_balanda_reid4
+        gar_dopprizrak2 gar_dopprizrak_dysha gar_stalk_regenat_degenerat lab_kidala m_g_nemec_y_motika1
+        m_g_nemec_y_motika2 mg_ranenui_letchik_sssr mil_baba_prizrak mil_ded_kontra mil_jora2_v_bashne mil_mnlt1
+        mil_mnlt2 mil_mnlt3 mil_mnlt4 mil_mnlt5 mil_mnlt_na_vxode_2_1 mil_mnlt_na_vxode_2_2 mil_shtyrm_noga
+        mil_ss_nastyp1 mil_ss_nastyp2 mil_ss_nastyp3 mil_ss_nastyp4 mil_ss_nastyp5 mil_y_strt_mnlt_na_btr
+        mil_y_strt_mnlt_post1 mil_y_strt_mnlt_post2 mil_y_strt_mnlt_post3 mil_y_strt_mnlt_snaiper
+        mil_y_strt_mnlt_snaiper_kamp1 mil_y_strt_mnlt_snaiper_kamp2 mil_y_strt_mnlt_xodit
+        mil_y_strt_nevidimka_glyshilka mil_zombi_st_v_derevne nevidimka rostok_ralli_nablqdatel
+        rostok_ralli_smotritel rostok_ralli_vodila3 td_benito td_doctor val_chr_banda_oxra1 val_chr_banda_oxra2
+        val_chr_banda_oxra3 val_chr_banda_oxra4 val_chr_banda_oxra5 val_chr_banda_oxra6 val_chr_banda_oxra7
+        val_chr_banda_oxra8 val_chr_banda_oxra9 val_chr_osvedomiteli val_chr_oxr_killer1 val_chr_oxr_killer2
+        val_chr_oxr_killer3 val_chr_oxr_killer4 val_chr_oxr_killer5 val_chr_oxr_killer6 val_chr_snaip_killer1
+        val_chr_snaip_killer2 val_chr_snaip_killer3
+    ]], "%S+") do bom_sections[section] = true end
+    smart_terrain.read_smart_terrain_conditions = function(self, ...)
+        local conditions = original_conditions(self, ...)
+        if conditions ~= nil then return conditions end
+        local known, section = pcall(function() return self:section_name() end)
+        if known and bom_sections[section] then
+            return {none = xr_logic.parse_condlist(self, "smart_terrains", "none", "true")}
+        end
+        return conditions
     end
 end
 
@@ -1110,8 +1236,7 @@ local spy_task_reported = false
 -- Reba's spy at the antennas re-declares war on the actor every frame from the moment he comes online, and
 -- the psi device stacks a fresh post-process effector every frame through its blackout, because
 -- run_postprocess draws a new random id per call. Both now do exactly what one call would have done.
-local postprocess_repeat = 500
-local postprocess_last = {}
+local postprocess = {repeat_after = 500, last = {}}
 
 local function install_repeat_effect_repairs()
     local original_enemy = xr_effects.actor_enemy
@@ -1125,9 +1250,9 @@ local function install_repeat_effect_repairs()
         return function(actor, npc, p)
             local name = p and p[1]
             if type(name) == "string" then
-                local now, last = time_global(), postprocess_last[key .. name]
-                if last and now - last < postprocess_repeat then return end
-                postprocess_last[key .. name] = now
+                local now, last = time_global(), postprocess.last[key .. name]
+                if last and now - last < postprocess.repeat_after then return end
+                postprocess.last[key .. name] = now
             end
             return original(actor, npc, p)
         end
@@ -1245,21 +1370,24 @@ end
 -- entries only put a floor under a wait for a sound. Keyed by spawn section: all of these NPCs carry their
 -- logic as custom_data, so they have no [logic] cfg to read.
 local scene_fallbacks = {
-    -- The Bar formation. bar_krik_konec has one producer and gates every quest of the rest of the game.
-    b_kom_stroi = {remark2 = {25000, "%+bar_krik_konec% remark3"}},
-    -- The SS paratroop commander. He is untalkable until camper55, and the ending dialog is only on him.
+    -- The Bar formation. bar_krik_konec has one producer and gates every quest of the rest of the game. His
+    -- speech (duty_zoneguard_1.ogg) runs 54.05 s without a pause and starts only once the animation is reached,
+    -- so the floor sits well past it: an earlier one cut the speech and opened his next dialog mid-sentence.
+    b_kom_stroi = {remark2 = {70000, "%+bar_krik_konec% remark3"}},
+    -- The SS paratroop commander. He is untalkable until camper55, and the ending dialog is only on him. His
+    -- opening speech (dt_ss_kom_start.ogg) runs 31.99 s, the second (10.86 s) is well inside its own floor.
     dt_ss_desantnik_kom = {
-        remark1 = {30000, "%+ddt_ss_desant_na_start% walker"},
+        remark1 = {45000, "%+ddt_ss_desant_na_start% walker"},
         remark2 = {30000, "%+dt_ss_nakonecto_k_tonelq% camper55"}
     },
     und_prapor2 = {["remark@suicide"] = {12000, "%=kill%"}},
     agro_sania = {remark66 = {16000, "%=kill%"}},
     agro_pania = {remark66 = {20000, "%=kill%"}},
     -- Ded in the Warehouses village («Потеряшки»). remark2 plays mil_ded_kontra_start and leaves only on its
-    -- sound_end, and walker is the one section in which he can be spoken to; the theme is declared in
-    -- sound_theme.script but not one of its files exists, so the end never comes and he sits mute for the
-    -- rest of the save. Eight seconds is past the longest line the theme declares, so a build that does ship
-    -- the sound still finishes it first.
+    -- sound_end, and walker is the one section in which he can be spoken to. The theme resolves to
+    -- characters_voice\scenario\military\tu_kto_takoi.ogg, 1.03 s, and normally ends on its own signal; the
+    -- floor is a guard against a stall inside remark2 whose cause is not established - a state never reached,
+    -- a play refused - and eight seconds is far past the line, so a scene that plays finishes first.
     mil_ded_kontra = {remark2 = {8000, "walker"}}
 }
 local underground_task = "agro_v_podzemky"
@@ -1376,12 +1504,48 @@ local scene_owners = {
 
 -- NPCs whose loss cannot be recovered from, remembered from the moment they spawn so their absence can be
 -- told apart from "not spawned yet" without scanning the whole simulation.
-local critical_sections = {bar_melisa_nyjen_tyt = true}
+local critical_sections = {bar_melisa_nyjen_tyt = true, agr_kapitan = true}
 local critical_npc = {}
 
 local function watch_critical(binder)
     local section = binder.object:section()
     if critical_sections[section] then critical_npc[section] = binder.object:id() end
+end
+
+-- The captain of the Agroprom base. The doors to the third floor open on agro_door_open, which only his own
+-- talk on the way back from the underground grants - and the forum's advice was to kill him for a key that does
+-- not exist. A captain dead or gone once the underground is done leaves the doors shut and Karabin unspawned
+-- for good, so the portion is granted for him then, together with the actor's own community that the same talk
+-- restores; a living captain keeps his dialog. He is remembered from his spawn, and a save that lost him before
+-- this session is checked once against the whole simulation.
+local captain = {section = "agr_kapitan", after = "und_prapor_3", grants = "agro_door_open"}
+
+captain.settle = function(now)
+    if captain.done or not db.actor or not has_alife_info(captain.after) or has_alife_info(captain.grants) then
+        return
+    end
+    local simulator = alife()
+    if not simulator then return end
+    local id = critical_npc[captain.section]
+    if not id and not captain.swept then
+        captain.swept = true
+        for candidate = 1, 65534 do
+            local server = simulator:object(candidate)
+            local known, name = pcall(function() return server and server:section_name() end)
+            if known and name == captain.section then
+                id = candidate
+                critical_npc[captain.section] = id
+                break
+            end
+        end
+    end
+    local server = id and simulator:object(id)
+    local known, alive = pcall(function() return server and server:alive() end)
+    if server and known and alive then return end
+    captain.done = true
+    db.actor:give_info_portion(captain.grants)
+    pcall(function() moa_agro.new_gg_2(db.actor, db.actor) end)
+    report_line("captain " .. (server and "dead" or "gone") .. " " .. captain.grants)
 end
 
 local function check_scene_stalls(now)
@@ -1409,20 +1573,56 @@ local last_resort = {
     {after = {"dt_ralli_nachalo1", "dt_ralli_nachalo2", "dt_ralli_nachalo3"}, missing = "ddt_rally_otschet",
         grace = 30000}
 }
-local last_resort_since = {}
+last_resort.since = {}
+
+-- Reba's first spy. His [death] hands out esc_shpion0_ymer_spawni_blok and takes the HUD and the input away, and
+-- the only thing that ever gives them back is the box the portion spawns at the spot where he sat: an inventory
+-- box, so it comes online only within 135 m of the actor, and its logic - the fade, the portion that returns
+-- the input, the wounded double and his talk - runs only online. He is unarmed and runs, and a player who
+-- brings him down further out, or was that far from the spot when he fell, is left blind and paralysed for
+-- good; a reload gives the input back and the scene never happens. Eight seconds after the lock - the
+-- ordinary scene takes three - an actor still locked and out of reach of the box is put where the scene itself
+-- takes him, the room beside the box, and the author's chain finishes on its own from there. If nothing has
+-- arrived a minute after that, the input is given back and the pack says so.
+local spy_lock = {section = "esc_absolqtno_drygoi_mamkin_shpion", spawned = "esc_shpion0_ymer_spawni_blok",
+    released = "esc_delet_mamkinogo_shpiona0", wait = 8000, failsafe = 60000, reach = 130,
+    box = {x = 136.18, y = -0.89, z = 307.9}, home = {x = 138, y = -0.2, z = 338.8}}
+
+spy_lock.release = function(now)
+    if not spy_lock.since or not db.actor then return end
+    if has_alife_info(spy_lock.released) then
+        spy_lock.since = nil
+        return
+    end
+    if not has_alife_info(spy_lock.spawned) or now - spy_lock.since < spy_lock.wait then return end
+    if not spy_lock.moved then
+        spy_lock.moved = now
+        local at = db.actor:position()
+        local dx, dy, dz = at.x - spy_lock.box.x, at.y - spy_lock.box.y, at.z - spy_lock.box.z
+        if dx * dx + dy * dy + dz * dz > spy_lock.reach * spy_lock.reach then
+            db.actor:set_actor_position(vector():set(spy_lock.home.x, spy_lock.home.y, spy_lock.home.z))
+            report_line("spy lock actor brought to the box")
+        end
+        return
+    end
+    if now - spy_lock.moved < spy_lock.failsafe then return end
+    spy_lock.since = nil
+    pcall(function() xr_effects.enable_ui(db.actor, nil) end)
+    report_line("spy lock released by the failsafe")
+end
 
 local function deliver_last_resort(now)
     for index, rule in ipairs(last_resort) do
         local armed = false
         for _, portion in ipairs(rule.after) do armed = armed or has_alife_info(portion) end
         if armed and not has_alife_info(rule.missing) then
-            last_resort_since[index] = last_resort_since[index] or now
-            if now - last_resort_since[index] >= rule.grace then
+            last_resort.since[index] = last_resort.since[index] or now
+            if now - last_resort.since[index] >= rule.grace then
                 db.actor:give_info_portion(rule.missing)
                 report_line("scene " .. rule.missing)
             end
         else
-            last_resort_since[index] = nil
+            last_resort.since[index] = nil
         end
     end
 end
@@ -1432,17 +1632,16 @@ end
 -- until that walk reports in. A walk that cannot be built therefore locks the player out of the game with no
 -- way back. This runs the section's own line instead: the stash, the portion and the input. The walk itself
 -- ends 52 m from the actor, a minute or so on foot; three minutes leave a slow path all the room it needs.
-local letyagin_grace = 180000
-local letyagin_since
+local letyagin = {grace = 180000}
 
 local function release_letyagin(now)
     if not has_alife_info("bar_letia_final") or has_alife_info("barar_vse_letiaga_yshel") then
-        letyagin_since = nil
+        letyagin.since = nil
         return
     end
-    letyagin_since = letyagin_since or now
-    if now - letyagin_since < letyagin_grace then return end
-    letyagin_since = now
+    letyagin.since = letyagin.since or now
+    if now - letyagin.since < letyagin.grace then return end
+    letyagin.since = now
     local simulator = alife()
     local owner
     for id, storage in pairs(db.storage) do
@@ -1866,6 +2065,8 @@ local function check_death_watch(now)
     deliver_garbage_hint()
     pcall(check_scene_stalls, now)
     deliver_last_resort(now)
+    pcall(spy_lock.release, now)
+    pcall(captain.settle, now)
     release_letyagin(now)
     deliver_defuser()
     open_x18_chain()
@@ -1930,6 +2131,13 @@ local function install_death_repairs()
     for _, name in ipairs({"remove_object", "remove_obj_id", "delme", "delme2"}) do
         guard_scripted_release(xr_effects, name)
     end
+    -- The first spy's death takes the input away through this effect; the watch that gives it back starts here.
+    local original_disable = xr_effects.disable_ui
+    xr_effects.disable_ui = function(actor, npc, ...)
+        local known, section = pcall(function() return npc:section() end)
+        if known and section == spy_lock.section then spy_lock.since, spy_lock.moved = time_global(), nil end
+        return original_disable(actor, npc, ...)
+    end
     guard_scripted_release(dead_city, "exterminate_nacsamlet")
     guard_scripted_release(ogsm_mutants, "safely_destroy_creature")
     guard_scripted_release(ogsm_mutants.MutantManager, "update")
@@ -1986,6 +2194,19 @@ function repair_detector(first_speaker, second_speaker)
     report_line("detector repaired")
 end
 
+-- Zakorpat's PDA. Volk's talk and Yura's ask for it on the same precondition, so a player who hands it to Volk
+-- first leaves Yura's «тайник пуст» unreachable - it wants the item Volk now has - and the stash chain with it.
+-- The two dialogs are pointed at these (in memory, at the file's length): Volk takes the PDA only once Yura has
+-- read it, and Yura's talk opens without the item on a save where Volk already has it. Globals, since the
+-- engine looks them up by name.
+function volk_pda()
+    return has_alife_info("esc_qra_tainik2_to_pyst") and new_life.esti_kpk_zakorpata() == true
+end
+
+function yura_pda()
+    return has_alife_info("esc_volky_pro_korpata") or new_life.esti_kpk_zakorpata() == true
+end
+
 function install()
     if installed then return end
     if not new_life.new_gg_2 then new_life.new_gg_2 = moa_agro.new_gg_2 end
@@ -1999,6 +2220,26 @@ function install()
     end
     if not delete.esc_ydalaem_bbbbbbbbbbbbbtttttttttttrrrrr then
         delete.esc_ydalaem_bbbbbbbbbbbbbtttttttttttrrrrr = delete.esc_ydalaem_bbbbbbbbbbbbbtttttttttttrrrrrrrrrrrrr
+    end
+    -- The seven removals of the Cordon guards are matched on the object's name containing "norm": the first of
+    -- them takes every object in the Zone with those letters in its name - the Warehouses' bloodsucker door
+    -- among them - and each of the others whatever else carries its digit. They match the section now, the
+    -- first one every guard of the family the way its substring did, so the scene loses nothing.
+    for index = 1, 7 do
+        local section = index == 1 and "norm" or ("norm" .. index)
+        delete["del_esc_kor_norm" .. index] = function()
+            local simulator = alife()
+            if not simulator then return end
+            for id = 10, 65534 do
+                local object = simulator:object(id)
+                if object then
+                    local known, name = pcall(function() return object:section_name() end)
+                    if known and (name == section or (index == 1 and string.find(name, "^norm%d*$"))) then
+                        simulator:release(object, true)
+                    end
+                end
+            end
+        end
     end
     -- The ghost's grave on the Garbage carries two of everything: both candle boxes stand on the same point, and
     -- the mound the actor digs was placed in all.spawn and then again by decor.spawn_gar_mogila_prizrak_dkr1
@@ -2072,6 +2313,10 @@ function install()
         return nil
     end
 
+    local function npc_section(npc)
+        local known, section = pcall(function() return npc:section() end)
+        return known and section or nil
+    end
     local original_parse = xr_logic.parse_condlist
     xr_logic.parse_condlist = function(npc, section, field, source)
         -- Inline all.spawn logic contains extra damage triggers that must remain untouched.
@@ -2079,6 +2324,17 @@ function install()
             string.gsub(source, "%s+", "") == string.gsub(giant_bad_transition, "%s+", "") and npc and
             npc:name() == "labx_psevdogiant" and npc:section() == "gigant_strong" then
             source = string.gsub(source, "mob_walker@6", "mob_walker@5", 1)
+        end
+        -- Kuzma's remark4 timer as a save that spawned him before 1.0.9 keeps it: the grant of his brother's
+        -- portion is dropped from the line the way the file repair drops it. The psi case at the bridge as a save
+        -- from before 1.0.3 keeps it: an on_use of "no_use" names a section that does not exist and is fatal on
+        -- F, so it points at the case's own active section instead, which switch_to_section refuses to re-enter.
+        if type(source) == "string" then
+            local bare = string.gsub(source, "%s+", "")
+            if field == "on_timer" and section == "remark4" and bare == "%+esc_kyzma_2%kamp" and
+                npc_section(npc) == "esc_kyza" then source = "kamp" end
+            if field == "on_use" and section == "ph_sound" and bare == "no_use" and
+                npc_section(npc) == "zvyk_psi_antenna" then source = "ph_sound" end
         end
         if burglar_condition(npc, section, field, source) then source = burglar_journals .. " ph_door@locked" end
         if lab_terminal_condition(npc, section, field, source) then source = lab_terminal_repaired end
@@ -2134,7 +2390,7 @@ function install()
     -- Что-то тут нечисто. Как будто, мутантами кто-то управляет. Надо бы поискать вокруг.
     local depo_hint = {
         armed = "gar_depo_napadenie_nachalosi", over = "gr_depo_krus_podox", flag = "ild_depo_karlik_hint",
-        delay = 20000,
+        delay = 20000, level = "l02_garbage", near = {x = -119.8, y = 1.65, z = 12.4, reach = 150},
         text = string.char(
             215, 242, 238, 45, 242, 238, 32, 242, 243, 242, 32, 237, 229, 247, 232, 241, 242, 238, 46, 32, 202,
             224, 234, 32, 225, 243, 228, 242, 238, 44, 32, 236, 243, 242, 224, 237, 242, 224, 236, 232, 32, 234,
@@ -2150,7 +2406,7 @@ function install()
     -- Ребят увели, а ворота не заперли. Закорпат обещал показать, как отсюда сбежать - надо с ним поговорить.
     local prison_hint = {
         armed = "es_meln_jegoj_vushel", over = "esc_zakorpat_posle_jegoja", flag = "ild_prison_zakorpat_hint",
-        delay = 30000, show = 10000,
+        delay = 30000, show = 10000, level = "l01_escape",
         text = string.char(
             208, 229, 225, 255, 242, 32, 243, 226, 229, 235, 232, 44, 32, 224, 32, 226, 238, 240, 238, 242, 224,
             32, 237, 229, 32, 231, 224, 239, 229, 240, 235, 232, 46, 32, 199, 224, 234, 238, 240, 239, 224, 242,
@@ -2177,6 +2433,12 @@ function install()
                 db.actor:give_info_portion(kuzma_corpse.over)
                 report_line("settle " .. kuzma_corpse.over)
             end
+        elseif has_alife_info("esc_kyzma_2") and not has_alife_info(kuzma_corpse.armed) then
+            -- The brother's closing portion without the scream that has to come first: only the timer a save
+            -- from before 1.0.9 kept in Kuzma's logic grants it that way. It is taken back, and the scream, the
+            -- corpse and the brother's talk are open again.
+            db.actor:disable_info_portion("esc_kyzma_2")
+            report_line("settle esc_kyzma_2 withdrawn")
         end
         if not has_alife_info(prison_extras.armed) then return end
         local known, done = pcall(xr_logic.pstor_retrieve, db.actor, prison_extras.flag, 0)
@@ -2200,6 +2462,21 @@ function install()
         -- without a portion of our own in the registry.
         local known, shown = pcall(xr_logic.pstor_retrieve, db.actor, hint.flag, 0)
         if not known or (shown or 0) ~= 0 then return end
+        -- Only on the level the line is about, and for the depot only near the karlik's lair, where the wave
+        -- really is: the delay is counted there and nowhere else, so the one line is never spent elsewhere.
+        local named, name = pcall(function() return level.name() end)
+        if not named or name ~= hint.level then
+            hint.since = nil
+            return
+        end
+        if hint.near then
+            local at = db.actor:position()
+            local dx, dy, dz = at.x - hint.near.x, at.y - hint.near.y, at.z - hint.near.z
+            if dx * dx + dy * dy + dz * dz > hint.near.reach * hint.near.reach then
+                hint.since = nil
+                return
+            end
+        end
         hint.since = hint.since or now
         if now - hint.since < hint.delay then return end
         xr_logic.pstor_store(db.actor, hint.flag, 1)
@@ -2232,22 +2509,41 @@ function install()
     -- gets it too. It is hosted on the archived game_tasks.xml's own "user_task" - a skeleton with one line, no
     -- condition and no step, which the released game never gives - because the engine rebuilds a saved task from
     -- the task file before it reads the saved text and aborts on an id the file lacks: an entry under an id of
-    -- the pack's own chains the save to the pack. The title, the entry's own line and the two steps carry their
-    -- own CP1251 bytes, the way the two hints further up do - the engine opens no string file of the pack's own,
-    -- and text it cannot look up is printed as it is:
+    -- the pack's own chains the save to the pack. The title, the entry's own line, the two steps and the three
+    -- hints carry their own CP1251 bytes, the way the two hints further up do - the engine opens no string file
+    -- of the pack's own, and text it cannot look up is printed as it is:
     -- Ремонт научного детектора
     -- Найти микросхему EVA-1400 / Отнести микросхему Броневику
-    -- Тайник: микросхема для детектора / Броневик ждёт микросхему
-    -- The map spots are the pack's own serialised ones, not the steps': the stage decides which of the two
-    -- places carries one, the other is kept clear, and a spot a pass finds missing is put back. Neither the
-    -- cache nor Bronevik has a story id, so both are found by section, a slice of the simulation per update.
+    -- Микросхема для детектора / Тайник: микросхема для детектора / Броневик ждёт микросхему
+    --
+    -- The chip. The author's plan was the third children's cache on Agroprom, and that box exists only once the
+    -- diary on the tower has been used - a side errand nothing points at - and carries no [logic], so it never
+    -- gets a binder and no scheme hook ever fires on it: 1.0.8 to 1.0.10 waited for exactly that, and no chip was
+    -- ever placed. The chip is created from here, server-side, before the entry is given: inside the cache when
+    -- the cache is there, otherwise loose at the very spot the author's script puts the cache on, so a cache
+    -- spawned later stands beside it and neither its own supplies nor the chip is ever overwritten. The chip's
+    -- id and the id of whatever carries the map spot live in the actor's pstor.
+    --
+    -- The map. Step 1 is keyed to the spot's carrier when the entry is given, and step 2 to Bronevik when step 1
+    -- closes - in the task callback, the one place the engine hands its task object to Lua - so the PDA draws
+    -- its arrow. The spots themselves are the pack's own serialised ones, reconciled against the map on a tick:
+    -- the stage decides which carrier has one and the others are kept clear; the engine counts a spot by kind
+    -- and id, so a keyed step and the pack's spot are one spot. An entry an older version gave keeps its unkeyed
+    -- steps - the engine exposes no given task to Lua - and is led the same way, without the arrow. Neither the
+    -- cache nor Bronevik has a story id, so both are found by section, one shared sweep of the simulation, a
+    -- slice per tick, and the cache is looked for only while the diary's portion says it can exist.
     local detector_guide = {
-        cache = {section = "agro_tainik_detei3", hint = string.char(
+        chip = {section = "esc_mikro_sxema_koordinatu_tp", hint = string.char(
+            204, 232, 234, 240, 238, 241, 245, 229, 236, 224, 32, 228, 235, 255, 32, 228, 229, 242, 229, 234, 242,
+            238, 240, 224)},
+        cache = {section = "agro_tainik_detei3", gate = "agro_infa_na_vushke", hint = string.char(
             210, 224, 233, 237, 232, 234, 58, 32, 236, 232, 234, 240, 238, 241, 245, 229, 236, 224, 32, 228, 235,
             255, 32, 228, 229, 242, 229, 234, 242, 238, 240, 224)},
         owner = {section = "bar_bar_moder", hint = string.char(
             193, 240, 238, 237, 229, 226, 232, 234, 32, 230, 228, 184, 242, 32, 236, 232, 234, 240, 238, 241, 245,
             229, 236, 243)},
+        -- Where tainiki.spawn_agro_tainik_detei3 puts the cache; a loose chip goes to the same spot.
+        spot_x = 36.56, spot_y = 3.86, spot_z = -123.4, level_vertex = 274164, game_vertex = 451,
         title = string.char(208, 229, 236, 238, 237, 242, 32, 237, 224, 243, 247, 237, 238, 227, 238, 32, 228, 229,
             242, 229, 234, 242, 238, 240, 224),
         step = {
@@ -2256,47 +2552,69 @@ function install()
             string.char(206, 242, 237, 229, 241, 242, 232, 32, 236, 232, 234, 240, 238, 241, 245, 229, 236, 243,
                 32, 193, 240, 238, 237, 229, 226, 232, 234, 243)
         },
-        spot = "green_location", tick = 1000, slice = 2048, last = 65534, rest = 10000
+        spot = "green_location", tick = 250, slice = 4096, last = 65534, rest = 10000, rest_limit = 300000,
+        sweep = {}
     }
+    -- Session state only: what the save keeps is read back from the pstor on the first tick after a spawn.
     local function detector_reset()
-        for _, entry in pairs({detector_guide.cache, detector_guide.owner}) do
-            entry.id, entry.cursor, entry.rest_until, entry.swept, entry.placed, entry.settled = nil
+        for _, entry in pairs({detector_guide.chip, detector_guide.cache, detector_guide.owner}) do
+            entry.id, entry.swept, entry.placed, entry.wanted, entry.gate_seen = nil
         end
-        detector_guide.next_tick = nil
+        detector_guide.sweep = {}
+        detector_guide.loaded, detector_guide.target, detector_guide.settled = nil
+        detector_guide.next_tick, detector_guide.create_failed, detector_guide.led = nil
     end
-    -- A known id is trusted while the object behind it is still what it was; an unknown one is looked for a
-    -- slice at a time, and a sweep that finds nothing rests before the next.
-    local function detector_object(entry, now)
-        local simulator = alife()
-        if not simulator then return nil end
-        if entry.id then
-            local known, name = pcall(function()
-                local server = simulator:object(entry.id)
-                return server and server:section_name()
-            end)
-            if known and name == entry.section then return entry.id end
-            entry.id = nil
+    local function detector_pstor(key, fallback)
+        local known, value = pcall(xr_logic.pstor_retrieve, db.actor, key, fallback)
+        return known and value or fallback
+    end
+    local function detector_recall()
+        if detector_guide.loaded then return end
+        detector_guide.loaded = true
+        local chip = detector_pstor("ild_detector_chip", 0)
+        detector_guide.chip.id = chip ~= 0 and chip or nil
+        local target = detector_pstor("ild_detector_target", 0)
+        detector_guide.target = target ~= 0 and target or nil
+        if detector_guide.target and detector_guide.target ~= detector_guide.chip.id then
+            detector_guide.cache.id = detector_guide.target
         end
-        if entry.rest_until and now < entry.rest_until then return nil end
-        local first = entry.cursor or 1
+    end
+    -- A known id is trusted while the object behind it is still what it was.
+    local function detector_verify(entry, simulator)
+        if not entry.id then return nil end
+        local server = simulator:object(entry.id)
+        local known, name = pcall(function() return server and server:section_name() end)
+        if known and name == entry.section then return server end
+        entry.id = nil
+        return nil
+    end
+    -- One sweep for everything still unknown, a slice per tick, resting longer after every empty pass.
+    local function detector_sweep(wanted, now)
+        if next(wanted) == nil then return end
+        local sweep, simulator = detector_guide.sweep, alife()
+        if not simulator or (sweep.rest_until and now < sweep.rest_until) then return end
+        local first = sweep.cursor or 1
         local last = math.min(first + detector_guide.slice - 1, detector_guide.last)
         for id = first, last do
             local server = simulator:object(id)
-            local known, name = pcall(function() return server and server:section_name() end)
-            if known and name == entry.section then
-                entry.id, entry.cursor = id, nil
-                return id
+            if server then
+                local known, name = pcall(server.section_name, server)
+                local entry = known and wanted[name]
+                if entry and not entry.id then entry.id, entry.swept = id, nil end
             end
         end
         if last < detector_guide.last then
-            entry.cursor = last + 1
-        else
-            entry.cursor, entry.rest_until, entry.swept = 1, now + detector_guide.rest, true
+            sweep.cursor = last + 1
+            return
         end
-        return nil
+        sweep.cursor, sweep.passes = 1, (sweep.passes or 0) + 1
+        sweep.rest_until = now + math.min(detector_guide.rest * sweep.passes, detector_guide.rest_limit)
+        for _, entry in pairs(wanted) do
+            if not entry.id then entry.swept = true end
+        end
     end
     -- Wanted: placed afresh once per session, so a spot an older version left carries this hint and is on, and
-    -- put back whenever a pass finds it gone. Not wanted: whatever is there comes down.
+    -- put back whenever a tick finds it gone. Not wanted: whatever is there comes down.
     local function detector_mark(entry, id, wanted)
         local known, count = pcall(level.map_has_object_spot, id, detector_guide.spot)
         count = known and count or 0
@@ -2305,22 +2623,62 @@ function install()
         if wanted then level.map_add_object_spot_ser(id, detector_guide.spot, entry.hint) end
         entry.placed = wanted and id or nil
     end
-    -- 1 leads to the cache, 2 to Bronevik; any other stage clears both, and an entry with nothing left to take
-    -- down - or whose object one full sweep could not find - is left alone for the rest of the session.
-    local function detector_lead(stage, now)
-        local reconcile = now >= (detector_guide.next_tick or 0)
-        if reconcile then detector_guide.next_tick = now + detector_guide.tick end
-        for index, entry in ipairs({detector_guide.cache, detector_guide.owner}) do
-            if not entry.settled then
-                local id = detector_object(entry, now)
-                if reconcile then
-                    if id then detector_mark(entry, id, stage == index) end
-                    if stage ~= 1 and stage ~= 2 and (id or entry.swept) then entry.settled = true end
-                end
+    local function detector_create(box)
+        local simulator = alife()
+        local known, created = pcall(function()
+            if box then
+                return simulator:create(detector_guide.chip.section, box.position, box.m_level_vertex_id,
+                    box.m_game_vertex_id, box.id)
             end
+            return simulator:create(detector_guide.chip.section,
+                vector():set(detector_guide.spot_x, detector_guide.spot_y, detector_guide.spot_z),
+                detector_guide.level_vertex, detector_guide.game_vertex)
+        end)
+        if known and created then return created end
+        if not detector_guide.create_failed then
+            detector_guide.create_failed = true
+            report_line("detector chip not created: " .. tostring(known and "no object" or created))
         end
+        return nil
     end
-    local function detector_give()
+    -- The carrier of the stage-1 spot: the cache when the chip is inside it, else the chip itself. Makes the
+    -- chip when there is none - inside the cache when the diary's portion is held and the cache is found, loose
+    -- at the cache's spot otherwise - and answers nil only while the cache is still being looked for or the chip
+    -- is in the rucksack, which is the stage's own business.
+    local function detector_carrier(now)
+        local guide, chip, cache = detector_guide, detector_guide.chip, detector_guide.cache
+        local simulator = alife()
+        if not simulator then return nil end
+        local box = detector_verify(cache, simulator)
+        if detector_verify(chip, simulator) then
+            if box and guide.target == box.id then return cache, box.id end
+            if guide.target ~= chip.id then
+                guide.target = chip.id
+                xr_logic.pstor_store(db.actor, "ild_detector_target", chip.id)
+            end
+            return chip, chip.id
+        end
+        if db.actor:object(chip.section) then return nil end
+        local gate = has_alife_info(cache.gate)
+        if gate and not cache.gate_seen then
+            cache.gate_seen, cache.swept, guide.sweep.passes, guide.sweep.rest_until = true, nil, nil, nil
+        end
+        if gate and not box and not cache.swept then
+            cache.wanted = true
+            return nil
+        end
+        cache.wanted = nil
+        local created = detector_create(box)
+        if not created then return nil end
+        chip.id, chip.swept = created.id, nil
+        guide.target = box and box.id or created.id
+        xr_logic.pstor_store(db.actor, "ild_detector_chip", chip.id)
+        xr_logic.pstor_store(db.actor, "ild_detector_target", guide.target)
+        xr_logic.pstor_store(db.actor, "ild_detector_chip_placed", 1)
+        report_line("detector chip " .. chip.id .. (box and (" in cache " .. box.id) or " at the cache spot"))
+        return box and cache or chip, guide.target
+    end
+    local function detector_give(carrier, id)
         local job = CGameTask()
         job:load("user_task")
         job:set_title(detector_guide.title)
@@ -2332,31 +2690,121 @@ function install()
         for index = 1, 2 do
             local step = SGameTaskObjective(job, index)
             step:set_description(detector_guide.step[index])
+            -- The first step is keyed to the spot's carrier, so the engine draws its arrow; the second is keyed
+            -- to Bronevik only once the first closes, or his spot would be up from the start.
+            if index == 1 and carrier then
+                step:set_map_location(detector_guide.spot)
+                step:set_object_id(id)
+                step:set_map_hint(carrier.hint)
+            end
             job:add_objective(step)
         end
         db.actor:give_task(job, 0, false)
         xr_logic.pstor_store(db.actor, "ild_detector_host", 1)
         xr_logic.pstor_store(db.actor, "ild_detector_task", 1)
-        report_line("task user_task")
+        report_line("task user_task" .. (carrier and (" step 1 keyed to " .. id) or ""))
+    end
+    -- The task callback, where the engine hands its own task object to Lua: the moment step 1 closes, step 2 is
+    -- keyed to Bronevik, so SetActiveTask finds the spot the tick has already put on him.
+    local function detector_link_owner(job, objective, state)
+        local owner = detector_guide.owner
+        if state ~= task.completed or not owner.id or job:get_id() ~= detector_task_id() then return end
+        if objective:get_idx() ~= 1 or job:get_objectives_cnt() < 3 then return end
+        local step = job:get_objective(2)
+        step:set_map_location(detector_guide.spot)
+        step:set_object_id(owner.id)
+        step:set_map_hint(owner.hint)
+        report_line("detector step 2 keyed to " .. owner.id)
+    end
+    -- 1 leads to the chip's carrier, 2 to Bronevik - and to the chip, should it be put down somewhere - and 3
+    -- clears both and then leaves the map alone for the rest of the session.
+    local function detector_lead(stage, carrier, id, now)
+        local guide, chip, cache, owner = detector_guide, detector_guide.chip, detector_guide.cache,
+            detector_guide.owner
+        local simulator = alife()
+        if not simulator then return end
+        owner.wanted = (not owner.id and not owner.swept) or nil
+        local wanted = {}
+        for _, entry in pairs({chip, cache, owner}) do
+            if entry.wanted then wanted[entry.section] = entry end
+        end
+        detector_sweep(wanted, now)
+        detector_verify(owner, simulator)
+        local want_lead = stage == 1 and id or nil
+        local want_chip = stage == 2 and chip.id and not db.actor:object(chip.section) and chip.id or nil
+        local want_owner = stage == 2 and owner.id or nil
+        if guide.target and guide.target ~= want_lead and guide.target ~= want_chip then
+            detector_mark(guide.target == cache.id and cache or chip, guide.target, false)
+        end
+        if want_lead then detector_mark(carrier, want_lead, true) end
+        if chip.id and chip.id ~= want_lead then detector_mark(chip, chip.id, want_chip ~= nil) end
+        if owner.id then detector_mark(owner, owner.id, want_owner ~= nil) end
+        local led = (want_lead and ("lead " .. want_lead)) or (want_owner and ("owner " .. want_owner)) or "none"
+        if want_chip then led = led .. " chip " .. want_chip end
+        if led ~= guide.led then
+            guide.led = led
+            report_line("detector " .. led)
+        end
     end
     -- 0 not given, 1 looking for the chip, 2 carrying it back, 3 finished.
     local function detector_task(now)
-        if not db.actor or not has_alife_info("bar_bronevik_pochini_detektor") then return end
-        local known, stage = pcall(xr_logic.pstor_retrieve, db.actor, "ild_detector_task", 0)
-        if not known then return end
-        stage = stage or 0
-        if stage == 0 then
-            detector_give()
-            stage = 1
-        elseif stage == 1 and db.actor:object("esc_mikro_sxema_koordinatu_tp") then
-            level_tasks.set_task_state(task.completed, detector_task_id(), 1)
-            xr_logic.pstor_store(db.actor, "ild_detector_task", 2)
-            stage = 2
+        local guide = detector_guide
+        if guide.settled or not db.actor or not has_alife_info("bar_bronevik_pochini_detektor") then return end
+        if now < (guide.next_tick or 0) then return end
+        guide.next_tick = now + guide.tick
+        detector_recall()
+        local stage = detector_pstor("ild_detector_task", 0) or 0
+        -- 1.0.5 recorded the hand-over under a flag of its own, before the entry existed.
+        if stage < 3 and detector_pstor("ild_detector_done", 0) == 1 then
+            xr_logic.pstor_store(db.actor, "ild_detector_task", 3)
+            stage = 3
         end
-        detector_lead(stage, now)
+        local carrier, id
+        if stage <= 1 then
+            carrier, id = detector_carrier(now)
+            if stage == 0 then
+                if not id then
+                    detector_lead(0, nil, nil, now)
+                    return
+                end
+                detector_give(carrier, id)
+                stage = 1
+            elseif db.actor:object(guide.chip.section) then
+                -- Bronevik's spot goes up before the step closes, so SetActiveTask finds a keyed location at once.
+                if guide.owner.id then detector_mark(guide.owner, guide.owner.id, true) end
+                level_tasks.set_task_state(task.completed, detector_task_id(), 1)
+                xr_logic.pstor_store(db.actor, "ild_detector_task", 2)
+                stage = 2
+            end
+        end
+        detector_lead(stage, carrier, id, now)
+        if stage == 3 and (guide.owner.id or guide.owner.swept) then guide.settled = true end
+    end
+    -- The first error of a session in any of the actor-side settles is the only trace it would leave.
+    local guard_reported = {}
+    local function guarded(name, fn, ...)
+        local ok, err = pcall(fn, ...)
+        if not ok and not guard_reported[name] then
+            guard_reported[name] = true
+            report_line(name .. " error " .. string.sub(tostring(err), 1, 140))
+        end
     end
 
     local binder = bind_stalker.actor_binder
+    -- install() runs from inside the actor's first net_spawn, which the wrapper below cannot see, so the
+    -- callback the engine holds for this spawn is exchanged on the first update instead, on the binder
+    -- instance the actor names; every later spawn does it in its own wrapper. The wrapper it names is set
+    -- further down and looked up when the binding happens.
+    local callback_bound = false
+    local function bind_task_callback(self)
+        if callback_bound or not db.actor then return end
+        callback_bound = true
+        pcall(function()
+            local instance = self or db.actor:binded_object()
+            if instance then db.actor:set_callback(callback.task_state, binder.task_callback, instance) end
+        end)
+        report_line("task callback bound")
+    end
     local original_load = binder.load
     binder.load = function(self, ...)
         local result = original_load(self, ...)
@@ -2371,8 +2819,18 @@ function install()
             install_actor_repairs()
             reset_detector_registry()
             detector_reset()
+            spy_lock.since = nil
+            -- reinit registered the mod's own task callback before install() could wrap it, so the wrapper is
+            -- registered again here to be the one the engine calls.
+            callback_bound = false
+            bind_task_callback(self)
         end
         return result
+    end
+    local original_callback = binder.task_callback
+    binder.task_callback = function(self, job, objective, state, ...)
+        if type(original_callback) == "function" then original_callback(self, job, objective, state, ...) end
+        pcall(detector_link_owner, job, objective, state)
     end
     local original_destroy = binder.net_destroy
     binder.net_destroy = function(self, ...)
@@ -2384,6 +2842,7 @@ function install()
     binder.update = function(self, ...)
         restore_input_timeout(self)
         if db.actor then install_actor_repairs() end
+        bind_task_callback(self)
         original_update(self, ...)
         if db.actor and not detector_started then
             install_actor_repairs()
@@ -2391,11 +2850,12 @@ function install()
         end
         -- Several zones can respawn in one simulation batch; reconcile only once here.
         if db.actor and artefacts_dirty and reconcile_artefacts() then artefacts_dirty = false end
-        pcall(check_death_watch, time_global())
-        pcall(deliver_hint, depo_hint, time_global())
-        pcall(deliver_hint, prison_hint, time_global())
-        pcall(settle_cordon, time_global())
-        pcall(detector_task, time_global())
+        local now = time_global()
+        guarded("death watch", check_death_watch, now)
+        guarded("depo hint", deliver_hint, depo_hint, now)
+        guarded("prison hint", deliver_hint, prison_hint, now)
+        guarded("cordon", settle_cordon, now)
+        guarded("detector", detector_task, now)
     end
     installed = true
 end

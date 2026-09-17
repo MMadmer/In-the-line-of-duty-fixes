@@ -85,7 +85,8 @@ INIT_ONCE install_once = INIT_ONCE_STATIC_INIT;
     return result;
 }
 
-void start_update_service(const std::filesystem::path& engine)
+// Zero when the helper was started, the CreateProcessW error otherwise.
+[[nodiscard]] DWORD start_update_service(const std::filesystem::path& engine)
 {
     const auto root = engine.parent_path().parent_path();
     const auto updater = root / L"InTheLineOfDutyFixesUpdater.exe";
@@ -106,12 +107,12 @@ void start_update_service(const std::filesystem::path& engine)
     startup.dwFlags = STARTF_USESHOWWINDOW;
     startup.wShowWindow = SW_HIDE;
     PROCESS_INFORMATION process{};
-    if (CreateProcessW(updater.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+    if (!CreateProcessW(updater.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
             nullptr, root.c_str(), &startup, &process))
-    {
-        CloseHandle(process.hThread);
-        CloseHandle(process.hProcess);
-    }
+        return GetLastError();
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return 0;
 }
 
 [[nodiscard]] std::filesystem::path executable_path()
@@ -191,6 +192,72 @@ void note_once(std::atomic<bool>& noted, std::string_view step, std::string_view
 
 std::atomic<bool> console_noted{}, abort_noted{}, actor_noted{}, menu_noted{}, vehicle_noted{}, walk_noted{};
 std::atomic<bool> vehicle_pending{}, walk_pending{};
+// Whether every script the actor binding calls into is on disk. A patch archive unpacked without its base, or
+// a removal by hand, leaves the loader with a binding that would die on a module the engine cannot load.
+std::atomic<bool> lua_payload_complete{true};
+
+[[nodiscard]] std::string read_small_file(const std::filesystem::path& path, std::size_t limit)
+{
+    const auto file = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return {};
+    std::string data(limit, '\0');
+    DWORD read{};
+    const auto complete = ReadFile(file, data.data(), static_cast<DWORD>(data.size()), &read, nullptr);
+    CloseHandle(file);
+    data.resize(complete ? read : 0);
+    return data;
+}
+
+[[nodiscard]] std::wstring missing_payload_file(const std::filesystem::path& root)
+{
+    constexpr std::array scripts{L"ild_gameplay.script", L"ild_script_repairs.script", L"ild_mod_repairs.script",
+        L"ild_quest_repairs.script", L"ild_recipe_repairs.script"};
+    for (const auto script : scripts)
+    {
+        std::error_code error;
+        if (!std::filesystem::is_regular_file(root / L"gamedata" / L"scripts" / script, error))
+            return std::wstring(L"gamedata\\scripts\\") + script;
+    }
+    return {};
+}
+
+// Said once, before the game has a window: the player who unpacked the wrong archive learns which one to take.
+void warn_incomplete_payload(const std::wstring& missing)
+{
+    const auto text = std::wstring(L"\u0424\u0438\u043a\u0441\u043f\u0430\u043a \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d "
+        L"\u043d\u0435 \u043f\u043e\u043b\u043d\u043e\u0441\u0442\u044c\u044e: \u043d\u0435\u0442 \u0444\u0430\u0439\u043b\u0430 ") + missing +
+        L".\n\u0420\u0430\u0441\u043f\u0430\u043a\u0443\u0439\u0442\u0435 \u0432 \u043a\u043e\u0440\u0435\u043d\u044c \u0438\u0433\u0440\u044b "
+        L"\u043f\u043e\u043b\u043d\u044b\u0439 \u0430\u0440\u0445\u0438\u0432 In-the-line-of-duty-fixes-" ILD_VERSION_W
+        L"-Setup_Manual.zip. Update_Patch \u0434\u043e\u043f\u043e\u043b\u043d\u044f\u0435\u0442 \u0442\u043e\u043b\u044c\u043a\u043e "
+        L"\u0443\u0436\u0435 \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u043b\u0435\u043d\u043d\u0443\u044e \u043f\u0440\u0435\u0434\u044b\u0434\u0443\u0449\u0443\u044e "
+        L"\u0432\u0435\u0440\u0441\u0438\u044e.\n\n"
+        L"The fix pack is incomplete: " + missing + L" is missing.\nExtract the full archive In-the-line-of-duty-fixes-"
+        ILD_VERSION_W L"-Setup_Manual.zip into the game root. Update_Patch only completes the previous release it was "
+        L"cut against.\n\nThe game will start without the pack's script repairs.";
+    MessageBoxW(nullptr, text.c_str(), L"In the Line of Duty Fixes", MB_OK | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND);
+}
+
+// What the update helper left behind the last time it ran: the outcome of its check, with its error if any.
+void record_update(std::string& report, const std::filesystem::path& root)
+{
+    report += "\n[update]\n";
+    const auto text = read_small_file(root / L".ild-fixes" / L"runtime" / L"update-last.txt", 1024);
+    if (text.empty())
+    {
+        report += "  no update check recorded yet\n";
+        return;
+    }
+    std::string_view rest(text);
+    while (!rest.empty())
+    {
+        const auto end = rest.find('\n');
+        auto line = rest.substr(0, end);
+        rest.remove_prefix(end == rest.npos ? rest.size() : end + 1);
+        if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+        if (line.find('=') != line.npos && line.size() <= 200) report += "  " + std::string(line) + "\n";
+    }
+}
 
 [[nodiscard]] std::string_view pinned_outcome(ild::PinnedRepair result)
 {
@@ -332,10 +399,12 @@ enum class ScriptFile { none, console_script, actor_script, menu_script, config 
     }
     if (kind == ScriptFile::actor_script)
     {
-        const auto bound = ild::script_patch::bind_gameplay(bytes);
-        note_once(actor_noted, "gameplay repairs bound to bind_stalker.script", bound ? "ok" :
+        using ild::script_patch::Binding;
+        const auto binding = ild::script_patch::bind_gameplay(bytes, lua_payload_complete.load(std::memory_order_acquire));
+        note_once(actor_noted, "gameplay repairs bound to bind_stalker.script", binding == Binding::bound ? "ok" :
+            binding == Binding::skipped ? "skipped, the Lua payload is incomplete, see [installation]" :
             "FAILED, the anchor was not found");
-        return bound;
+        return binding != Binding::unsupported_source;
     }
     if (kind == ScriptFile::menu_script)
     {
@@ -477,6 +546,22 @@ BOOL CALLBACK install_fixes(PINIT_ONCE, PVOID, PVOID*)
     for (std::size_t index = 0; index < identities.size(); ++index)
         validated[index] = record_identity(report, identities[index]);
 
+    // The Lua payload has to be whole before anything binds into it: the actor binding, the menu binding and
+    // the dialog repairs that name its functions all stand down when a script is missing, and the player is
+    // told which archive puts it right.
+    const auto payload_missing = missing_payload_file(root);
+    lua_payload_complete.store(payload_missing.empty(), std::memory_order_release);
+    ild::set_lua_payload_present(payload_missing.empty());
+    report += "\n[installation]\n";
+    report += payload_missing.empty() ? std::string("  Lua payload = complete\n") :
+        "  Lua payload = INCOMPLETE, " + utf8(payload_missing) + " is missing\n";
+    auto version_file = read_small_file(root / L".ild-fixes" / L"version.txt", 64);
+    while (!version_file.empty() && (version_file.back() == '\n' || version_file.back() == '\r' || version_file.back() == ' '))
+        version_file.pop_back();
+    report += "  version file = " + (version_file.empty() ? std::string("absent") : version_file) +
+        (version_file.empty() || version_file == ILD_VERSION ? "\n" : ", this loader is " ILD_VERSION "\n");
+    if (!payload_missing.empty()) warn_incomplete_payload(payload_missing);
+
     // Only the tweaks that write to fixed addresses need the builds above, and each checks its own patch site
     // before touching anything. Script, config and Lua repairs, the updater and the options it carries work on
     // any build of this engine, including one without the mod's own binaries.
@@ -516,8 +601,10 @@ BOOL CALLBACK install_fixes(PINIT_ONCE, PVOID, PVOID*)
     // Files below the engine's mapping threshold never reach the hook above, so the reader is caught as well.
     record(report, "small config repairs", ild::install_reader_repairs(root), validated[core_identity]);
 
-    // The bridge checks the console command layout against the executable's own exports, not its digest.
-    const auto payload_present = std::filesystem::exists(root / L"InTheLineOfDutyFixesUpdater.exe") &&
+    // The bridge checks the console command layout against the executable's own exports, not its digest. The
+    // menu binding calls into the gameplay payload as well, so it needs the whole of it.
+    const auto payload_present = payload_missing.empty() &&
+        std::filesystem::exists(root / L"InTheLineOfDutyFixesUpdater.exe") &&
         std::filesystem::exists(root / L"gamedata" / L"scripts" / L"ild_fix_ui.script") &&
         std::filesystem::exists(root / L"gamedata" / L"config" / L"ui" / L"ild_fixes_update.xml");
     const auto bridge = payload_present && ild::install_update_bridge(executable, root);
@@ -532,8 +619,15 @@ BOOL CALLBACK install_fixes(PINIT_ONCE, PVOID, PVOID*)
     const auto reader = real_read && ild::replace_iat_import(core_module, "MSVCR80.dll", "_read",
         reinterpret_cast<void*>(&read_hook));
     record(report, "script bindings and late repairs", reader);
-    if (bridge && reader) start_update_service(engine);
+    if (bridge && reader)
+    {
+        const auto error = start_update_service(engine);
+        report += error ? "  update helper started = FAILED, CreateProcessW error " + std::to_string(error) + "\n" :
+            std::string("  update helper started = ok\n");
+    }
+    else report += "  update helper started = skipped\n";
     record_settings(report, root);
+    record_update(report, root);
 
     const std::lock_guard lock(report_mutex);
     report_root = root;

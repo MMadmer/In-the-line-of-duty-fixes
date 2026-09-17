@@ -112,7 +112,7 @@ public:
         {
             selected_ = action.substr(5, 64);
             // Keys answered from memory never need the helper's status file.
-            if (selected_ != "clock" && !selected_.starts_with("diag_")) refresh();
+            if (selected_ != "clock" && selected_ != "pack_version" && !selected_.starts_with("diag_")) refresh();
             return;
         }
         // Player settings the game itself has no command for. They live beside the fix pack rather than in
@@ -191,6 +191,7 @@ public:
     {
         std::string value;
         if (selected_ == "clock") value = std::to_string(GetTickCount64());
+        else if (selected_ == "pack_version") value = ILD_VERSION;
         else if (selected_.starts_with("setting_"))
         {
             const auto found = settings_.find(selected_.substr(8));

@@ -81,15 +81,19 @@ bool bind_update_menu(std::span<std::byte> source)
     return true;
 }
 
-bool bind_gameplay(std::span<std::byte> source)
+Binding bind_gameplay(std::span<std::byte> source, bool payload_present)
 {
     const auto original = as_bytes("printf(\"actor net spawn\")");
     const auto replacement = as_bytes("ild_gameplay.install()");
     const auto match = std::search(source.begin(), source.end(), original.begin(), original.end());
     if (match == source.end() ||
-        std::search(match + original.size(), source.end(), original.begin(), original.end()) != source.end()) return false;
-    std::copy(replacement.begin(), replacement.end(), match);
-    std::fill(match + replacement.size(), match + original.size(), std::byte{' '});
+        std::search(match + original.size(), source.end(), original.begin(), original.end()) != source.end())
+        return Binding::unsupported_source;
+    if (payload_present)
+    {
+        std::copy(replacement.begin(), replacement.end(), match);
+        std::fill(match + replacement.size(), match + original.size(), std::byte{' '});
+    }
     const auto replace_equal = [&](std::string_view before, std::string_view after)
     {
         const auto old_bytes = as_bytes(before);
@@ -111,6 +115,6 @@ bool bind_gameplay(std::span<std::byte> source)
     replace_equal("packer:w_bool(true)", "packet:w_u8(0)     ");
     blank("utils.w_CTime(packet, self.st.disable_input_time)");
     replace_equal("stored_input_time == true then", "stored_input_time == 1    then");
-    return true;
+    return payload_present ? Binding::bound : Binding::skipped;
 }
 }

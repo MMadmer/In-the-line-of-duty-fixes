@@ -50,4 +50,7 @@
         <texture>ui_button_ordinary</texture>
         <text font="letterica16" align="c"/>
     </disable>
+    <version_line x="15" y="718" width="600" height="20">
+        <text font="letterica16" align="l" r="150" g="150" b="150"/>
+    </version_line>
 </main>

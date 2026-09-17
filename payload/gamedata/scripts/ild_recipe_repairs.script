@@ -102,10 +102,6 @@ local function wrap_window(window_class, recipes)
     for index, recipe in ipairs(recipes) do wrap_handler(window_class, index, recipe) end
 end
 
--- APPEND VERBATIM to D:\Games\In-the-line-of-duty-fixes\payload\gamedata\scripts\ild_recipe_repairs.script
--- (it is the pack script that already owns this window and runs at load time alongside ild_script_repairs.script;
--- the block needs its file-locals weapon_recipes / inventory_counts / has_ingredients and its install()).
-
 -- ---------------------------------------------------------------------------------------------------------
 -- Weapon assembly: the benches that could never be finished.
 --
@@ -271,6 +267,59 @@ local function install_part_seeding()
     end
 end
 
+-- The Niva on the Bar's autopark: the window takes the parts and grants bar_gg_nivy_pochinil, which nothing
+-- in the mod reads - the car stays broken, the bench stays open and the parts can be paid a second time. Once
+-- the portion is held the repair button stays off and its handler does nothing.
+local function install_niva_receipt()
+    local window = avtodroch and avtodroch.slom_niva_pochin
+    if not window then return end
+    local original_init = window.InitControls
+    window.InitControls = function(self, ...)
+        local result = original_init(self, ...)
+        if has_alife_info("bar_gg_nivy_pochinil") then disable_button(self, 1) end
+        return result
+    end
+    local original_button = window.btn1
+    window.btn1 = function(self, ...)
+        if has_alife_info("bar_gg_nivy_pochinil") then
+            disable_button(self, 1)
+            return
+        end
+        return original_button(self, ...)
+    end
+end
+
+-- Headlights. The four car repairs of the Bar ask for five item_avto_fara between them, and the mod places
+-- one: in the checkpoint box of the Garbage, a Seeker stash. Two more come with the Zaporozhets' hood at 15%
+-- and the Wild Territory car at 5%, so the ZIL and the Kopeika - and the cars the barman sells after them -
+-- were a 0.75% chance without save-scumming. The author's own answer was to look in the stashes, so two more
+-- Seeker stashes of the same level and gate carry one each: three headlights for the three repairs that lead
+-- somewhere. The lists are read from the file into each manager instance, so the addition is made on the
+-- instance, once, and nothing is written into the save.
+local headlight_stashes = {"gar_secret_bus_tube", "gar_secret_deadman"}
+
+local function install_headlights()
+    if not treasure_manager or type(treasure_manager.get_treasure_manager) ~= "function" then return end
+    local original_get = treasure_manager.get_treasure_manager
+    treasure_manager.get_treasure_manager = function(...)
+        local manager = original_get(...)
+        if manager and not manager.ild_headlights and manager.treasure_info then
+            manager.ild_headlights = true
+            for _, key in ipairs(headlight_stashes) do
+                local entry = manager.treasure_info[key]
+                if entry and entry.items then
+                    local present = false
+                    for _, item in ipairs(entry.items) do
+                        if item.section == "item_avto_fara" then present = true end
+                    end
+                    if not present then table.insert(entry.items, {section = "item_avto_fara", prob = 1}) end
+                end
+            end
+        end
+        return manager
+    end
+end
+
 function install()
     if installed then return end
     for name, recipe in pairs(vehicle_recipes) do wrap_window(avtodroch[name], {recipe}) end
@@ -278,6 +327,8 @@ function install()
     pcall(install_part_aliases)
     pcall(install_vintorez_button)
     pcall(install_part_seeding)
+    pcall(install_niva_receipt)
+    pcall(install_headlights)
     -- install() runs from the actor binder, so this actor's net_spawn has already gone by.
     if db.actor then seed_pending, save_loaded, seed_since = true, false, nil end
     installed = true

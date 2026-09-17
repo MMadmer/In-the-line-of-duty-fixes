@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -23,6 +24,7 @@ namespace IldFixes.Updater
         private readonly string statusPath;
         private readonly string commandPath;
         private readonly string resultPath;
+        private readonly string lastCheckPath;
         private Process game;
         private long gameStart;
         private CheckResult result;
@@ -46,6 +48,9 @@ namespace IldFixes.Updater
             statusPath = Path.Combine(runtime, "status-" + session + ".txt");
             commandPath = Path.Combine(runtime, "command-" + session + ".txt");
             resultPath = Path.Combine(runtime, "apply-result.txt");
+            // Survives the session cleanup: the loader copies it into the next report, so a check that failed or
+            // a helper that found nothing leaves a trace the player can send.
+            lastCheckPath = Path.Combine(runtime, "update-last.txt");
         }
 
         internal int Run(bool checkOnly, bool downloadOnly)
@@ -54,25 +59,63 @@ namespace IldFixes.Updater
             if ((File.GetAttributes(runtime) & FileAttributes.ReparsePoint) != 0)
                 return 4;
             if (!OpenGame())
+            {
+                WriteLastCheck("no_game", string.Empty);
                 return 6;
+            }
             RemoveStaleSessionFiles();
+            UpdateApplier.RemoveRetiredFiles(context.GameDirectory, UpdateApplier.ReadManagedFiles(context.GameDirectory));
             if (File.Exists(commandPath))
                 File.Delete(commandPath);
             WriteStatus();
+            // The release list comes from an API that allows sixty unauthenticated requests an hour per address,
+            // so a player behind a shared address is refused more often than not. A refusal or a broken connection
+            // is retried while the game runs - after the pause the API names, or a short one - and when every try
+            // fails the release list published beside the repository is read instead.
+            int attempt = 0;
+            while (true)
+            {
+                try
+                {
+                    result = client.Check();
+                    break;
+                }
+                catch (Exception error)
+                {
+                    lastError = error.Message;
+                    TimeSpan delay;
+                    if (attempt < 2 && RetryDelay(error, attempt, out delay) && WaitWithHeartbeat(delay))
+                    {
+                        ++attempt;
+                        continue;
+                    }
+                    result = TryFallback();
+                    if (result == null)
+                    {
+                        state = "check_failed";
+                        WriteStatus();
+                        WriteLastCheck(state, lastError);
+                        return 10;
+                    }
+                    lastError = string.Empty;
+                    break;
+                }
+            }
             try
             {
-                result = client.Check();
                 majorPending = result.Major != null &&
                     !File.Exists(Path.Combine(context.GameDirectory, ".ild-fixes", "major-notice-disabled"));
                 state = majorPending ? "major_available" : result.Update != null ? "available" : "current";
                 ReportPreviousApply();
                 WriteStatus();
+                WriteLastCheck(state, lastError);
             }
             catch (Exception error)
             {
                 state = "check_failed";
                 lastError = error.Message;
                 WriteStatus();
+                WriteLastCheck(state, lastError);
                 return 10;
             }
 
@@ -116,6 +159,7 @@ namespace IldFixes.Updater
                     {
                         state = "dismissed";
                         WriteStatus();
+                        WriteLastCheck(state, lastError);
                         return 0;
                     }
                     else if (command == "download" &&
@@ -167,6 +211,75 @@ namespace IldFixes.Updater
             }
         }
 
+        // The pause before a check is tried again: what the API asks for after a refusal, capped at a quarter of
+        // an hour, or half a minute and then two for anything else. False when the error is not worth retrying.
+        private static bool RetryDelay(Exception error, int attempt, out TimeSpan delay)
+        {
+            delay = attempt == 0 ? TimeSpan.FromSeconds(30) : TimeSpan.FromMinutes(2);
+            WebException web = error as WebException;
+            HttpWebResponse response = web != null ? web.Response as HttpWebResponse : null;
+            if (response == null)
+                return true;
+            int status = (int)response.StatusCode;
+            if (status != 403 && status != 429)
+                return status >= 500;
+            double seconds;
+            string retryAfter = response.Headers["Retry-After"];
+            string reset = response.Headers["X-RateLimit-Reset"];
+            if (!string.IsNullOrEmpty(retryAfter) && double.TryParse(retryAfter, NumberStyles.Float,
+                CultureInfo.InvariantCulture, out seconds))
+                delay = TimeSpan.FromSeconds(seconds);
+            else if (!string.IsNullOrEmpty(reset) && double.TryParse(reset, NumberStyles.Float,
+                CultureInfo.InvariantCulture, out seconds))
+                delay = TimeSpan.FromSeconds(seconds) - (DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+            if (delay < TimeSpan.FromSeconds(5))
+                delay = TimeSpan.FromSeconds(5);
+            if (delay > TimeSpan.FromMinutes(15))
+                delay = TimeSpan.FromMinutes(15);
+            return true;
+        }
+
+        // Waits out the pause a second at a time, keeping the status file's heartbeat alive; false once the game is gone.
+        private bool WaitWithHeartbeat(TimeSpan delay)
+        {
+            DateTime until = DateTime.UtcNow + delay;
+            while (DateTime.UtcNow < until)
+            {
+                if (game.HasExited)
+                    return false;
+                WriteStatus();
+                Thread.Sleep(1000);
+            }
+            return !game.HasExited;
+        }
+
+        private CheckResult TryFallback()
+        {
+            try { return client.CheckFallback(); }
+            catch (Exception) { return null; }
+        }
+
+        private void WriteLastCheck(string outcome, string error)
+        {
+            try
+            {
+                string version = result != null && result.Update != null ? result.Update.Version.ToString() :
+                    result != null && result.Major != null ? result.Major.Version.ToString() : ProductInfo.VersionText;
+                string text = "time=" + DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture) +
+                    "\npid=" + context.GamePid.ToString(CultureInfo.InvariantCulture) +
+                    "\ninstalled=" + ProductInfo.VersionText + "\nstate=" + outcome + "\nversion=" + version +
+                    "\nerror=" + (error ?? string.Empty).Replace("\r", " ").Replace("\n", " ") + "\n";
+                string temporary = lastCheckPath + ".tmp";
+                File.WriteAllText(temporary, text, new UTF8Encoding(false));
+                if (File.Exists(lastCheckPath))
+                    File.Replace(temporary, lastCheckPath, null);
+                else
+                    File.Move(temporary, lastCheckPath);
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+
         private static bool ProcessAlive(int pid)
         {
             try
@@ -207,6 +320,7 @@ namespace IldFixes.Updater
                 }
             }
             catch (IOException) { return; }
+            catch (UnauthorizedAccessException) { return; }
             TryDelete(resultPath);
             if (code != 0 && result.Update != null && !majorPending)
             {
@@ -250,6 +364,7 @@ namespace IldFixes.Updater
                 state = "download_failed";
                 lastError = error.Message;
                 WriteStatus();
+                WriteLastCheck(state, lastError);
             }
         }
 
@@ -290,6 +405,7 @@ namespace IldFixes.Updater
                 });
                 state = "apply_started";
                 WriteStatus();
+                WriteLastCheck(state, string.Empty);
                 return 0;
             }
             catch (Exception error)

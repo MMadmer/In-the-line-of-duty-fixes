@@ -65,6 +65,15 @@ local function fixture()
     }
     env.db = {actor = actor}
     env.alife = function() return {object = function(_, id) return objects[id] end} end
+    calls.infos = {}
+    env.has_alife_info = function(name) return calls.infos[name] == true end
+    -- The treasure manager as the mod builds it: one instance, its records read from the file.
+    calls.manager = {treasure_info = {
+        gar_secret_bus_tube = {items = {{section = "antirad", prob = 5}, {section = "otmuchki", prob = 3}}},
+        gar_secret_deadman = {items = {{section = "af_electra_sparkler", prob = 1}}},
+        gar_secret_box_blockpost = {items = {{section = "item_avto_fara", prob = 1}}}
+    }}
+    env.treasure_manager = {get_treasure_manager = function() return calls.manager end}
     env.avtodroch, env.stanok = {}, {}
     for _, recipe in ipairs(recipes) do
         local window_class = env[recipe.module][recipe.class] or {}
@@ -120,6 +129,44 @@ local function fixture()
         return setmetatable({}, {__index = env[recipe.module][recipe.class]})
     end
     return env, calls, module, stock, window, add, inventory, objects
+end
+
+-- The Niva: repaired once, its bench stays shut and the parts are not paid twice.
+do
+    local env, calls, module, stock, window = fixture()
+    module.install()
+    local niva = recipes[3]
+    stock(niva)
+    local dialog = window(niva)
+    equal(dialog:InitControls("init token"), "init token", "the initializer return is kept")
+    equal(dialog.btn_1.enabled, true, "a Niva not yet repaired takes its parts")
+    calls.infos.bar_gg_nivy_pochinil = true
+    dialog = window(niva)
+    dialog:InitControls("init token")
+    equal(dialog.btn_1.enabled, false, "a Niva already repaired offers no button")
+    equal(dialog:btn1(), nil, "and a click does nothing")
+    equal(calls.actions, 0, "the parts are not taken again")
+end
+
+-- Headlights: two Seeker stashes of the Garbage carry one each, once per manager instance.
+do
+    local env, calls, module = fixture()
+    module.install()
+    local manager = env.treasure_manager.get_treasure_manager()
+    equal(manager, calls.manager, "the mod's own instance is handed back")
+    local function lights(key)
+        local count = 0
+        for _, item in ipairs(manager.treasure_info[key].items) do
+            if item.section == "item_avto_fara" then count = count + item.prob end
+        end
+        return count
+    end
+    equal(lights("gar_secret_bus_tube"), 1, "the bus stash carries a headlight")
+    equal(lights("gar_secret_deadman"), 1, "and so does the dead man's")
+    equal(#manager.treasure_info.gar_secret_bus_tube.items, 3, "beside what it always held")
+    env.treasure_manager.get_treasure_manager()
+    equal(lights("gar_secret_bus_tube"), 1, "once")
+    equal(lights("gar_secret_box_blockpost"), 1, "the stash that always had one is left alone")
 end
 
 for _, recipe in ipairs(recipes) do

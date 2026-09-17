@@ -93,6 +93,22 @@ try {
 }
 finally { $stream.Dispose() }
 
+# The patch joins the release list Build-Package.ps1 wrote beside the full archive.
+$latestPath = Join-Path (Split-Path -Parent $archive) 'latest.json'
+if (Test-Path -LiteralPath $latestPath) {
+    $latest = @(Get-Content -LiteralPath $latestPath -Raw | ConvertFrom-Json)
+    $entry = $latest | Where-Object { $_.tag_name -eq $version } | Select-Object -First 1
+    if ($entry -and -not ($entry.assets | Where-Object { $_.name -eq [IO.Path]::GetFileName($archive) })) {
+        $entry.assets = @($entry.assets) + @([ordered]@{
+            name = [IO.Path]::GetFileName($archive)
+            browser_download_url = "https://github.com/MMadmer/In-the-line-of-duty-fixes/releases/download/$version/$([IO.Path]::GetFileName($archive))"
+            digest = 'sha256:' + (Get-FileHash -LiteralPath $archive).Hash.ToLowerInvariant()
+            size = (Get-Item -LiteralPath $archive).Length
+        })
+        [IO.File]::WriteAllText($latestPath, (ConvertTo-Json @($latest) -Depth 6), (New-Object Text.UTF8Encoding $false))
+    }
+}
+
 "Archive=$archive"
 "SHA256=$((Get-FileHash -LiteralPath $archive).Hash)"
 "Base=$BaseVersion"

@@ -5,7 +5,16 @@
 
 namespace ild::script_patch
 {
-[[nodiscard]] bool bind_gameplay(std::span<std::byte> source);
+enum class Binding
+{
+    bound,
+    skipped,
+    unsupported_source,
+};
+
+// The save-format repairs of the actor script are made either way; the call into the Lua payload only when the
+// payload is on disk, or the actor's spawn would die on a module the engine cannot load.
+[[nodiscard]] Binding bind_gameplay(std::span<std::byte> source, bool payload_present = true);
 enum class Result
 {
     applied,

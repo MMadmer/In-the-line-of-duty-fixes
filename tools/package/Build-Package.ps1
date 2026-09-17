@@ -75,6 +75,22 @@ if (Test-Path -LiteralPath $archive) { throw "Candidate archive already exists: 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [IO.Compression.ZipFile]::CreateFromDirectory($packageRoot, $archive, [IO.Compression.CompressionLevel]::Optimal, $false)
 $archiveHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
+# The release list in the shape of the GitHub API's answer, for the helper's fallback when the API refuses.
+# It is committed as updates/latest.json only once the release and its assets are published (PROJECT_RULES 8.1);
+# Build-Patch.ps1 adds the patch asset to it.
+$notes = Get-Content -LiteralPath (Join-Path $repository 'RELEASE_NOTES.md') -Raw
+$release = [ordered]@{
+    tag_name = $version; draft = $false; prerelease = $false
+    html_url = "https://github.com/MMadmer/In-the-line-of-duty-fixes/releases/tag/$version"
+    body = $notes
+    assets = @([ordered]@{
+        name = [IO.Path]::GetFileName($archive)
+        browser_download_url = "https://github.com/MMadmer/In-the-line-of-duty-fixes/releases/download/$version/$([IO.Path]::GetFileName($archive))"
+        digest = 'sha256:' + $archiveHash.ToLowerInvariant()
+        size = (Get-Item -LiteralPath $archive).Length
+    })
+}
+[IO.File]::WriteAllText((Join-Path $artifacts 'latest.json'), (ConvertTo-Json @($release) -Depth 6), $utf8)
 Write-Output "Candidate only; release/runtime QA is not implied by packaging."
 Write-Output "Archive=$archive"
 Write-Output "SHA256=$archiveHash"

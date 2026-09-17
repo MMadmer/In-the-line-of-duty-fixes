@@ -200,8 +200,17 @@ reference installation.
 - A release carries `In-the-line-of-duty-fixes-VERSION-Setup_Manual.zip`, the
   complete runtime payload for drag-and-drop installation, and, when there is a
   previous release to cut it against, `In-the-line-of-duty-fixes-VERSION-Update_Patch.zip`,
-  which carries only what changed since that release. They are alternatives and
-  the player needs exactly one. The first release of a major line has no patch.
+  which carries only what changed since that release. The patch is a delta: it
+  fits only over the installed release it was cut against and is what the
+  in-game updater downloads; a manual installation always takes the full
+  archive. Never call the two alternatives. The first release of a major line
+  has no patch.
+- A release also carries `latest.json`, the release list in the shape of the
+  GitHub API's answer, which the packaging scripts write beside the archives.
+  Once the release and its assets are published, the file is committed as
+  `updates/latest.json`; the helper reads it from raw.githubusercontent.com
+  when the API refuses, so it must never list a release whose assets are not
+  up yet.
 - Both archives must produce the same installed file set, must contain only
   project-owned paths, and must never contain an original game or mod file, a
   save, or the player's `user.ltx`.
@@ -255,8 +264,13 @@ reference installation.
   the section is absent. Keep it to a headline; a bullet list there is ignored.
 - In `Installation` state that the archive is extracted into the game root, that
   no original file is replaced, and that saves and the original mod are
-  untouched. When a patch archive is also published, state that the two are
-  alternatives and that the in-game updater picks the patch by itself.
+  untouched. When a patch archive is also published, state which installed
+  release it fits over and that the in-game updater applies it by itself.
+- While installations of 1.0.5-1.0.7 exist, the first item of `Changes` (both
+  languages) tells those players that the in-game update cannot install and
+  that one manual unpack of the full archive puts them back on the update path.
+  Those helpers show only the `Changes` items and the `Theme`, never the
+  `Installation` section, so that is the one place they can read it.
 - Before publishing, run a clean build if one has not been done, and verify the
   version number, the asset names, and the text against the packages actually
   built.

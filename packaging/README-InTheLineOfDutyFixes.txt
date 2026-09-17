@@ -1,9 +1,16 @@
 In the Line of Duty Fixes
 
 Installation:
-Extract the complete archive into the Shadow of Chernobyl game root. Its bin and
-gamedata directories merge with existing directories; no original file should be
-replaced. Cancel extraction if it asks to replace an unknown existing file.
+Extract the complete archive (Setup_Manual) into the Shadow of Chernobyl game
+root. Its bin and gamedata directories merge with existing directories; no
+original file should be replaced. Cancel extraction if it asks to replace an
+unknown existing file. The Update_Patch archive is a delta cut against the
+previous release: it fits only over that installed release and is what the
+in-game updater applies. Unpacked by hand over anything else it leaves the pack
+incomplete; the loader then names the missing file at start, notes it under
+[installation] in the loader report and runs without its script repairs.
+Installations of 1.0.5, 1.0.6 and 1.0.7 cannot update from inside the game;
+one manual unpack of the full archive puts them back on the update path.
 
 The complete runtime consists of the dinput8 loader, updater helper, uniquely named
 Lua/UI files, and the .ild-fixes directory with the version, ownership and update
@@ -18,6 +25,13 @@ their patch site is the validated one; on any other build each one skips itself
 without a message, the loader report says so, and the rest of the pack still works.
 An installation of 1.0.3 or older without the mod's binaries never saw the update
 window, so it has to install this version by hand once.
+
+Rollback: to go back to an older release, first remove the files listed in the
+current .ild-fixes\managed-files.txt, then unpack the older archive. An older
+archive unpacked straight over a newer one leaves newer files outside the
+ownership list; since 1.0.11 the updater treats the pack's own gamedata files
+as its own whatever list they are on, and removes the text file 1.0.5-1.0.7
+shipped, so such an installation still updates.
 
 Validated binaries (SHA-256):
   bin\XR_3DA.exe                   B22BC15B94A2A58C4E7046E46D46A3750D80C399BA8F37A2EF40CCF78EE3126D
@@ -115,11 +129,17 @@ leaves the game's own settings exactly as they were.
 
 If something did not take effect:
 Every launch writes .ild-fixes\runtime\loader-report.txt. It lists each file the
-pack checks with its expected and actual SHA-256, whether each repair installed,
-the stored options, and whether Windows redirects what the game writes into its
-folder (UAC virtualization in a protected folder such as Program Files); while the
-game runs it adds whether the console spam fix and the script bindings took effect.
-Send that file when reporting a problem. A windowed screen mode also leaves
+pack checks with its expected and actual SHA-256, whether the Lua payload is
+complete, whether each repair installed, whether the update helper started, the
+stored options, the outcome of the previous update check ([update], copied from
+.ild-fixes\runtime\update-last.txt, which the helper writes at the end of every
+check) and whether Windows redirects what the game writes into its folder (UAC
+virtualization in a protected folder such as Program Files); while the game runs
+it adds whether the console spam fix and the script bindings took effect. The
+update check runs once per launch; the main menu shows the pack version and the
+check's verdict bottom left. Send loader-report.txt, update-last.txt and
+.ild-fixes\version.txt when reporting a problem, including "no update was
+offered". A windowed screen mode also leaves
 .ild-fixes\runtime\window-state.txt: a few lines naming the window the pack found
 and the style it applied. If the loader report is absent, the loader never ran:
 check that bin\dinput8.dll is present and that nothing, an antivirus included,

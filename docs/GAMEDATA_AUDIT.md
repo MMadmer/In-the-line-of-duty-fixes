@@ -301,7 +301,9 @@ way of turning a scripted abort into a fatal error — the visible `_g.script:23
 the symptom, and the cause is the `ERROR:` line the log prints just before it. (The fifth pass reversed this:
 the message is what players actually send, so the tail now names the reason.) Yura's `walker5` fallback timer
 is commented out by the author and is a design decision, not a defect; the physical stalls it would have masked
-are the watchdog's job. The 20 000-rouble exit charge is wired and reachable in the shipped files; the forum's
+are the watchdog's job. (The eleventh pass reversed this too: the `;walker5` at `esc_qra2.ltx:82` leaves no way
+out of `walker45` when a boar is lost, so `ild_quest_repairs.script` enters the author's own `[walker5]` after
+150 s of Yura's own update time there - with live boars as well.) The 20 000-rouble exit charge is wired and reachable in the shipped files; the forum's
 "the money is not taken" is not reproducible from the data.
 
 ## Fifth pass: crashes on entering a level, and scenes that never played out — 2026-09-10
@@ -707,9 +709,12 @@ So the five thousand bought a sentence, and the portion the conversation grants 
 
 The pack finishes the branch along the line the author drew, and adds nothing beyond it.
 
-- **The chip is placed where he meant to hide it.** The first time `agro_tainik_detei3` starts its scheme - the
-  children's cache on Agroprom that already holds the rifle parts and the lockpicks - the chip is created inside
-  it, once, remembered in the actor's pstor so a reload cannot stack a second.
+- **The chip is placed where he meant to hide it.** (As 1.0.8 to 1.0.10 had it: the first time
+  `agro_tainik_detei3` starts its scheme the chip is created inside it. That never happened - see the sixteenth
+  pass: the cache is spawned by the diary on the tower, which nothing points at, and its custom data has no
+  `[logic]`, so the box gets no binder and no scheme hook of the pack ever fires on it. Since 1.0.11 the chip is
+  created server-side when the entry is given: inside the cache when it exists, otherwise at the spot the
+  author's script puts the cache on.)
 - **The hand-over is the conversation that was missing.** `ild_bronevik_detektor_gotov` is inserted into
   `dialogs_bar.xml` and into Bronevik's own topic list in `character_desc_bar.xml`, both at the files' exact
   length, paid for out of their indentation. It is gated on `bar_bronevik_pochini_detektor` - he has to have
@@ -729,9 +734,8 @@ The pack finishes the branch along the line the author drew, and adds nothing be
   to look at it, and a player who did that before this repair existed may well have sold the useless thing on.
   Requiring it back would strand exactly the saves this is meant to rescue, so the hand-over takes the broken
   detector only if the player still carries it.
-- **A cache that was already looted still yields the chip.** It is placed when the box starts its scheme, which
-  happens again on every entry to the level, so an old save gets it the next time the player is there - once,
-  because the actor's pstor remembers it.
+- **A cache that was already looted still yields the chip.** (1.0.8-1.0.10's claim; see above. Since 1.0.11 an
+  old save gets the chip on its first tick, wherever the player stands, once, and the actor's pstor keeps its id.)
 - **The two lines Bronevik and the actor say** carry their own CP1251 bytes, the way the depot hint and the
   Garbage PDA line do. A string file of the pack's own was tried first and never worked: SoC does not read the
   language folder, it opens the file names listed in `[string_table] files` in the archived `localization.ltx`,
@@ -797,10 +801,10 @@ which declares that icon.
 | Six sound paths in `sound_theme.script` and `xr_giditara.script` name files that exist nowhere | Every one is an instant "Can't open wave file": the Duty siren, the checkpoint loudspeaker, the drunk commander, the hangar tape, the garage radio and four strums in eleven on the guitar | Three are aliased onto the file the author meant, two are dropped from their theme, and the guitar's roll is replaced with the range the folder actually holds |
 | Yura's stash chain waits on kills and arrivals that a reload or a stray boar can make impossible | The most reported stall in the thread: he squats at the stash for good, or never speaks after the dogs | Deaths the chain missed are credited when the objects are provably gone, and the dig finishes on its own timer |
 | `tasks_darkvalley.xml` leaves the moonshine task's own objective with an empty `<infoportion_complete>` | «Самогон для Мазая» never closes | The header takes the portion its own last step already grants |
-| The mod's own monolith-suit errand grants `yan_find_scientist_semenov_start` | A task for an NPC the author removed lands in the PDA and never closes | The one grant is blanked; the errand's own portion, handover and spawn stay |
+| The mod's own monolith-suit errand grants `yan_find_scientist_semenov_start` | A task for an NPC the author removed lands in the PDA and never closes | The one grant is blanked; the errand's own portion, handover and spawn stay. (The sixteenth pass found the errand's own `monolit_have` and `monolit_done` declared nowhere, a fatal on the grant; both are declared now) |
 | `dialogs_garbage.xml` lost the `<next>` to Abram's refusal | The answer numbered "2." in its own text can never be chosen, and the Garbage logic waiting on its portion never hears it | The reply goes back beside its sibling, paid for out of the dialog's indentation |
 | `stanok.script:544` needs two part sections that are not defined, and three recipes' parts are placed nowhere | Three of the four level-2 recipes can never be built | The recipe takes the names `unique_items.ltx` really uses, and the orphan parts are seeded once into four stashes that already hold their siblings |
-| `moa_agro.script:67` spawns a second extra instead of the mod's own `agro_nemo_tyt_vujivet` | "Nemo", his escape along his own path and his FN2000 are never seen, although his section, profile, logic and path all exist | The spawn names the section the logic, the path and the loot were written for |
+| `moa_agro.script:67` spawns a second extra instead of the mod's own `agro_nemo_tyt_vujivet` | "Nemo", his escape along his own path and his FN2000 are never seen, although his section, profile, logic and path all exist | The spawn names the section the logic, the path and the loot were written for. (Withdrawn in 1.0.11: Nemo is immune to fire, wounds and strikes, his remark scheme cannot leave while he has an enemy, and the actor and Karabin are both his enemies, so he stood in the shoot-out for good and Karabin never came to the talk. The mod's second mortal extra is back and old saves lose their Nemo once) |
 | `bind_det_arts` builds its artefact registry once, never drops an id, and omits the expensive artefact of every family | Artefacts an anomaly drops in front of the player are invisible to every detector, recycled ids draw spots on crates, and the cheap detector beeps continuously | The registry is reconciled as the detector runs, stale ids are dropped, the five missing sections are added and the throttle is made a real one |
 | `bar_ckpint.daq_iashik_nac_two` removes exactly ten crates | A player who carried more is left with up to seven undroppable 5 kg quest crates | The whole stack drains, and a save already carrying spares is cleaned up |
 | The Radar antenna custom data raises the damage when a psy helmet is worn | The one field every playthrough crosses punishes the helmet the mod hands out for it | The helmet can no longer make the field worse than bare-headed |
@@ -1035,16 +1039,22 @@ the one crash on it. Everything below was read against the files and, where it m
 | Defect | Consequence | Repair |
 | --- | --- | --- |
 | `CUIInventoryWnd::ToSlot` (xrGame RVA `0x3BBF80`) owns drag-drop lists for the pistol, rifle and outfit slots only and leaves the grenade slot alone by itself; for every other slot it moves the item and then hands the cell to the list it does not have. The sixth pass repaired that for the knife. The mod's own fake torch carries the author's note that clicking the real torch «игра вылетала, как обычно» | Equipping a torch by hand from the rucksack or the belt is a crash; two players report it, one since 1.0.4, when a real torch first became reachable in the bag | The knife path of the detour serves every slot the window draws no list for (asked of `GetSlotList` itself, the slot in ECX and the window in EDX), with the slot entry at sixteen bytes a slot. A torch, PDA or detector is placed without `Activate` and without the activate-slot event, since it has no hands to be drawn into; the knife, binoculars and bolt are drawn as before. Verified on the player's save through the window's own entry: a second torch from the belt takes the slot, the first goes to the rucksack, the count is unchanged |
-| `kyza_logic.ltx:42` - Kuzma's wait at the anomaly ends on `on_timer = 100000 \| %+esc_kyzma_2% kamp`, and `esc_kyzma_2` is the portion his brother's dialog closes on. The scream dialog itself is gated only on `esc_spawn_tryp`, so it can be had at the camp, a hundred metres from where the corpse then spawns; the corpse's own timer (`trup_logic.ltx:6`) grants `del_esc_trup_stalk`, the gate of the brother's dialog, and an offline corpse never ticks | A player who does not follow Kuzma at night, or does not talk within his hundred seconds of probing, loses the brother's story for good - the reported case exactly | The timer still sends him home but no longer grants the portion (in memory, at the file's length); `del_esc_trup_stalk` is granted two seconds after the spawn wherever the actor stands, and its own action removes the corpse as the timer would have |
+| `kyza_logic.ltx:52` - Kuzma's wait at the anomaly ends on `on_timer = 100000 \| %+esc_kyzma_2% kamp`, and `esc_kyzma_2` is the portion his brother's dialog closes on. The scream dialog itself is gated only on `esc_spawn_tryp`, so it can be had at the camp, a hundred metres from where the corpse then spawns; the corpse's own timer (`trup_logic.ltx:6`) grants `del_esc_trup_stalk`, the gate of the brother's dialog, and an offline corpse never ticks | A player who does not follow Kuzma at night, or does not talk within his hundred seconds of probing, loses the brother's story for good - the reported case exactly | The timer still sends him home but no longer grants the portion (in memory, at the file's length); `del_esc_trup_stalk` is granted two seconds after the spawn wherever the actor stands, and its own action removes the corpse as the timer would have. (Since 1.0.11 the same line is repaired where it is parsed, so a save that spawned Kuzma before 1.0.9 - whose logic lives in the save - gets it too, and a closing portion such a timer already granted is withdrawn while the scream has not happened) |
 | `esc_zakorpat_po_doroge` is the only release of the prison's two extras (`delete.esc_del_chrez_zakorpata_jeoja`, `delet_esc_s4_apteky`), and that roadside talk can be walked past | The prisoner and the novice stand at the camp gate for the rest of the game, beside the Jegoj `esc_makarov_posle_prizraka` spawns for the player to free - the «двойник» of the report | Once that later portion is held, every `esc_jegoj` and `esc_novic_aptechka` object is released, once, remembered in the actor's pstor. The freed Jegoj (`jegoj_tehn2`) and the village one (`esc_jegoj3`) are matched by exact section and untouched |
 | `toneli_smerti.ltx:25-26` - the death tunnel's re-entry section disables the input after 6.5 s and ends at 13 s in `nil` with no `enable_ui` anywhere | Standing in the tunnel's restrictor - it reaches the bridge and the bus stop - for seven seconds after the scene leaves the actor blind and paralysed for good | `=enable_ui` rides on the 13-second line with the tunnel's call, at the line's exact length. The fade on re-entry is the author's and stays |
 | Every `ph_code` lock records an entered code only by switching its section, and `[logic] active` names the locked one | A lock opened and then unloaded with the level is a lock again, with the code unchanged - eight boxes across the mod, the report's stash among them | On the lock's first update the outcome its `on_code` condlist describes is replayed whenever every portion it grants is already held |
 | `artefacts.ltx` gives `af_gravi` `inv_weight = 0.0`, the one weightless artefact of fifty-eight; `fake_lom`, the rucksack stand-in the hidden-slot script swaps in for the crowbar, weighs 0.3 kg against the crowbar's 3.5 | «Грави весит 0.00», and a crowbar that gains three kilograms when taken in hand | Vanilla's 0.5 for the artefact and the crowbar's own weight for its stand-in, where the engine reads them |
 
-Examined and left as the author wrote them: the Toymaker on Agroprom is spawned by the boiler-house killer's
-surrender and nothing else, so shooting the killer first is a choice with a cost, and his dialog gates no quest;
-Yura on the Garbage removes himself when the Agroprom story starts (`gar_qra.ltx:21`, the author's `delme2`) and his
-job still completes on the map from the corpse; the drinking party's chain to the wagon is whole (the wagon
+Examined and left as the author wrote them: the Toymaker on Agroprom is spawned by the end of the boiler-house
+killer's talk (`agro_ybiica_start`), so shooting the killer before the talk is a choice with a cost (the
+sixteenth pass corrects the rest of this note: the Toymaker's aggressive branch leads to the poltergeist story
+and the room with the tower key and cassette 2, his peaceful branch led nowhere and locked that room for good,
+which is repaired now); Yura on the Garbage is released by the author's `delme2` on `agr_mozar_start` only from
+his first section `[walker]` (`gar_qra.ltx:14-22`), before the bandit's PDA is handed over, at his first online
+update after Mozar's dialog, so the player finds him gone on returning to the Garbage - at that stage he has
+given no PDA task, and the cost is the forest chain: the hatches never open, the tank camp and its journal stay
+out of reach and `gg_navuk_krasnorechi_lvl1` cannot be earned; once the PDA is delivered Agroprom no longer
+removes him; the drinking party's chain to the wagon is whole (the wagon
 Tikhonovich, his path and the guard all spawn at the wagon, the timers are numbered timers vanilla supports) and
 could not be made to fail from the files; the checkpoint safe's use area sits 0.7 m above the lock and cannot be
 judged without the model on screen; the Mauser's `anim_empty = empty` names a motion its model lacks, but no code in
@@ -1097,7 +1107,10 @@ now covers every earlier release and applies each a second time with the helper 
   that loses its backslashes, and whose `on_use = no_use` names a section that does not exist - the first kills the
   game when the case comes online, the second when it is used, and players read the second as a crash with no
   log. Both are repaired: the theme since 1.0.0, the case's logic since small config repairs reached the game in
-  1.0.3. The stash is information sold for 2 000 and a coded safe, and the computer is a looping sound box that
+  1.0.3 - for cases created after that; a case created earlier keeps its logic in the save, and since 1.0.11 the
+  dead use is redirected where the condlist is parsed, so those saves are covered too. The logless crash itself
+  is not closed by this: the player of #565176 reports it on 1.0.8, after both repairs, and it went away only
+  on a fresh playthrough, so it stays open (see the sixteenth pass). The stash is information sold for 2 000 and a coded safe, and the computer is a looping sound box that
   stays openable; neither is released, moved or grows a save. A sweep of every loose logic file for switches to
   sections that do not exist found the psi case, the X18 pseudogiant's `mob_walker@6` the pack already redirects,
   and Yura's `walker7` on the Garbage, which waits on a portion nothing declares or grants - nothing new to repair.
@@ -1162,17 +1175,22 @@ walk ends 52 m from the actor, and a slow path deserves the room.
 
 Verified: unit tests cover the killer's file at its exact size, the remembered and replayed lock sections, the
 timed stove and the finished hood that are and are not remembered, and the rat king's class; on a loaded save
-the engine reads that class as `II_FOOD`, the door and box hooks are in place, and the scripts bind cleanly.
+the door and box hooks are in place, and the scripts bind cleanly. (The rat king's class was read back through
+`system_ini():r_string`, which is the text hook itself; the object factory reads the class through `r_clsid` in
+the executable, which the pack did not take, so the key kept eating the artefact. The sixteenth pass takes that
+import, and the check is the object's own `clsid()`.)
 
 ### Examined and deliberately not changed
 
 - **The author's word that the pack cut his cutscenes.** Checked against the files: the rally countdown the
   pack falls back on after 40 s is a 4.5-second sound; the X18 finale portion is delivered only once the fight
   giant is dead or released for a full minute, and the cutscene giant stands until that portion arrives; the
-  Letyagin release fires only when the farewell has not ended on its own after three minutes. No scene is
-  shortened while it is playing.
+  Letyagin release fires only when the farewell has not ended on its own after three minutes. (Two floors of the
+  pack's own did cut a speech, the sixteenth pass measured them: the Bar formation's 25 s against a 54.05 s
+  speech and the SS commander's 30 s against 31.99 s. Both floors are past the speech now.)
 - **The X18 grate** («рубильник опустил, решётка не открылась»). The spawn's own logic: the far-room lever
-  powers the grate button, and the shocking switch under the panel takes that power away again
+  powers the grate button, and the shocking switch `labx_kakoito_ruchag2` - between the far room and the grate
+  button, some fifty metres from the six-button panel - takes that power away again
   (`on_info2 = {+rybilnik_viebal} %-labx_knopka_reshetki_vkl% ph_button@vukl0`) while it powers the other
   door's button. Throwing both is the puzzle, not a defect.
 - **The siren at Zhaba's base** never stops after `td_spawn_ad` because the author commented its `on_use` out
@@ -1185,3 +1203,92 @@ the engine reads that class as `II_FOOD`, the door and box hooks are in place, a
 - **Makarov's hand-in repeating after the safe** and Sidorovich's talk returning: both dialogs are gated on
   their own portion, granted on the last phrase; leaving either early is what keeps them available.
 - **The checkpoint parcel box** is the twelfth pass's note again: it takes a bottle the player still carries.
+
+## Sixteenth pass: pages 43 to 45 of the mod's thread and pages 2 to 4 of the pack's own - 2026-09-17
+
+Every report of both threads was read against the files, the engine sources and the pack's own code; the
+detector entry's missing spot, sent as a PDA screenshot, was traced to its root. The work order is kept outside
+the repository (`qa/forum-2026-09-17/REPORT.md`). Fifty-five real defects, of which nineteen were the pack's
+own; every one of them is repaired or, where the repair itself was the defect, withdrawn.
+
+### The detector chain, as it really is
+
+The map spot was missing because there was nothing to put it on. `agro_tainik_detei3` is spawned only by the
+diary on the Agroprom tower (`info_l03agroprom.xml:119-128`), a side errand nothing points at; its custom data
+(`tainik_detei3.ltx`) holds `[spawn]` and no `[logic]`, so `bind_physic_object.init` never binds it and the
+`ph_idle.set_scheme` hook 1.0.8 to 1.0.10 waited for never fired - no chip was ever placed, for anyone, and step
+1 was impossible in every save. Since 1.0.11 the chip is created server-side before the entry is given: inside
+the cache when the diary's portion is held and the cache is found, otherwise loose at the very spot the author's
+script puts the cache on (36.56, 3.86, -123.4, vertices 274164/451), so a cache spawned later stands beside it
+and neither its supplies nor the chip is ever overwritten. The chip's id and the id of whatever carries the spot
+are kept in the actor's pstor. Step 1 is keyed to that carrier at give time (`set_map_location`,
+`set_object_id`, `set_map_hint`), step 2 to Bronevik in the task callback the moment step 1 closes - the one
+place the engine hands its task object to Lua, and the callback has to be registered again on spawn because
+`reinit` registers the mod's own before the pack's wrapper exists - so the PDA draws its arrow for a new entry.
+An entry an older version gave keeps its unkeyed steps and is led by the pack's spots without the arrow. One
+shared sweep finds the cache (only while the diary's portion says it can exist) and Bronevik, a slice of 4096
+ids per 250 ms tick, resting longer after every empty pass; the 1.0.5 hand-over flag `ild_detector_done` reads
+as stage 3; the first error of a session in any actor-side settle goes to the watchdog file.
+
+### Repairs
+
+| Defect | Consequence | Repair |
+| --- | --- | --- |
+| `ild_mod_repairs.script` 1.0.10 read `on_use` with `r_string` on every door and box use, and `CInifile::r_string` is a fatal on a missing key that no pcall can catch | F on any door or box whose section has no `on_use` - the code box in `[ph_idle@enable]`, the camp door, the factory door - killed the game: «Can't find variable on_use in [ph_idle@enable]» | `line_exist` first, which checks the section as well; the lock keys carry the level as well as the name, since the Cordon stash has namesakes on three levels, and a key 1.0.10 wrote under the bare name is followed only where this object's own lock leads to that section |
+| `w_oc33.ltx:77` names `weapons\arsenal_shells1`, a particle Arsenal Mod shipped and this game's `particles.xr` does not have | Every shot of the OC-33 near the camera is `R_ASSERT3` "Particle effect or group doesn't exist" - a crash on either renderer | The value reads as `weapons\generic_shells` through the text hook, since `system.ltx` is parsed before any file hook exists |
+| The rat king's class was corrected in `r_string`, but the object factory reads classes through `CInifile::r_clsid`, which calls `r_string` inside xrCore - never through the game's import | The 1.0.10 repair never took effect | Both `r_clsid` overloads are taken in the game module and, on the validated executable, in `XR_3DA.exe`'s import table; a corrected class goes through `TEXT2CLSID` |
+| `absolqtno_drygoi_mamkin_shpion.ltx:21` locks the input on the spy's death, and only the inventory box spawned at his spot gives it back - an inventory box, online within 135 m of the actor only | A spy brought down further out, or shot from that far, leaves the player blind and paralysed; a reload gives the input back and the scene never happens | Eight seconds after the lock, an actor still locked and out of the box's reach is put in the room beside it, where the scene itself takes him, and the author's chain finishes; a minute later without the portion the input is given back |
+| The X18 six-button panel: a press grants a portion for thirty milliseconds and the two ring neighbours read it from their scheduler-driven updates, thirty to forty milliseconds apart | A neighbour switches never, once or twice; the panel breaks its own rule of threes and the two solutions work one time in three | The press switches both neighbours itself, once, and withdraws the portion before any update can read it; a save whose panel is already out of the solvable class (odd counts in either parity set) goes back to the shipped position once |
+| The death-tunnel safe's keypad case sits inside the safe's own model | The code is written on the safe and the place to enter it is unreachable to the crosshair from anywhere but a hand's width behind | A use of the safe without the code is handed to the keypad's own use; with the code, the safe opens as written |
+| `agro_igra_final` phrases 662-669 (the eloquence line) grant only the empty `agro_ydivitilnui_cirk`; the door `agr_dver_y_parashi` opens on `agro_polter_sdox` alone, and the pack's 1.0.8 surrender repair closed the accidental way round | The peaceful branch locks the room with the tower key and cassette 2 for good - and through the key, the diary and the detector chip | The peaceful outcome grants `agro_polter_sdox`: the door opens by its own logic, the task of the other branch was never given, the fight is not started. 1.0.8/1.0.9 saves holding `ara_tak_vtorogo_xyilu_ne_nado` without `agro_ybiica_start` get the portion withdrawn (killer alive) or the double at the stairs (killer dead) |
+| Nemo (see the eleventh pass's row) | Karabin's talk never opens | Withdrawn; old saves lose him once |
+| `delete.delet_escape_volka` removes Volk when the story leaves the Cordon; `esc_poisk_novichkov_kvest` and `tolik_i_volk_kvest` have no end of their own | Both stay "in progress" for good | Closed with the removal - a served duty as completed, the rest failed - and once on load where the removal already happened |
+| `dialogs_escape.xml:4153/4199`: Volk's and Yura's PDA dialogs share `new_life.esti_kpk_zakorpata` | Hand the PDA to Volk first and Yura's «тайник пуст» is unreachable, the stash chain with it | Each dialog points at a check of the pack's own (in memory, at the file's length): Volk takes the PDA only once Yura has read it, Yura's talk opens without it where Volk has it |
+| Yura's logic restarts from `[logic] active` whenever he comes back online within a session | He walks off to the tunnel from wherever the chain had brought him | The latest stage his portions name is resumed instead |
+| `esc_tainik_mamkinogo_shpiona`'s marker rule has no end portion | The circle stays on the Cordon map for good | It comes down once the box - spawned full - is empty, remembered in the pstor |
+| `scene_fallbacks` floors of 25 s (Bar formation, speech 54.05 s) and 30 s (SS commander, 31.99 s) | The floor fired mid-speech and opened the next dialog | 70 s and 45 s |
+| `dialogs_yantar.xml` grants `monolit_have` and `monolit_done`, declared in no portion file | A fatal on the grant | Both are declared before the closing tag the pack already restores in `info_l03agroprom.xml` (the Yantar file has 22 bytes of indentation to lend, the Agroprom one 161), paid out of that file's indentation |
+| `tp_v_dp_logic.ltx` returns the actor from 73 m up after 4 s on the second throw; the fall takes 2.7 s | The actor hits the ground before the return | 2 s, like the first throw |
+| `zvyk_psi_antenna`'s logic has no end | Its voices play at the bridge for the rest of the game | Silent once `esc_tola0_delet_i_1_spawn` is held; the case and the save stay as they are |
+| `agro_door_open` has one source, the captain's talk after the underground; the forum's advice was to kill him for a key that does not exist | Doors shut and Karabin unspawned for good | A captain dead or gone after `und_prapor_3` has the portion granted for him, and the actor's community restored as his talk would |
+| `treasure_manager.ltx:298` `esc_secret_stalker_things` names story object 5008, which the author removed with four trader stashes; `gar_secret_box_blockpost` holds the only guaranteed `item_avto_fara` of five the four car repairs need | The dead record eats the draw for nothing; the ZIL and the Kopeika, and the cars the barman sells after them, were a 0.75% chance | The record is granted into the box it was written for (`level_prefix_inventory_box_0012`, by position, since the name repeats across levels) and its spot comes down when the box is emptied; records without a box stay out of the draw; `gar_secret_bus_tube` and `gar_secret_deadman` carry one headlight each |
+| `bar_gg_nivy_pochinil` is read by nothing | The Niva stays broken and its parts can be paid again | The bench stays shut once the portion is held |
+| `delete.del_esc_kor_norm1` matches names containing "norm" | Dozens of unrelated objects across the Zone are released with the Cordon guards | Sections, the family for the first removal and the numbered guard for the rest |
+| 81 custom-data files open with a UTF-8 BOM, which the ini reader takes as part of `[smart_terrains]` | 82 scripted NPCs read as free for any camp | The conditions are answered for exactly those sections when the reader found none |
+| The tower hatch spends its key, and before 1.0.10 came back shut | The diary and the caches out of reach for good | A save with the decorations spawned, the diary unread, nothing remembered and no key anywhere gets the open section written once |
+| The depot and prison hints count their delay on any level | The one line is spent elsewhere | Only on their level, the depot's near the karlik's lair |
+| `inventory_new.xml:16` and `_16.xml:16` caption the belt "Belt"; the re-chambered guns inherit their parent's description; the mechanic says the PPS-43 takes 9x19; the file's line is captioned «Ножовка.» | Texts contradict the items | `ui_inv_belt` (the mod's table has «Пояс»); descriptions of the AK-47 (7.62x54), MP5 (.45), PM and Fort (9x19), HPSA (9x18), the sawn-off TOZ and the German Karabin-98 (7.92, and its name says so) through the text hook; the mechanic's line and the caption in memory at the files' length |
+| `bind_gameplay` replaced the actor script's anchor whether or not the Lua payload was on disk | A patch unpacked without its base died at the actor's spawn: «attempt to index global 'ild_gameplay'» | The five scripts are checked at start; missing, the binding, the menu binding and the dialog repairs that name Lua functions stand down, the loader report says which file is missing under `[installation]`, and a message box names the archive to take |
+| The helper made one unauthenticated API request and treated any failure as "nothing to offer", silently | Behind a shared address the hourly allowance is spent by others and updates never come; the player cannot even see the pack's version | Retries after the pause the API names, a fallback release list beside the repository, an ETag-conditional request, `update-last.txt` copied into the loader report, the helper's start recorded, the pack version and the check's verdict in the main menu |
+| The updater refused with 27 over a hand-modified `ild_*.script` and with 26 over pack files left by a manual rollback; `ild_fixes_text.xml` of 1.0.5-1.0.7 lingered | The forum hotfix blocked every update; an old archive over a new one blocked them too | The pack's own gamedata files are its own whichever list they are on; the retired text file is removed when its bytes are a released copy's; codes 26 and 27 name the file in Russian |
+
+### Examined and deliberately not changed
+
+- **The sleeping row in the Bar** (`nac_sold_logic.ltx`, `is_night_two` → `sleep`) and the corpse hanging by
+  a door in the same screenshots: the author's schedule and the engine's physics.
+- **The second spy in the wagon**, the graves on Agroprom, the third-floor doors, the BTR, the eloquence skill:
+  the game does what the author wrote; the pinned FAQ of the pack's thread described each wrongly, and the
+  corrected texts are in `docs/FORUM_FAQ_CORRECTIONS.md`.
+- **The X18 grate button's power** is reversible, not lost for good, and the grate closes again when the
+  shocking switch is thrown - the FAQ, not the puzzle.
+- **The logless crash on the Cordon** (#565176) survived 1.0.8 and a rollback to 1.0.3 and went away on a fresh
+  playthrough; the psi case's two repairs do not explain it. Not closed.
+- **Ded in the Warehouses village**: the theme resolves to `tu_kto_takoi.ogg` (1.03 s) and normally ends on its
+  own signal; the eight-second floor is a guard against a stall whose cause is not established, not a missing
+  file, and the comment now says so.
+- **The eloquence skill's price effect** is the mod's own reputation table, renamed; «Барыга» and «Лжец» are
+  the author's unfinished work.
+- **The mod's hidden-spot hints and «смехотворные» quests** the author objected to: the depot and prison lines
+  are one sentence each, once, in the mod's own news shape; the detector entry is the author's own unfinished
+  branch completed along his line, hosted since 1.0.10 on the game's own skeleton.
+
+### Verified
+
+Unit tests cover the strict ini reader, the level-qualified lock keys and the legacy ones, the panel's
+neighbours and its normalisation, the safe's redirect, the hatch's reseed, the detector chain from the chip's
+creation to the keyed steps and the callback, the spy's lock and its failsafe, the captain, the Volk jobs, the
+PDA checks, Yura's resume, the marker's end, the stash alias, the headlights, the Niva, the norm removals, the
+psi case, the BOM'd sections, the hints' level, every new config repair at the files' exact size and the Lua
+gate of the dialog repairs, the split of `bind_gameplay`, and the updater's applier scenarios. The shipped
+scripts are checked for staging notes and for modules that do not ship.
+
