@@ -916,17 +916,48 @@ local function hatch_reseed()
     log("ild: the tower hatch is reopened, its key was spent before locks were remembered")
 end
 
+-- ---------- courier-suit ----------
+-- The courier suit's immunity section held 1.00 for all nine hit types until 1.0.11 read the stalker suit's
+-- hundredths in its place: every hit took a third of the suit's condition, and a suit bought before the repair
+-- stands at 0% through no fault of the player's. The first time the pack meets a courier suit in the actor's
+-- inventory - worn, on the belt or in the rucksack, at the first run of 1.0.11 or when the suit comes out of a
+-- stash later - its condition is set back to full, once per suit, remembered in the actor's pstor under the
+-- suit's id. A new suit is met at full, so wear after that is the suit's own and stays.
+local courier = {section = "kyrier_outfit", prefix = "ild_courier_restored_", period = 2000}
+
+local function courier_restore()
+    local actor = db.actor
+    local now = time_global()
+    if not actor or (courier.next and now < courier.next) then return end
+    courier.next = now + courier.period
+    if not actor:object(courier.section) then return end
+    actor:iterate_inventory(function(_, item)
+        if item:section() ~= courier.section then return end
+        local key = courier.prefix .. item:id()
+        local known, done = pcall(xr_logic.pstor_retrieve, actor, key, 0)
+        if not known or done == 1 then return end
+        local condition = item:condition()
+        if condition < 1 then
+            item:set_condition(1)
+            log(string.format("ild: the courier suit %d is restored from %d%%: it wore at the file's 1.00",
+                item:id(), math.floor(condition * 100 + 0.5)))
+        end
+        xr_logic.pstor_store(actor, key, 1)
+    end, actor)
+end
+
 local function install_actor_update()
     local binder = bind_stalker.actor_binder
     local original_spawn = binder.net_spawn
     binder.net_spawn = function(self, ...)
-        hatch.done, hatch.cursor, panel.checked = nil, nil, nil
+        hatch.done, hatch.cursor, panel.checked, courier.next = nil, nil, nil, nil
         return original_spawn(self, ...)
     end
     local original_update = binder.update
     binder.update = function(self, ...)
         local result = original_update(self, ...)
         pcall(hatch_reseed)
+        pcall(courier_restore)
         return result
     end
 end

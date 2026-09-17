@@ -378,5 +378,92 @@ do
     equal(early[key], nil, "and nothing is done before the tower's decorations exist")
 end
 
+-- The courier suit: its wear from before 1.0.11 is the file's 1.00, not the player's, and is undone once per suit.
+do
+    local function courier_fixture(setup)
+        local env, calls = fixture()
+        local pstor, items, clock = {}, {}, 0
+        env.has_alife_info = function() return false end
+        env.xr_logic = {
+            pstor_store = function(_, name, value) pstor[name] = value end,
+            pstor_retrieve = function(_, name, default) return pstor[name] or default end,
+            switch_to_section = function() end
+        }
+        env.time_global = function() return clock end
+        -- An inventory item the way the binder sees it: a section, an id and a condition it can be set to.
+        local function item(id, section, condition)
+            local object = {id = function() return id end, section = function() return section end}
+            object.condition = function() return condition end
+            object.set_condition = function(_, value) condition = value end
+            items[#items + 1] = object
+            return object
+        end
+        env.db.actor = {
+            object = function(_, section)
+                for _, object in ipairs(items) do if object:section() == section then return object end end
+                return nil
+            end,
+            iterate_inventory = function(_, functor, owner)
+                for _, object in ipairs(items) do functor(owner, object) end
+            end
+        }
+        env.alife = function() return {object = function() return nil end} end
+        env.level = {name = function() return "l04_darkvalley" end, object_by_id = function() return nil end}
+        env.bind_stalker = {actor_binder = {net_spawn = function() return true end, update = function() return "updated" end}}
+        env.ph_idle = {action_idle = {use_callback = function() end, update = function() end}}
+        env.ph_door = {action_door = {use_callback = function() end, update = function() end}}
+        if setup then setup(item, pstor) end
+        env.install()
+        local function tick(advance)
+            clock = clock + (advance or 0)
+            return env.bind_stalker.actor_binder.update({}, 1)
+        end
+        return env, pstor, item, tick, calls
+    end
+    local worn, half, whole, knife
+    local env, pstor, item, tick, calls = courier_fixture(function(item)
+        knife = item(310, "wpn_knife", 0.2)
+        worn, half, whole = item(300, "kyrier_outfit", 0), item(301, "kyrier_outfit", 0.5), item(302, "kyrier_outfit", 1)
+    end)
+    equal(tick(), "updated", "the mod's own update runs")
+    equal(worn:condition(), 1, "a suit at 0% is restored to full on the first pass")
+    equal(half:condition(), 1, "a suit at 50% as well: all of its wear was the file's")
+    equal(whole:condition(), 1, "a whole suit stays whole")
+    equal(knife:condition(), 0.2, "nothing but the courier suit is touched")
+    equal(pstor.ild_courier_restored_300, 1, "each suit is remembered by its id")
+    equal(pstor.ild_courier_restored_301, 1, "the second too")
+    equal(pstor.ild_courier_restored_302, 1, "and the whole one, so its wear from here on is its own")
+    equal(pstor.ild_courier_restored_310, nil, "the knife is not")
+    local restored = 0
+    for _, line in ipairs(calls.logged) do
+        if string.find(line, "courier suit", 1, true) then restored = restored + 1 end
+    end
+    equal(restored, 2, "the two suits that changed are logged, the whole one is not")
+    worn:set_condition(0.2)
+    tick(2000)
+    equal(worn:condition(), 0.2, "wear after the repair stays: this is not a repair kit")
+    local late = item(303, "kyrier_outfit", 0)
+    tick(500)
+    equal(late:condition(), 0, "a suit out of a stash waits for the next pass, two seconds apart")
+    tick(1500)
+    equal(late:condition(), 1, "and is restored on it")
+    local loaded = item(304, "kyrier_outfit", 0)
+    env.bind_stalker.actor_binder.net_spawn({})
+    tick(0)
+    equal(loaded:condition(), 1, "the first update after a load looks at once, whatever the clock says")
+
+    local kept
+    local _, kept_pstor, _, kept_tick = courier_fixture(function(item, pstor)
+        kept = item(305, "kyrier_outfit", 0)
+        pstor.ild_courier_restored_305 = 1
+    end)
+    kept_tick()
+    equal(kept:condition(), 0, "a suit already restored once is left at whatever it has")
+    equal(kept_pstor.ild_courier_restored_305, 1, "and its record stays")
+
+    local _, empty_pstor, _, empty_tick = courier_fixture()
+    empty_tick()
+    equal(next(empty_pstor), nil, "without a suit nothing is written")
+end
 
 print("PASS " .. tests .. " checks")
