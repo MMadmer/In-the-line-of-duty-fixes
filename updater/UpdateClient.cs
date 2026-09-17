@@ -26,14 +26,14 @@ namespace IldFixes.Updater
             return Evaluate(ParseReleases(ReadReleases(ResolveApiUri())));
         }
 
-        // The same release list, published beside the repository at every release: no request limit, the same
-        // shape as the API's answer, and every archive still comes from github.com and is checked against the
-        // digest written here.
+        // The same release list, uploaded beside the archives as an asset of every release, so the newest release
+        // serves it from github.com like the archives themselves: no request limit, the same shape as the API's
+        // answer, and every archive is still checked against the digest written here.
         internal CheckResult CheckFallback()
         {
             Uri fallback;
             if (string.IsNullOrEmpty(context.ApiUrl))
-                fallback = new Uri("https://raw.githubusercontent.com/" + ProductInfo.Repository + "/main/updates/latest.json");
+                fallback = new Uri("https://github.com/" + ProductInfo.Repository + "/releases/latest/download/latest.json");
             else
             {
                 Uri api = ResolveApiUri();

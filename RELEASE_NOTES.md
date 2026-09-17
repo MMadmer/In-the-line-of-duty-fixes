@@ -28,13 +28,14 @@
 * Пси-кейс у Толика в старых сохранениях больше не роняет игру по F, а его голоса на ЖД-мосту замолкают после того, как Толика увели.
 * Капитан базы Агропрома: если после подземки он убит или исчез, двери на третий этаж открываются за него, и Карабин появляется на Свалке.
 * Тайник Искателя «Товар сталкера» на Кордоне выдаётся в ящик, для которого он написан (автор убрал его story id), записи без ящика не съедают выпадение, а в два тайника Искателя на Свалке добавлено по одной фаре: три гарантированные фары на ЗАЗ, ЗИЛ и «копейку».
+* Костюм курьера больше не рассыпается за несколько минут: в его секции иммунитетов автор оставил 1.00 по всем девяти типам урона (у остальных комбезов — сотые доли, а от радиации и пси-ударов они не изнашиваются вовсе), и каждое попадание снимало треть прочности. Теперь он изнашивается как сталкерский комбез, из которого скроен.
 * Нива на автопарке Бара: после ремонта кнопка гаснет и детали не списываются второй раз.
 * Удаление «норм» на Кордоне больше не сносит посторонние объекты с «norm» в имени по всей Зоне (дверь кровососа на Складах и другие).
 * 82 скриптовых NPC из файлов с UTF-8 BOM (Бар, Тёмная долина, Склады, финал) больше не забираются лагерями: их none = true читается.
 * Люк вышки Агропрома: если ключ был потрачен до 1.0.10 и люк закрылся снова, он открывается.
 * Подсказки депо и тюрьмы срабатывают только на своём уровне, депо — ещё и рядом с логовом карлика.
 * Тексты: подпись пояса «Belt» → «Пояс»; описания переделанных стволов (АК-47 под 7,62x54, MP5 под .45, ПМ и Форт под 9x19, HPSA под 9x18, обрез ТОЗ) и немецкого Karabin-98 (7,92) больше не обещают чужой калибр; механик говорит про родной 7.62x25 у ППС-43; реплика напильника Эконома подписана «Напильник.».
-* Обновлятор: при отказе GitHub API (60 запросов в час на адрес) проверка повторяется с паузой, которую называет сам API, и в крайнем случае берёт список релизов из резервного файла репозитория; ответ API кэшируется по ETag. В главном меню внизу слева — версия фикспака и итог проверки. loader-report.txt получил секции [installation] и [update], помощник пишет update-last.txt. Патч, распакованный без своей базы, больше не роняет игру: пак говорит, какого файла нет, и работает без Lua-починок.
+* Обновлятор: при отказе GitHub API (60 запросов в час на адрес) проверка повторяется с паузой, которую называет сам API, и в крайнем случае берёт список релизов из резервного файла, который лежит рядом с архивами релиза; ответ API кэшируется по ETag. В главном меню внизу слева — версия фикспака и итог проверки. loader-report.txt получил секции [installation] и [update], помощник пишет update-last.txt. Патч, распакованный без своей базы, больше не роняет игру: пак говорит, какого файла нет, и работает без Lua-починок.
 * Обновление больше не отказывает кодом 26 из-за файлов пака, оставшихся после ручного отката, и кодом 27 из-за изменённого вручную ild_*.script; остаток ild_fixes_text.xml от 1.0.5–1.0.7 удаляется сам.
 
 ## Установка
@@ -73,13 +74,14 @@ The detector chip is always there, the F crash after 1.0.10, and an X18 panel th
 * The psi case beside Tolik in old saves no longer crashes the game on F, and its voices at the railway bridge fall silent once Tolik is taken away.
 * The captain of the Agroprom base: if he is dead or gone after the underground, the third-floor doors are opened for him and Karabin appears on the Garbage.
 * The Seeker's Cordon stash "Товар сталкера" is granted into the box it was written for (the author removed its story id), records without a box no longer eat the draw, and two Seeker stashes on the Garbage carry one headlight each: three guaranteed headlights for the ZAZ, the ZIL and the Kopeika.
+* The courier suit no longer falls apart within minutes: its immunity section carried 1.00 for all nine hit types (every other suit carries hundredths, and none wears from radiation or psi at all), so every hit took a third of its condition. It now wears like the stalker suit it is cut from.
 * The Niva on the Bar autopark: after the repair the button goes out and the parts are not taken a second time.
 * The "norm" removals on the Cordon no longer delete unrelated objects with "norm" in their name across the Zone (the bloodsucker door at the Warehouses and others).
 * 82 scripted NPCs from files with a UTF-8 BOM (Bar, Dark Valley, Warehouses, finale) are no longer hired away by camps: their none = true is read.
 * The Agroprom tower hatch: if the key was spent before 1.0.10 and the hatch closed again, it opens.
 * The depot and prison hints fire only on their own level, the depot's also only near the karlik's lair.
 * Texts: the belt caption "Belt" becomes "Пояс"; descriptions of the re-chambered guns (AK-47 in 7.62x54, MP5 in .45, PM and Fort in 9x19, HPSA in 9x18, the sawn-off TOZ) and of the German Karabin-98 (7.92) no longer promise another calibre; the mechanic names the PPS-43's own 7.62x25; the Economist's file line is captioned "Напильник.".
-* Updater: when the GitHub API refuses (60 requests an hour per address) the check is retried after the pause the API names and, failing that, reads the release list from a fallback file in the repository; the API answer is cached by ETag. The main menu shows the pack version and the check's verdict bottom left. loader-report.txt gains [installation] and [update] sections and the helper writes update-last.txt. A patch unpacked without its base no longer crashes the game: the pack names the missing file and runs without its Lua repairs.
+* Updater: when the GitHub API refuses (60 requests an hour per address) the check is retried after the pause the API names and, failing that, reads the release list from a fallback file published beside the release archives; the API answer is cached by ETag. The main menu shows the pack version and the check's verdict bottom left. loader-report.txt gains [installation] and [update] sections and the helper writes update-last.txt. A patch unpacked without its base no longer crashes the game: the pack names the missing file and runs without its Lua repairs.
 * An update is no longer refused with code 26 over pack files left behind by a manual rollback, nor with code 27 over a hand-modified ild_*.script; the ild_fixes_text.xml left by 1.0.5-1.0.7 is removed by itself.
 
 ## Installation

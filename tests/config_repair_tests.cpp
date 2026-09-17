@@ -278,6 +278,14 @@ int main(int argc, char** argv)
     if (!ild::repair_config_text(tunnel, ConfigRepair::tunnel_input) || tunnel.size() != tunnel_size ||
         tunnel.find("13000| %=enable_ui =play_snd(ai_kaver\\esc_zov_tonelia_smerti)% nil") == std::string::npos ||
         ild::repair_config_text(tunnel, ConfigRepair::tunnel_input)) return 57;
+    // The courier suit wears at the stalker suit's rate, and only while its file still says 1.00 everywhere.
+    if (ild::corrected_item_number("sect_kyrier_outfit_immunities", "burn_immunity", 1.0f) != 0.03f ||
+        ild::corrected_item_number("sect_kyrier_outfit_immunities", "fire_wound_immunity", 1.0f) != 0.022f ||
+        ild::corrected_item_number("sect_kyrier_outfit_immunities", "radiation_immunity", 1.0f) != 0.0f ||
+        ild::corrected_item_number("sect_kyrier_outfit_immunities", "telepatic_immunity", 1.0f) != 0.0f ||
+        ild::corrected_item_number("sect_kyrier_outfit_immunities", "burn_immunity", 0.03f) ||
+        ild::corrected_item_number("sect_kyrier_outfit_immunities", "burn_protection", 1.0f) ||
+        ild::corrected_item_number("sect_stalker_outfit_immunities", "burn_immunity", 1.0f)) return 88;
     if (ild::corrected_item_number("af_gravi", "inv_weight", 0.0f) != 0.5f ||
         ild::corrected_item_number("af_gravi", "inv_weight", 0.5f) ||
         ild::corrected_item_number("fake_lom", "inv_weight", 0.3f) != 3.5f ||

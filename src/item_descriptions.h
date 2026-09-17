@@ -119,6 +119,22 @@ inline constexpr std::string_view courier_ninety = "\xEF\xEE\xE4 90.";
         if (key == "inv_grid_y" && value == 1950.0f) return 14.0f;
     }
     if (section == "kyrier_outfit" && key == "additional_inventory_weight2" && value == 25.0f) return 30.0f;
+    // The courier suit's immunity section holds 1.00 for every hit type, where every other suit of the mod holds
+    // a few hundredths and nothing at all for radiation and psi. The engine multiplies each hit by that number
+    // and takes the result off the suit's condition, so this one lost a third of itself to a single hit and
+    // wore through to nothing in minutes - and even a walk through radiation wore it. It takes the numbers of
+    // the stalker suit it is cut from, whose bone protection it already shares, while the file still says 1.00.
+    if (section == "sect_kyrier_outfit_immunities" && value == 1.0f)
+    {
+        if (key == "burn_immunity") return 0.03f;
+        if (key == "strike_immunity") return 0.02f;
+        if (key == "shock_immunity") return 0.01f;
+        if (key == "wound_immunity") return 0.015f;
+        if (key == "radiation_immunity" || key == "telepatic_immunity") return 0.0f;
+        if (key == "chemical_burn_immunity") return 0.035f;
+        if (key == "explosion_immunity") return 0.02f;
+        if (key == "fire_wound_immunity") return 0.022f;
+    }
     // The one weightless artefact among fifty-eight, and the crowbar that weighs 0.3 kg in the rucksack and 3.5 kg
     // in the hand: the stand-in the hidden-slot script swaps in for it copied a knife's weight.
     if (section == "af_gravi" && key == "inv_weight" && value == 0.0f) return 0.5f;

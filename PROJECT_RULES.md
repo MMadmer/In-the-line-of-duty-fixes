@@ -205,12 +205,12 @@ reference installation.
   in-game updater downloads; a manual installation always takes the full
   archive. Never call the two alternatives. The first release of a major line
   has no patch.
-- A release also carries `latest.json`, the release list in the shape of the
-  GitHub API's answer, which the packaging scripts write beside the archives.
-  Once the release and its assets are published, the file is committed as
-  `updates/latest.json`; the helper reads it from raw.githubusercontent.com
-  when the API refuses, so it must never list a release whose assets are not
-  up yet.
+- A release carries a third asset, `latest.json`: the release list in the shape
+  of the GitHub API's answer, which `Build-Package.ps1` writes beside the
+  archives and `Build-Patch.ps1` extends with the patch. It is uploaded with the
+  two archives in the same release step, and the helper reads it through
+  `releases/latest/download/latest.json` when the API refuses. Nothing about it
+  is committed to the repository or done by hand.
 - Both archives must produce the same installed file set, must contain only
   project-owned paths, and must never contain an original game or mod file, a
   save, or the player's `user.ltx`.
