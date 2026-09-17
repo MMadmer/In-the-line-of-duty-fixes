@@ -1301,4 +1301,3 @@ PDA checks, Yura's resume, the marker's end, the stash alias, the headlights, th
 psi case, the BOM'd sections, the hints' level, every new config repair at the files' exact size and the Lua
 gate of the dialog repairs, the split of `bind_gameplay`, and the updater's applier scenarios. The shipped
 scripts are checked for staging notes and for modules that do not ship.
-
