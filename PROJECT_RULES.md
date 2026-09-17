@@ -210,7 +210,10 @@ reference installation.
   archives and `Build-Patch.ps1` extends with the patch. It is uploaded with the
   two archives in the same release step, and the helper reads it through
   `releases/latest/download/latest.json` when the API refuses. Nothing about it
-  is committed to the repository or done by hand.
+  is committed to the repository or done by hand. It is the one asset that may
+  be re-uploaded in place, and only to carry a corrected release text: no
+  client verifies it against a digest, every client re-reads it on each check,
+  and the archives it lists stay exactly as published.
 - Both archives must produce the same installed file set, must contain only
   project-owned paths, and must never contain an original game or mod file, a
   save, or the player's `user.ltx`.
@@ -218,7 +221,7 @@ reference installation.
   upload happen only after the user's direct permission.
 - Address every GitHub command explicitly to `MMadmer/In-the-line-of-duty-fixes`;
   do not rely on auto-detection.
-- **A published release asset is never edited or replaced in place, and a
+- **A published release archive is never edited or replaced in place, and a
   published release that clients may already have seen is not deleted.** An
   installed client records the version it holds and asks the release list what
   is newer; replacing bytes under a name a client can already request makes the
